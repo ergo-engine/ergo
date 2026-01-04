@@ -160,12 +160,12 @@ These invariants hold across all phases. Violation at any point is a system-leve
 | I.3 | All required parameters are either bound or exposed | CLUSTER_SPEC.md §6.2 | — | — | ✓ | ✓ |
 | I.4 | Bound parameter values are type-compatible | CLUSTER_SPEC.md §6.2 | — | — | ✓ | ✓ |
 | I.5 | Exposed parameters reference parameters that exist in parent context | CLUSTER_SPEC.md §6.2 | — | — | ✓ | ✓ |
-| I.6 | Version constraints are satisfied | CLUSTER_SPEC.md §6.2 | — | — | ✓ | — |
+| I.6 | Version constraints are satisfied | CLUSTER_SPEC.md §6.2 | — | — | — | — |
 
 ### Notes
 
 - **I.3–I.5:** Enforced in `cluster.rs::expand_with_context` during nested cluster processing via `validate_parameter_bindings()`. Errors: `MissingRequiredParameter`, `ParameterBindingTypeMismatch`, `ExposedParameterNotFound`, `ExposedParameterTypeMismatch`. Tests: `required_parameter_missing_rejected`, `parameter_binding_type_mismatch_rejected`, `exposed_parameter_not_in_parent_rejected`, `exposed_parameter_type_mismatch_rejected`. Note: I.4 is enforced symmetrically for both Literal and Exposed bindings.
-- **I.6:** Version constraint validation exists but lacks dedicated test coverage.
+- **I.6:** Version constraint validation **NOT IMPLEMENTED**. Cluster expansion performs direct lookup without constraint evaluation. Marked for future work.
 
 ---
 
