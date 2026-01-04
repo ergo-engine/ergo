@@ -10,9 +10,10 @@ use ergo_supervisor::{CaptureBundle, Constraints, Decision, EpisodeInvocationRec
 use serde_json;
 
 fn make_event_record(id: &str, at: Duration) -> ExternalEventRecord {
+    // Use Command, not Tick — Tick now has special deferred-retry behavior
     let event = ExternalEvent::mechanical_at(
         EventId::new(id.to_string()),
-        ExternalEventKind::Tick,
+        ExternalEventKind::Command,
         EventTime::from_duration(at),
     );
     ExternalEventRecord::from_event(&event)

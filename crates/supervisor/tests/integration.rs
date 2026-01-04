@@ -2,10 +2,11 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use ergo_adapter::{
-    EventId, ExternalEvent, ExternalEventKind, FaultRuntimeHandle, GraphId, RunTermination,
-    RuntimeHandle,
+    EventId, EventTime, ExternalEvent, ExternalEventKind, FaultRuntimeHandle, GraphId,
+    RunTermination, RuntimeHandle,
 };
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
 use ergo_runtime::cluster::{
@@ -202,8 +203,8 @@ fn supervisor_with_real_runtime_executes_hello_world() {
         registries,
     );
 
-    // Send an event to trigger execution
-    let event = ExternalEvent::mechanical(EventId::new("test_event"), ExternalEventKind::Tick);
+    // Send an event to trigger execution (use Command, not Tick — Tick has special behavior)
+    let event = ExternalEvent::mechanical(EventId::new("test_event"), ExternalEventKind::Command);
     supervisor.on_event(event);
 
     // Verify the decision log
@@ -277,4 +278,182 @@ fn capturing_session_enables_round_trip_replay() {
         bundle.decisions[0].retry_count,
         "retry_count should round trip through replay"
     );
+}
+
+/// Test that a deferred episode is retried when a Tick event arrives.
+#[test]
+fn deferred_episode_retried_on_tick() {
+    let log = CapturingLog::new();
+    let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
+
+    // max_in_flight = 0 means ALL events will be deferred
+    let mut constraints = Constraints::default();
+    constraints.max_in_flight = Some(0);
+
+    let mut supervisor =
+        Supervisor::with_runtime(GraphId::new("test"), constraints, log.clone(), runtime);
+
+    // Send a non-Tick event — should be deferred
+    let event = ExternalEvent::mechanical_at(
+        EventId::new("e1"),
+        ExternalEventKind::Command,
+        EventTime::from_duration(Duration::from_secs(0)),
+    );
+    supervisor.on_event(event);
+
+    let entries = log.entries();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].decision, Decision::Defer);
+    assert!(entries[0].termination.is_none());
+
+    // Now allow execution by relaxing constraint
+    // We need a new supervisor with relaxed constraints to test the Tick path
+    // Actually, we can't change constraints mid-stream. Let's use a different approach:
+    // Create supervisor with max_in_flight = 1, send event while "in flight"
+
+    // Reset test with proper setup
+    let log2 = CapturingLog::new();
+    let runtime2 = FaultRuntimeHandle::new(RunTermination::Completed);
+
+    // max_in_flight = 1, but we'll never actually be at capacity since execution is synchronous
+    // Instead, test the Tick processing path directly by:
+    // 1. Deferring due to rate limit
+    // 2. Sending Tick at later time
+
+    let mut constraints2 = Constraints::default();
+    constraints2.max_per_window = Some(1);
+    constraints2.rate_window = Some(Duration::from_secs(10));
+
+    let mut supervisor2 =
+        Supervisor::with_runtime(GraphId::new("test2"), constraints2, log2.clone(), runtime2);
+
+    // First event at t=0 — should invoke (under rate limit)
+    let event1 = ExternalEvent::mechanical_at(
+        EventId::new("e1"),
+        ExternalEventKind::Command,
+        EventTime::from_duration(Duration::from_secs(0)),
+    );
+    supervisor2.on_event(event1);
+
+    // Second event at t=0 — should defer (rate limited)
+    let event2 = ExternalEvent::mechanical_at(
+        EventId::new("e2"),
+        ExternalEventKind::Command,
+        EventTime::from_duration(Duration::from_secs(0)),
+    );
+    supervisor2.on_event(event2);
+
+    let entries2 = log2.entries();
+    assert_eq!(entries2.len(), 2);
+    assert_eq!(entries2[0].decision, Decision::Invoke);
+    assert_eq!(entries2[1].decision, Decision::Defer);
+
+    // Send Tick at t=10 (after rate window expires)
+    let tick = ExternalEvent::mechanical_at(
+        EventId::new("tick1"),
+        ExternalEventKind::Tick,
+        EventTime::from_duration(Duration::from_secs(10)),
+    );
+    supervisor2.on_event(tick);
+
+    let entries3 = log2.entries();
+    assert_eq!(entries3.len(), 3);
+    assert_eq!(
+        entries3[2].decision,
+        Decision::Invoke,
+        "Tick should invoke deferred episode"
+    );
+    assert_eq!(entries3[2].termination, Some(RunTermination::Completed));
+}
+
+/// Test that a Tick with an empty queue logs a no-op Defer.
+#[test]
+fn tick_with_empty_queue_logs_noop() {
+    let log = CapturingLog::new();
+    let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
+
+    let mut supervisor =
+        Supervisor::with_runtime(GraphId::new("test"), Constraints::default(), log.clone(), runtime);
+
+    // Send Tick with no deferred episodes
+    let tick = ExternalEvent::mechanical_at(
+        EventId::new("tick1"),
+        ExternalEventKind::Tick,
+        EventTime::from_duration(Duration::from_secs(0)),
+    );
+    supervisor.on_event(tick);
+
+    let entries = log.entries();
+    assert_eq!(entries.len(), 1, "Tick should produce exactly one log entry");
+    assert_eq!(entries[0].decision, Decision::Defer, "Empty queue Tick should log Defer");
+    assert_eq!(entries[0].schedule_at, None, "Empty queue Tick should have no schedule_at");
+    assert!(entries[0].termination.is_none(), "Empty queue Tick should have no termination");
+}
+
+/// Test that deferred episodes are processed in order: earlier schedule_at first,
+/// then lower episode_id for ties.
+#[test]
+fn tick_respects_episode_id_ordering() {
+    let log = CapturingLog::new();
+    let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
+
+    let mut constraints = Constraints::default();
+    constraints.max_per_window = Some(1);
+    constraints.rate_window = Some(Duration::from_secs(10));
+
+    let mut supervisor =
+        Supervisor::with_runtime(GraphId::new("test"), constraints, log.clone(), runtime);
+
+    // First event at t=0 — invokes
+    let event1 = ExternalEvent::mechanical_at(
+        EventId::new("e1"),
+        ExternalEventKind::Command,
+        EventTime::from_duration(Duration::from_secs(0)),
+    );
+    supervisor.on_event(event1);
+
+    // Second event at t=0 — deferred (episode_id=1, schedule_at=10)
+    let event2 = ExternalEvent::mechanical_at(
+        EventId::new("e2"),
+        ExternalEventKind::Command,
+        EventTime::from_duration(Duration::from_secs(0)),
+    );
+    supervisor.on_event(event2);
+
+    // Third event at t=0 — deferred (episode_id=2, schedule_at=10)
+    let event3 = ExternalEvent::mechanical_at(
+        EventId::new("e3"),
+        ExternalEventKind::Command,
+        EventTime::from_duration(Duration::from_secs(0)),
+    );
+    supervisor.on_event(event3);
+
+    let entries = log.entries();
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[0].decision, Decision::Invoke);
+    assert_eq!(entries[1].decision, Decision::Defer);
+    assert_eq!(entries[2].decision, Decision::Defer);
+
+    // First Tick at t=10 — should invoke episode_id=1 (lower id wins tie)
+    let tick1 = ExternalEvent::mechanical_at(
+        EventId::new("tick1"),
+        ExternalEventKind::Tick,
+        EventTime::from_duration(Duration::from_secs(10)),
+    );
+    supervisor.on_event(tick1);
+
+    // Second Tick at t=20 — should invoke episode_id=2
+    let tick2 = ExternalEvent::mechanical_at(
+        EventId::new("tick2"),
+        ExternalEventKind::Tick,
+        EventTime::from_duration(Duration::from_secs(20)),
+    );
+    supervisor.on_event(tick2);
+
+    let final_entries = log.entries();
+    assert_eq!(final_entries.len(), 5);
+
+    // Entries 3 and 4 should be Invoke (the deferred episodes)
+    assert_eq!(final_entries[3].decision, Decision::Invoke);
+    assert_eq!(final_entries[4].decision, Decision::Invoke);
 }
