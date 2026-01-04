@@ -381,7 +381,8 @@ must be implemented as clusters with explicit state flow through environment.
 
 ### Notes
 
-- **REP-1:** `validate_hash()` in capture.rs uses SHA256 to verify payload integrity.
+- **REP-1:** `validate_hash()` in capture.rs uses SHA256 to verify payload integrity. **ENFORCED** at `replay.rs` via `validate_bundle()` (called by `replay_checked()`). Legacy `replay()` panics on invalid bundle; `replay_checked()` returns `Result<_, ReplayError>` for graceful handling.
+  - **Anchor tests:** `replay_rejects_corrupted_bundle`, `replay_rejects_unknown_version`
 - **REP-2:** `rehydrate()` uses only record fields; no external state dependency.
 - **REP-3:** `FaultRuntimeHandle` explicitly discards `graph_id` and `ctx.inner()`; keys on `EventId` only.
 - **REP-4:** `ExecutionContext` has no serde derives. Capture types (`ExternalEventRecord`, `EpisodeInvocationRecord`) are separate from runtime types (`ExternalEvent`, `DecisionLogEntry`).
