@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use ergo_adapter::capture::ExternalEventRecord;
-use ergo_adapter::RuntimeInvoker;
+use ergo_adapter::{EventId, RuntimeInvoker};
 
 use crate::{CaptureBundle, DecisionLog, DecisionLogEntry, EpisodeInvocationRecord, Supervisor};
 
@@ -24,7 +24,46 @@ impl MemoryDecisionLog {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplayError {
+    UnsupportedVersion { capture_version: String },
+    HashMismatch { event_id: EventId },
+}
+
+pub fn validate_bundle(bundle: &CaptureBundle) -> Result<(), ReplayError> {
+    if bundle.capture_version != "v0" {
+        return Err(ReplayError::UnsupportedVersion {
+            capture_version: bundle.capture_version.clone(),
+        });
+    }
+
+    for record in &bundle.events {
+        if !record.validate_hash() {
+            return Err(ReplayError::HashMismatch {
+                event_id: record.event_id.clone(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+pub fn replay_checked<R: RuntimeInvoker + Clone>(
+    bundle: &CaptureBundle,
+    runtime: R,
+) -> Result<Vec<EpisodeInvocationRecord>, ReplayError> {
+    validate_bundle(bundle)?;
+    Ok(replay_inner(bundle, runtime))
+}
+
 pub fn replay<R: RuntimeInvoker + Clone>(
+    bundle: &CaptureBundle,
+    runtime: R,
+) -> Vec<EpisodeInvocationRecord> {
+    replay_checked(bundle, runtime).expect("capture bundle validation failed")
+}
+
+fn replay_inner<R: RuntimeInvoker + Clone>(
     bundle: &CaptureBundle,
     runtime: R,
 ) -> Vec<EpisodeInvocationRecord> {

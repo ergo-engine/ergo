@@ -5,7 +5,7 @@ use ergo_adapter::{
     EventId, EventPayload, EventTime, ExternalEvent, ExternalEventKind, FaultRuntimeHandle,
     RunTermination,
 };
-use ergo_supervisor::replay::replay;
+use ergo_supervisor::replay::{replay, replay_checked, ReplayError};
 use ergo_supervisor::{CaptureBundle, Constraints, Decision, EpisodeInvocationRecord};
 use serde_json;
 
@@ -165,4 +165,36 @@ fn sample_bundle_deserializes() {
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
     let records = replay(&bundle, runtime);
     assert_eq!(records.len(), bundle.events.len());
+}
+
+#[test]
+fn replay_rejects_corrupted_bundle() {
+    let events = vec![make_payload_record("e_bad", Duration::from_secs(0), b"abc")];
+    let mut bundle = baseline_bundle(events, Constraints::default());
+
+    // Corrupt the payload without updating the hash to force mismatch.
+    bundle.events[0].payload.data = b"def".to_vec();
+
+    let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
+    let err = replay_checked(&bundle, runtime).unwrap_err();
+
+    assert!(matches!(
+        err,
+        ReplayError::HashMismatch { ref event_id } if event_id == &EventId::new("e_bad")
+    ));
+}
+
+#[test]
+fn replay_rejects_unknown_version() {
+    let events = vec![make_event_record("e_version", Duration::from_secs(0))];
+    let mut bundle = baseline_bundle(events, Constraints::default());
+    bundle.capture_version = "v999".to_string();
+
+    let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
+    let err = replay_checked(&bundle, runtime).unwrap_err();
+
+    assert!(matches!(
+        err,
+        ReplayError::UnsupportedVersion { ref capture_version } if capture_version == "v999"
+    ));
 }
