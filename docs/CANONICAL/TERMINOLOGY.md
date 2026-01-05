@@ -143,7 +143,7 @@ The following terms have trading connotations and should be avoided or renamed i
 | Term     | Status             | Replacement | Notes                                                                    |
 |----------|--------------------| ------------|--------------------------------------------------------------------------|
 | `Tick`   | **Completed**      | `Pump`      | "Tick" implies market data; "Pump" is domain-neutral for periodic events |
-| `Filled` | **Rename pending** | `Completed` | "Filled" implies order execution; "Completed" is generic                 |
+| `Filled` | **Completed**      | `Completed` | "Filled" implies order execution; "Completed" is generic                 |
 
 ### Naming Rule
 
@@ -157,9 +157,11 @@ This is a review tripwire, not a linter rule; exceptions require explicit justif
 ### Current Status
 
 - `ExternalEventKind::Tick` → `ExternalEventKind::Pump` (**completed**, serde alias retained)
-- `RunTermination::Filled` → `RunTermination::Completed` (pending)
+- `ActionOutcome::Filled` → `ActionOutcome::Completed` (**completed**, not serialized)
 
 The `Tick` → `Pump` rename is complete with backward-compatible `#[serde(alias = "Tick")]`. Test `legacy_tick_deserializes_to_pump` verifies old captures remain replayable.
+
+The `Filled` → `Completed` rename is complete. `ActionOutcome` is not serialized, so no backward-compat alias needed. Doc comment notes alias requirement if serialization is added.
 
 ---
 

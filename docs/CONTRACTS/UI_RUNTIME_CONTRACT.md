@@ -204,7 +204,7 @@ Boundary outputs:
 |----------------|---------------|
 | action_outcome | act:outcome   |
 
-Result: `action_outcome = Event(Action(Filled))`
+Result: `action_outcome = Event(Action(Completed))`
 
 ---
 

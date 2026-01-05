@@ -20,7 +20,9 @@ pub enum ActionValueType {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActionOutcome {
     Attempted,
-    Filled,
+    /// Action executed successfully and completed.
+    /// NOTE: If serialization is introduced, add backward-compat serde alias for legacy "Filled".
+    Completed,
     Rejected,
     Cancelled,
     Failed,

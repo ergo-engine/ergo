@@ -46,7 +46,7 @@ impl DecisionLog for CapturingLog {
 /// Structure: number_source(3.0) -> gt <- number_source(1.0)
 ///            gt:result -> emit_if_true:input
 ///            emit_if_true:event -> ack_action:event
-/// Since 3.0 > 1.0, trigger emits, action executes with outcome Filled.
+/// Since 3.0 > 1.0, trigger emits, action executes with outcome Completed.
 fn build_hello_world_graph() -> ExpandedGraph {
     let mut nodes = HashMap::new();
 
