@@ -184,6 +184,22 @@ Legend:
 
 ---
 
+### REP-1b — Point-of-use hash verification in replay path
+
+- **ID:** REP-1b
+- **Invariant:** REP-1 (Capture records are self-validating)
+- **Disposition:** CLOSE (defense-in-depth)
+- **Change:** Point-of-use hash verification via `rehydrate_checked()` in supervisor replay path; prevents bypass of `validate_bundle()` / accidental unchecked `rehydrate()` usage.
+- **Enforcement loci:**
+  - adapter: `ExternalEventRecord::rehydrate_checked()`
+  - supervisor: `replay_inner()` calls checked rehydrate, propagates error
+  - `validate_bundle()` retained as belt-and-suspenders
+- **Error:** `ReplayError::HashMismatch { event_id }`
+- **Test:** `replay_rejects_mid_stream_corruption`
+- **PR/Commit:** <pending>
+
+---
+
 ## Semantics Decision Queue (v1)
 
 ### B.2 — Divide-by-zero behavior

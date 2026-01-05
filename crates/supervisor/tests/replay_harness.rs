@@ -199,3 +199,24 @@ fn replay_rejects_unknown_version() {
         ReplayError::UnsupportedVersion { ref capture_version } if capture_version == "v999"
     ));
 }
+
+/// REP-1b: Point-of-use hash verification catches mid-stream corruption.
+#[test]
+fn replay_rejects_mid_stream_corruption() {
+    // Build a bundle with 2 events: first is valid, second is corrupted
+    let record1 = make_payload_record("evt-1", Duration::from_secs(0), b"first");
+    let mut record2 = make_payload_record("evt-2", Duration::from_secs(1), b"second");
+
+    // Corrupt event2's payload but leave hash unchanged
+    record2.payload.data = b"corrupted".to_vec();
+
+    let bundle = baseline_bundle(vec![record1, record2], Constraints::default());
+
+    let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
+    let result = replay_checked(&bundle, runtime);
+
+    assert!(matches!(
+        result,
+        Err(ReplayError::HashMismatch { ref event_id }) if event_id == &EventId::new("evt-2")
+    ));
+}

@@ -1,6 +1,6 @@
 ---
 Authority: CANONICAL
-Version: v0.17
+Version: v0.18
 Owner: Claude (Structural Auditor)
 Last Updated: 2025-01-05
 ---
@@ -403,6 +403,7 @@ must be implemented as clusters with explicit state flow through environment.
 
 - **REP-1:** `validate_hash()` in capture.rs uses SHA256 to verify payload integrity. **ENFORCED** at `replay.rs` via `validate_bundle()` (called by `replay_checked()`). Legacy `replay()` panics on invalid bundle; `replay_checked()` returns `Result<_, ReplayError>` for graceful handling.
   - **Anchor tests:** `replay_rejects_corrupted_bundle`, `replay_rejects_unknown_version`
+  - **v0.18:** Enforcement strengthened — `rehydrate_checked()` now called at point-of-use in supervisor replay path (`replay_inner()`). See REP-1b in closure register.
 - **REP-2:** `rehydrate()` uses only record fields; no external state dependency.
 - **REP-3:** `FaultRuntimeHandle` explicitly discards `graph_id` and `ctx.inner()`; keys on `EventId` only.
 - **REP-4:** `ExecutionContext` has no serde derives. Capture types (`ExternalEventRecord`, `EpisodeInvocationRecord`) are separate from runtime types (`ExternalEvent`, `DecisionLogEntry`).
@@ -521,3 +522,4 @@ Changes to this document require the same review bar as changes to frozen specs.
 | v0.15 | 2025-01-05 | Claude Code | Audit #2 closures: E.8 added (deterministic runtime IDs); I.3 strengthened (default application); E.2 strengthened (mapping failures explicit) |
 | v0.16 | 2025-01-05 | Claude Code | X.10 added: reject Series compute parameters at registration (Codex audit finding) |
 | v0.17 | 2025-01-05 | Claude Code | X.11 added: guard Int→f64 conversion for exact representability (Codex audit finding) |
+| v0.18 | 2025-01-05 | Claude Code | REP-1 strengthened: point-of-use hash verification in supervisor replay path (REP-1b) |

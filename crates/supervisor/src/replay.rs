@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use ergo_adapter::capture::ExternalEventRecord;
+use ergo_adapter::capture::{CaptureError, ExternalEventRecord};
 use ergo_adapter::{EventId, RuntimeInvoker};
 
 use crate::{CaptureBundle, DecisionLog, DecisionLogEntry, EpisodeInvocationRecord, Supervisor};
@@ -53,7 +53,7 @@ pub fn replay_checked<R: RuntimeInvoker + Clone>(
     runtime: R,
 ) -> Result<Vec<EpisodeInvocationRecord>, ReplayError> {
     validate_bundle(bundle)?;
-    Ok(replay_inner(bundle, runtime))
+    replay_inner(bundle, runtime)
 }
 
 pub fn replay<R: RuntimeInvoker + Clone>(
@@ -66,7 +66,7 @@ pub fn replay<R: RuntimeInvoker + Clone>(
 fn replay_inner<R: RuntimeInvoker + Clone>(
     bundle: &CaptureBundle,
     runtime: R,
-) -> Vec<EpisodeInvocationRecord> {
+) -> Result<Vec<EpisodeInvocationRecord>, ReplayError> {
     let decision_log = MemoryDecisionLog::default();
     let mut supervisor = Supervisor::with_runtime(
         bundle.graph_id.clone(),
@@ -76,12 +76,16 @@ fn replay_inner<R: RuntimeInvoker + Clone>(
     );
 
     for record in &bundle.events {
-        supervisor.on_event(rehydrate_event(record));
+        supervisor.on_event(rehydrate_event(record)?);
     }
 
-    decision_log.records()
+    Ok(decision_log.records())
 }
 
-fn rehydrate_event(record: &ExternalEventRecord) -> ergo_adapter::ExternalEvent {
-    record.rehydrate()
+fn rehydrate_event(record: &ExternalEventRecord) -> Result<ergo_adapter::ExternalEvent, ReplayError> {
+    record.rehydrate_checked().map_err(|err| match err {
+        CaptureError::PayloadHashMismatch { .. } => ReplayError::HashMismatch {
+            event_id: record.event_id.clone(),
+        },
+    })
 }
