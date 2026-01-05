@@ -1,13 +1,13 @@
 ---
 Authority: CANONICAL
-Version: v0.14
+Version: v0.15
 Owner: Claude (Structural Auditor)
 Last Updated: 2025-01-05
 ---
 
 # Phase Invariants — v0
 
-**Tracked invariants:** 67
+**Tracked invariants:** 68
 
 This document defines the invariants that must hold at each phase boundary in the system. It is the authoritative reference for what is true, where that truth is enforced, and what happens if it is violated.
 
@@ -166,6 +166,7 @@ These invariants hold across all phases. Violation at any point is a system-leve
 
 - **I.3–I.5:** Enforced in `cluster.rs::expand_with_context` during nested cluster processing via `validate_parameter_bindings()`. Errors: `MissingRequiredParameter`, `ParameterBindingTypeMismatch`, `ExposedParameterNotFound`, `ExposedParameterTypeMismatch`. Tests: `required_parameter_missing_rejected`, `parameter_binding_type_mismatch_rejected`, `exposed_parameter_not_in_parent_rejected`, `exposed_parameter_type_mismatch_rejected`. Note: I.4 is enforced symmetrically for both Literal and Exposed bindings.
   - **Strengthened (2025-01-05):** Exposed bindings now propagate through nested cluster hierarchies via `resolve_bindings_with_context()` and `build_resolved_params()`. Prior behavior only validated at immediate cluster boundary; multi-level nesting (Parent → Middle → Inner → Leaf) now correctly receives propagated values. Added `ExpandError::UnresolvedExposedBinding { node_id, parameter, referenced }` for primitives with dangling Exposed bindings. Tests: `exposed_binding_propagates_to_leaf_primitive`, `unresolved_exposed_binding_rejected`. Location: `cluster.rs:expand_with_context()`.
+  - **Default application (2025-01-05):** Parameters with `default: Some(value)` in either `ParameterMetadata` (primitives) or `ParameterSpec` (clusters) are automatically applied during expansion when no binding is provided. Enforced by `resolve_impl_parameters()` (primitives, cluster.rs:988-1028) and `build_resolved_params()` (clusters, cluster.rs:1034-1074). Tests: `defaulted_parameter_propagates_to_leaf`, `explicit_binding_overrides_default`, `missing_required_param_no_default_rejected`, `cluster_parameter_default_propagates_to_nested`.
 - **I.6:** Version constraint validation **NOT IMPLEMENTED**. Cluster expansion performs direct lookup without constraint evaluation. Marked for future work.
 
 ---
@@ -189,6 +190,7 @@ These invariants hold across all phases. Violation at any point is a system-leve
 | E.5 | Empty clusters are rejected | CLUSTER_SPEC.md §6.1 | — | — | ✓ | ✓ |
 | E.6 | Original cluster definitions are not mutated | (inferred) | — | — | — | — |
 | E.7 | `ExpandedGraph` carries boundary ports for inference only | (inferred) | — | — | — | — |
+| E.8 | Runtime ID assignment is deterministic for identical definitions | (inferred) | — | — | ✓ | ✓ |
 
 ### Notes
 
@@ -201,6 +203,9 @@ These invariants hold across all phases. Violation at any point is a system-leve
 /// `boundary_inputs` and `boundary_outputs` are retained for signature inference only
 /// and must not influence runtime execution.
 ```
+
+- **E.2:** ✅ Strengthened (2025-01-05). Boundary output mapping (`map_boundary_outputs`) and nested output mapping now return typed errors instead of silent fallback. Errors: `ExpandError::UnmappedBoundaryOutput { port_name, node_id }`, `ExpandError::UnmappedNestedOutput { cluster_id, port_name }`. Tests: `unmapped_boundary_output_rejected`, `nested_output_mapping_failure_rejected`.
+- **E.8:** ✅ **CLOSED.** Enforced via sorted-key iteration in `expand_with_context` (cluster.rs:694-698). Test: `expansion_runtime_ids_deterministic`.
 
 ---
 
@@ -509,3 +514,4 @@ Changes to this document require the same review bar as changes to frozen specs.
 | v0.12 | 2025-12-28 | Claude Code | R.7 closed — runtime gating implemented; ActionOutcome::Skipped added; test added |
 | v0.13 | 2025-12-28 | Claude Code | TRG-STATE-1 added — triggers are stateless; R.5 updated; REP-6 closed by clarification |
 | v0.14 | 2025-01-05 | Claude Code | V.7 added (single edge per input); R.7 strengthened (explicit TriggerEvent matching); I.3-I.5 strengthened (nested Exposed binding propagation); TRG-STATE-1 enforcement locus confirmed |
+| v0.15 | 2025-01-05 | Claude Code | Audit #2 closures: E.8 added (deterministic runtime IDs); I.3 strengthened (default application); E.2 strengthened (mapping failures explicit) |
