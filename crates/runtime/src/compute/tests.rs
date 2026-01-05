@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use crate::common::Value;
 use crate::compute::implementations::{
-    Abs, Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Lt, Lte, Multiply, Negate, Neq,
-    Not, Or, Select, Subtract,
+    Abs, Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Lt, Lte, Min, Multiply, Negate,
+    Neq, Not, Or, Select, Subtract,
 };
 use crate::compute::ComputePrimitive;
 
@@ -299,6 +299,34 @@ fn lte_basic_false_when_greater() {
         None,
     );
     assert_eq!(outputs.get("result"), Some(&Value::Bool(false)));
+}
+
+#[test]
+fn min_selects_lower_value() {
+    let min = Min::new();
+    let outputs = min.compute(
+        &HashMap::from([
+            ("a".to_string(), Value::Number(2.0)),
+            ("b".to_string(), Value::Number(5.0)),
+        ]),
+        &HashMap::new(),
+        None,
+    );
+    assert_eq!(outputs.get("result"), Some(&Value::Number(2.0)));
+}
+
+#[test]
+fn min_selects_lower_when_swapped() {
+    let min = Min::new();
+    let outputs = min.compute(
+        &HashMap::from([
+            ("a".to_string(), Value::Number(5.0)),
+            ("b".to_string(), Value::Number(2.0)),
+        ]),
+        &HashMap::new(),
+        None,
+    );
+    assert_eq!(outputs.get("result"), Some(&Value::Number(2.0)));
 }
 
 #[test]
