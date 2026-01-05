@@ -52,4 +52,11 @@ pub enum ValidationError {
         node: String,
         output: String,
     },
+    /// X.10: Compute parameters must not be Series type.
+    UnsupportedParameterType {
+        primitive: String,
+        version: String,
+        parameter: String,
+        got: ValueType,
+    },
 }

@@ -152,6 +152,21 @@ Legend:
 
 ---
 
+### X.10 — Compute parameters must not be Series type
+
+- **ID:** X.10
+- **Rule:** Compute primitives must not declare parameters with `ValueType::Series`. Series is valid for inputs/outputs but not parameters.
+- **Disposition:** REJECT
+- **Enforcement locus:** catalog registration (`crates/runtime/src/catalog.rs:177-185`)
+  - `map_compute_param_type` returns `Option` (None for Series)
+  - `register_compute` returns `Result<(), ValidationError>`
+  - Defensive unreachable in `map_compute_param_value` for Series
+- **Error:** `ValidationError::UnsupportedParameterType { primitive, version, parameter, got }`
+- **Test:** `series_parameter_type_rejected` (catalog.rs)
+- **PR/Commit:** <pending>
+
+---
+
 ## Semantics Decision Queue (v1)
 
 ### B.2 — Divide-by-zero behavior

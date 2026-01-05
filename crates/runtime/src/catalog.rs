@@ -142,7 +142,10 @@ impl CorePrimitiveCatalog {
         }
     }
 
-    pub fn register_compute(&mut self, manifest: ComputePrimitiveManifest) {
+    pub fn register_compute(
+        &mut self,
+        manifest: ComputePrimitiveManifest,
+    ) -> Result<(), ValidationError> {
         let inputs = manifest
             .inputs
             .into_iter()
@@ -168,19 +171,26 @@ impl CorePrimitiveCatalog {
             .collect();
 
         // A.1: Extract parameter specs with defaults
-        let parameters = manifest
-            .parameters
-            .into_iter()
-            .map(|p| {
-                let required = p.default.is_none();
-                ParameterMetadata {
-                    name: p.name,
-                    ty: map_compute_param_type(p.value_type),
-                    default: p.default.map(map_compute_param_value),
-                    required,
+        // X.10: Reject Series parameter types at registration
+        let mut parameters = Vec::new();
+        for p in manifest.parameters {
+            let param_value_type = p.value_type.clone();
+            let ty = map_compute_param_type(p.value_type).ok_or_else(|| {
+                ValidationError::UnsupportedParameterType {
+                    primitive: manifest.id.clone(),
+                    version: manifest.version.clone(),
+                    parameter: p.name.clone(),
+                    got: param_value_type, // common::ValueType, not cluster::ValueType
                 }
-            })
-            .collect();
+            })?;
+            let required = p.default.is_none();
+            parameters.push(ParameterMetadata {
+                name: p.name,
+                ty,
+                default: p.default.map(map_compute_param_value),
+                required,
+            });
+        }
 
         self.metadata.insert(
             (manifest.id.clone(), manifest.version.clone()),
@@ -191,6 +201,7 @@ impl CorePrimitiveCatalog {
                 parameters,
             },
         );
+        Ok(())
     }
 
     pub fn register_trigger(&mut self, manifest: crate::trigger::TriggerPrimitiveManifest) {
@@ -353,22 +364,52 @@ pub fn build_core_catalog() -> CorePrimitiveCatalog {
     catalog.register_source(number_source_manifest());
     catalog.register_source(boolean_source_manifest());
 
-    // Computes
-    catalog.register_compute(const_number_manifest());
-    catalog.register_compute(const_bool_manifest());
-    catalog.register_compute(add_manifest());
-    catalog.register_compute(subtract_manifest());
-    catalog.register_compute(multiply_manifest());
-    catalog.register_compute(divide_manifest());
-    catalog.register_compute(negate_manifest());
-    catalog.register_compute(gt_manifest());
-    catalog.register_compute(lt_manifest());
-    catalog.register_compute(eq_manifest());
-    catalog.register_compute(neq_manifest());
-    catalog.register_compute(and_manifest());
-    catalog.register_compute(or_manifest());
-    catalog.register_compute(not_manifest());
-    catalog.register_compute(select_manifest());
+    // Computes (X.10: all core compute manifests use supported parameter types)
+    catalog
+        .register_compute(const_number_manifest())
+        .expect("const_number manifest is valid");
+    catalog
+        .register_compute(const_bool_manifest())
+        .expect("const_bool manifest is valid");
+    catalog
+        .register_compute(add_manifest())
+        .expect("add manifest is valid");
+    catalog
+        .register_compute(subtract_manifest())
+        .expect("subtract manifest is valid");
+    catalog
+        .register_compute(multiply_manifest())
+        .expect("multiply manifest is valid");
+    catalog
+        .register_compute(divide_manifest())
+        .expect("divide manifest is valid");
+    catalog
+        .register_compute(negate_manifest())
+        .expect("negate manifest is valid");
+    catalog
+        .register_compute(gt_manifest())
+        .expect("gt manifest is valid");
+    catalog
+        .register_compute(lt_manifest())
+        .expect("lt manifest is valid");
+    catalog
+        .register_compute(eq_manifest())
+        .expect("eq manifest is valid");
+    catalog
+        .register_compute(neq_manifest())
+        .expect("neq manifest is valid");
+    catalog
+        .register_compute(and_manifest())
+        .expect("and manifest is valid");
+    catalog
+        .register_compute(or_manifest())
+        .expect("or manifest is valid");
+    catalog
+        .register_compute(not_manifest())
+        .expect("not manifest is valid");
+    catalog
+        .register_compute(select_manifest())
+        .expect("select manifest is valid");
 
     // Triggers
     catalog.register_trigger(emit_if_true_manifest());
@@ -428,18 +469,22 @@ fn map_source_param_value(val: crate::source::ParameterValue) -> ParameterValue 
     }
 }
 
-fn map_compute_param_type(ty: common::ValueType) -> ParameterType {
+/// X.10: Returns None for Series (unsupported parameter type for compute primitives).
+fn map_compute_param_type(ty: common::ValueType) -> Option<ParameterType> {
     match ty {
-        common::ValueType::Number => ParameterType::Number,
-        common::ValueType::Series => ParameterType::Number, // Series params not supported; fallback
-        common::ValueType::Bool => ParameterType::Bool,
+        common::ValueType::Number => Some(ParameterType::Number),
+        common::ValueType::Series => None, // X.10: Series params not supported
+        common::ValueType::Bool => Some(ParameterType::Bool),
     }
 }
 
 fn map_compute_param_value(val: common::Value) -> ParameterValue {
     match val {
         common::Value::Number(n) => ParameterValue::Number(n),
-        common::Value::Series(_) => ParameterValue::Number(0.0), // Series params not supported
+        // X.10: Series is rejected at type check; this arm is unreachable for valid registrations.
+        common::Value::Series(_) => {
+            unreachable!("X.10: Series parameter type should be rejected at registration")
+        }
         common::Value::Bool(b) => ParameterValue::Bool(b),
     }
 }
@@ -481,5 +526,60 @@ fn map_action_param_value(val: crate::action::ParameterValue) -> ParameterValue 
         crate::action::ParameterValue::Bool(b) => ParameterValue::Bool(b),
         crate::action::ParameterValue::String(s) => ParameterValue::String(s),
         crate::action::ParameterValue::Enum(e) => ParameterValue::Enum(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compute::{Cadence, ExecutionSpec, InputSpec, OutputSpec, ParameterSpec, StateSpec};
+
+    /// X.10: Compute primitives must not declare Series parameter types.
+    #[test]
+    fn series_parameter_type_rejected() {
+        let manifest = ComputePrimitiveManifest {
+            id: "test_series_param".to_string(),
+            version: "0.1.0".to_string(),
+            kind: common::PrimitiveKind::Compute,
+            inputs: vec![InputSpec {
+                name: "x".to_string(),
+                value_type: common::ValueType::Number,
+                required: true,
+            }],
+            outputs: vec![OutputSpec {
+                name: "result".to_string(),
+                value_type: common::ValueType::Number,
+            }],
+            parameters: vec![ParameterSpec {
+                name: "series_param".to_string(),
+                value_type: common::ValueType::Series, // X.10: unsupported
+                default: None,
+            }],
+            execution: ExecutionSpec {
+                deterministic: true,
+                cadence: Cadence::Continuous,
+            },
+            state: StateSpec {
+                stateful: false,
+                rolling_window: None,
+            },
+            side_effects: false,
+        };
+
+        let mut catalog = CorePrimitiveCatalog::new();
+        let result = catalog.register_compute(manifest);
+
+        assert!(matches!(
+            result,
+            Err(ValidationError::UnsupportedParameterType {
+                primitive,
+                version,
+                parameter,
+                got
+            }) if primitive == "test_series_param"
+                && version == "0.1.0"
+                && parameter == "series_param"
+                && got == common::ValueType::Series
+        ));
     }
 }
