@@ -243,7 +243,7 @@ fn capturing_session_enables_round_trip_replay() {
         runtime,
     );
 
-    let event = ExternalEvent::mechanical(EventId::new("capture_event"), ExternalEventKind::Tick);
+    let event = ExternalEvent::mechanical(EventId::new("capture_event"), ExternalEventKind::Pump);
     session.on_event(event);
 
     let bundle = session.into_bundle();
@@ -352,7 +352,7 @@ fn deferred_episode_retried_on_tick() {
     // Send Tick at t=10 (after rate window expires)
     let tick = ExternalEvent::mechanical_at(
         EventId::new("tick1"),
-        ExternalEventKind::Tick,
+        ExternalEventKind::Pump,
         EventTime::from_duration(Duration::from_secs(10)),
     );
     supervisor2.on_event(tick);
@@ -383,7 +383,7 @@ fn tick_with_empty_queue_logs_noop() {
     // Send Tick with no deferred episodes
     let tick = ExternalEvent::mechanical_at(
         EventId::new("tick1"),
-        ExternalEventKind::Tick,
+        ExternalEventKind::Pump,
         EventTime::from_duration(Duration::from_secs(0)),
     );
     supervisor.on_event(tick);
@@ -456,7 +456,7 @@ fn tick_respects_episode_id_ordering() {
     // First Tick at t=10 — should invoke episode_id=1 (lower id wins tie)
     let tick1 = ExternalEvent::mechanical_at(
         EventId::new("tick1"),
-        ExternalEventKind::Tick,
+        ExternalEventKind::Pump,
         EventTime::from_duration(Duration::from_secs(10)),
     );
     supervisor.on_event(tick1);
@@ -464,7 +464,7 @@ fn tick_respects_episode_id_ordering() {
     // Second Tick at t=20 — should invoke episode_id=2
     let tick2 = ExternalEvent::mechanical_at(
         EventId::new("tick2"),
-        ExternalEventKind::Tick,
+        ExternalEventKind::Pump,
         EventTime::from_duration(Duration::from_secs(20)),
     );
     supervisor.on_event(tick2);

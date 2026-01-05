@@ -142,7 +142,7 @@ The following terms have trading connotations and should be avoided or renamed i
 
 | Term     | Status             | Replacement | Notes                                                                    |
 |----------|--------------------| ------------|--------------------------------------------------------------------------|
-| `Tick`   | **Rename pending** | `Pump`      | "Tick" implies market data; "Pump" is domain-neutral for periodic events |
+| `Tick`   | **Completed**      | `Pump`      | "Tick" implies market data; "Pump" is domain-neutral for periodic events |
 | `Filled` | **Rename pending** | `Completed` | "Filled" implies order execution; "Completed" is generic                 |
 
 ### Naming Rule
@@ -152,12 +152,14 @@ When adding new types, events, or concepts to core layers:
 2. If not, choose a domain-neutral alternative
 3. Vertical-specific terminology belongs in vertical crates, not core
 
+This is a review tripwire, not a linter rule; exceptions require explicit justification in the PR description. If a domain-loaded term is already serialized, renames must include backward-compat aliases and tests.
+
 ### Current Status
 
-- `ExternalEventKind::Tick` → `ExternalEventKind::Pump` (pending)
+- `ExternalEventKind::Tick` → `ExternalEventKind::Pump` (**completed**, serde alias retained)
 - `RunTermination::Filled` → `RunTermination::Completed` (pending)
 
-These renames are tracked but not yet implemented. Tests in `replay_harness.rs` already use `Command` instead of `Tick` to avoid coupling to the deferred-retry behavior.
+The `Tick` → `Pump` rename is complete with backward-compatible `#[serde(alias = "Tick")]`. Test `legacy_tick_deserializes_to_pump` verifies old captures remain replayable.
 
 ---
 

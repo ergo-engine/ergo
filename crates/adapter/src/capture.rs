@@ -73,7 +73,7 @@ mod tests {
     fn rehydrate_checked_ok_when_hash_matches() {
         let event = ExternalEvent::with_payload(
             EventId::new("evt-1"),
-            ExternalEventKind::Tick,
+            ExternalEventKind::Pump,
             EventTime::from_duration(std::time::Duration::default()),
             EventPayload {
                 data: b"hello".to_vec(),
@@ -88,7 +88,7 @@ mod tests {
     fn rehydrate_checked_err_when_hash_mismatch() {
         let event = ExternalEvent::with_payload(
             EventId::new("evt-2"),
-            ExternalEventKind::Tick,
+            ExternalEventKind::Pump,
             EventTime::from_duration(std::time::Duration::default()),
             EventPayload {
                 data: b"hello".to_vec(),

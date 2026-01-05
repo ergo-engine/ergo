@@ -191,7 +191,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
         self.clock.advance_to(event.at());
         let now = self.clock.now();
 
-        if event.kind() == ExternalEventKind::Tick {
+        if event.kind() == ExternalEventKind::Pump {
             self.process_tick(&event, now);
             return;
         }

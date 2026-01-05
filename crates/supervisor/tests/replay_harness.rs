@@ -10,7 +10,7 @@ use ergo_supervisor::{CaptureBundle, Constraints, Decision, EpisodeInvocationRec
 use serde_json;
 
 fn make_event_record(id: &str, at: Duration) -> ExternalEventRecord {
-    // Use Command, not Tick — Tick now has special deferred-retry behavior
+    // Use Command, not Pump — Pump has special deferred-retry behavior
     let event = ExternalEvent::mechanical_at(
         EventId::new(id.to_string()),
         ExternalEventKind::Command,
@@ -239,4 +239,27 @@ fn replay_rejects_mid_stream_corruption() {
         result,
         Err(ReplayError::HashMismatch { ref event_id }) if event_id == &EventId::new("evt-2")
     ));
+}
+
+/// RENAME-TICK-1: Old captures with "Tick" deserialize to Pump via serde alias.
+/// This ensures backward compatibility for captures created before the rename.
+#[test]
+fn legacy_tick_deserializes_to_pump() {
+    // JSON with legacy "Tick" value (simulating old capture format)
+    let legacy_json = r#"{
+        "event_id": "legacy-tick-event",
+        "event_time": { "secs": 0, "nanos": 0 },
+        "kind": "Tick",
+        "payload": [],
+        "payload_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }"#;
+
+    let record: ExternalEventRecord =
+        serde_json::from_str(legacy_json).expect("legacy Tick should deserialize");
+
+    assert_eq!(
+        record.kind,
+        ExternalEventKind::Pump,
+        "legacy 'Tick' must deserialize to Pump variant"
+    );
 }
