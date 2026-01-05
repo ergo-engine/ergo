@@ -9,7 +9,7 @@
  *   gt.result → emit_if_true.input
  *   emit_if_true.event → ack_action.event
  *
- * Expected result: action_outcome = Event(Action(Filled))
+ * Expected result: action_outcome = Event(Action(Completed))
  */
 
 import {

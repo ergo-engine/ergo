@@ -20,7 +20,7 @@ fn ack_action_respects_accept_parameter() {
     );
     assert_eq!(
         accepted.get("outcome"),
-        Some(&ActionValue::Event(ActionOutcome::Filled))
+        Some(&ActionValue::Event(ActionOutcome::Completed))
     );
 
     let rejected = action.execute(

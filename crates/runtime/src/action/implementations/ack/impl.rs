@@ -48,7 +48,7 @@ impl ActionPrimitive for AckAction {
             .unwrap_or(true);
 
         let outcome = if accept {
-            ActionOutcome::Filled
+            ActionOutcome::Completed
         } else {
             ActionOutcome::Rejected
         };

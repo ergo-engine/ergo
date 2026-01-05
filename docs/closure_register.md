@@ -239,6 +239,19 @@ Legend:
 
 ---
 
+### RENAME-FILLED-1 — ActionOutcome::Filled renamed to Completed
+
+- **ID:** RENAME-FILLED-1
+- **Change:** `ActionOutcome::Filled` → `ActionOutcome::Completed`
+- **Rationale:** Domain neutrality (TERMINOLOGY.md §9). "Filled" implies order execution; "Completed" is generic.
+- **Disposition:** CLOSE
+- **Enforcement locus:** `crates/runtime/src/action/mod.rs`
+- **Serialization:** Not currently serialized. Doc comment added for future alias requirement.
+- **Test:** Existing `ack_action_respects_accept_parameter` and `hello_world_graph_produces_expected_outputs` verify Completed outcome.
+- **PR/Commit:** 6bf4596
+
+---
+
 ## Semantics Decision Queue (v1)
 
 ### B.2 — Divide-by-zero behavior

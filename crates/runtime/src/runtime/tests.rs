@@ -441,7 +441,7 @@ fn hello_world_graph_executes_with_core_catalog_and_registries() {
     assert_eq!(
         report.outputs.get("action_outcome"),
         Some(&RuntimeValue::Event(
-            crate::runtime::types::RuntimeEvent::Action(crate::action::ActionOutcome::Filled)
+            crate::runtime::types::RuntimeEvent::Action(crate::action::ActionOutcome::Completed)
         ))
     );
 }
@@ -728,7 +728,7 @@ fn r7_action_skipped_when_trigger_not_emitted() {
 
     let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
 
-    // R.7 enforcement: Action should be Skipped, not Attempted/Filled
+    // R.7 enforcement: Action should be Skipped, not Attempted/Completed
     assert_eq!(
         report.outputs.get("action_outcome"),
         Some(&RuntimeValue::Event(
