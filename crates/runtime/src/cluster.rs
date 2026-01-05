@@ -162,12 +162,24 @@ pub struct PrimitiveMetadata {
     pub kind: PrimitiveKind,
     pub inputs: Vec<InputMetadata>,
     pub outputs: HashMap<String, OutputMetadata>,
+    /// A.1: Parameter specs with defaults for expansion-time resolution.
+    pub parameters: Vec<ParameterMetadata>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InputMetadata {
     pub name: String,
     pub value_type: ValueType,
+    pub required: bool,
+}
+
+/// A.1: Parameter metadata for primitives, including defaults.
+/// Used during expansion to resolve parameters when no binding is provided.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParameterMetadata {
+    pub name: String,
+    pub ty: ParameterType,
+    pub default: Option<ParameterValue>,
     pub required: bool,
 }
 
@@ -218,10 +230,19 @@ pub enum ExpandedEndpoint {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExpandError {
     EmptyCluster,
-    MissingCluster { id: String, version: Version },
-    DuplicateInputPort { name: String },
-    DuplicateOutputPort { name: String },
-    DuplicateParameter { name: String },
+    MissingCluster {
+        id: String,
+        version: Version,
+    },
+    DuplicateInputPort {
+        name: String,
+    },
+    DuplicateOutputPort {
+        name: String,
+    },
+    DuplicateParameter {
+        name: String,
+    },
     ParameterDefaultTypeMismatch {
         name: String,
         expected: ParameterType,
@@ -253,6 +274,22 @@ pub enum ExpandError {
         parameter: String,
         expected: ParameterType,
         got: ParameterType,
+    },
+    /// Exposed binding was not resolved during expansion (no parent provided a value)
+    UnresolvedExposedBinding {
+        node_id: String,
+        parameter: String,
+        referenced: String,
+    },
+    /// A.2: Boundary output references unmapped node_id
+    UnmappedBoundaryOutput {
+        port_name: String,
+        node_id: String,
+    },
+    /// A.3: Nested cluster output port references unmapped node
+    UnmappedNestedOutput {
+        cluster_id: String,
+        port_name: String,
     },
 }
 
@@ -293,11 +330,11 @@ pub fn expand<L: ClusterLoader>(
     validate_cluster_definition(cluster_def)?;
 
     let mut ctx = ExpandContext::new();
-    let build = expand_with_context(cluster_def, loader, catalog, &mut ctx, &[], &[])?;
+    let build = expand_with_context(cluster_def, loader, catalog, &mut ctx, &[], &HashMap::new())?;
 
     let mut graph = build.graph;
     graph.boundary_inputs = cluster_def.input_ports.clone();
-    graph.boundary_outputs = map_boundary_outputs(&cluster_def.output_ports, &build.node_mapping);
+    graph.boundary_outputs = map_boundary_outputs(&cluster_def.output_ports, &build.node_mapping)?;
 
     // E.3 invariant: ExternalInput must not appear as edge target (sink) after expansion
     for edge in &graph.edges {
@@ -312,8 +349,8 @@ pub fn expand<L: ClusterLoader>(
     }
 
     if let Some(declared) = &cluster_def.declared_signature {
-        let inferred = infer_signature(&graph, catalog)
-            .map_err(ExpandError::SignatureInferenceFailed)?;
+        let inferred =
+            infer_signature(&graph, catalog).map_err(ExpandError::SignatureInferenceFailed)?;
         validate_declared_signature(declared, &inferred)
             .map_err(ExpandError::DeclaredSignatureInvalid)?;
     }
@@ -645,7 +682,7 @@ fn expand_with_context<L: ClusterLoader>(
     catalog: &impl PrimitiveCatalog,
     ctx: &mut ExpandContext,
     authoring_prefix: &[(String, NodeId)],
-    _parent_parameters: &[ParameterSpec],
+    resolved_params: &HashMap<String, ParameterValue>,
 ) -> Result<ExpandBuild, ExpandError> {
     if cluster_def.nodes.is_empty() {
         return Err(ExpandError::EmptyCluster);
@@ -664,12 +701,38 @@ fn expand_with_context<L: ClusterLoader>(
     let mut cluster_output_map: HashMap<NodeId, HashMap<String, ExpandedEndpoint>> = HashMap::new();
     let mut cluster_input_map: HashMap<NodeId, HashMap<String, String>> = HashMap::new();
 
-    for node in cluster_def.nodes.values() {
+    // C.1: Iterate nodes in sorted key order for deterministic runtime_id assignment
+    let mut sorted_node_ids: Vec<_> = cluster_def.nodes.keys().collect();
+    sorted_node_ids.sort();
+    for node_id in sorted_node_ids {
+        let node = cluster_def.nodes.get(node_id).unwrap();
         match &node.kind {
             NodeKind::Impl { impl_id, version } => {
                 let runtime_id = ctx.next_runtime_id();
                 let mut authoring_path = authoring_prefix.to_vec();
                 authoring_path.push((cluster_def.id.clone(), node.id.clone()));
+
+                // A.1: Look up primitive specs to get parameter defaults
+                let primitive_meta = catalog.get(impl_id, version);
+
+                // A.1: Resolve parameters:
+                // - If catalog has metadata, use specs to apply defaults
+                // - Otherwise, fall back to direct binding resolution (legacy)
+                let resolved_bindings = if let Some(ref meta) = primitive_meta {
+                    resolve_impl_parameters(
+                        &node.id,
+                        &meta.parameters,
+                        &node.parameter_bindings,
+                        resolved_params,
+                    )?
+                } else {
+                    // Legacy path: resolve bindings without spec validation
+                    resolve_bindings_with_context(
+                        &node.id,
+                        &node.parameter_bindings,
+                        resolved_params,
+                    )?
+                };
 
                 graph.nodes.insert(
                     runtime_id.clone(),
@@ -680,7 +743,7 @@ fn expand_with_context<L: ClusterLoader>(
                             impl_id: impl_id.clone(),
                             version: version.clone(),
                         },
-                        parameters: resolve_parameter_bindings(&node.parameter_bindings),
+                        parameters: resolved_bindings,
                     },
                 );
 
@@ -706,6 +769,17 @@ fn expand_with_context<L: ClusterLoader>(
 
                 let bound_nested = apply_literal_bindings(&nested_def, &node.parameter_bindings);
 
+                // A.1: Build resolved parameter values for the nested cluster:
+                // - Literal bindings use their value directly
+                // - Exposed bindings look up the value from our resolved_params
+                // - Missing bindings use defaults from cluster parameter specs
+                let nested_resolved_params = build_resolved_params(
+                    &nested_def.id,
+                    &nested_def.parameters,
+                    &node.parameter_bindings,
+                    resolved_params,
+                )?;
+
                 let mut nested_prefix = authoring_prefix.to_vec();
                 nested_prefix.push((cluster_def.id.clone(), node.id.clone()));
 
@@ -715,7 +789,7 @@ fn expand_with_context<L: ClusterLoader>(
                     catalog,
                     ctx,
                     &nested_prefix,
-                    &cluster_def.parameters,
+                    &nested_resolved_params,
                 )?;
 
                 merge_graph(&mut graph, nested_build.graph);
@@ -729,19 +803,23 @@ fn expand_with_context<L: ClusterLoader>(
                 }
                 cluster_input_map.insert(node.id.clone(), input_map);
 
+                // A.3: Map all output ports, failing if any node_id is unmapped
                 let mut output_map: HashMap<String, ExpandedEndpoint> = HashMap::new();
                 for output_port in &bound_nested.output_ports {
-                    if let Some(node_id) =
-                        nested_build.node_mapping.get(&output_port.maps_to.node_id)
-                    {
-                        output_map.insert(
-                            output_port.name.clone(),
-                            ExpandedEndpoint::NodePort {
-                                node_id: node_id.clone(),
-                                port_name: output_port.maps_to.port_name.clone(),
-                            },
-                        );
-                    }
+                    let mapped_node_id = nested_build
+                        .node_mapping
+                        .get(&output_port.maps_to.node_id)
+                        .ok_or_else(|| ExpandError::UnmappedNestedOutput {
+                            cluster_id: node.id.clone(),
+                            port_name: output_port.name.clone(),
+                        })?;
+                    output_map.insert(
+                        output_port.name.clone(),
+                        ExpandedEndpoint::NodePort {
+                            node_id: mapped_node_id.clone(),
+                            port_name: output_port.maps_to.port_name.clone(),
+                        },
+                    );
                 }
                 cluster_output_map.insert(node.id.clone(), output_map);
 
@@ -911,35 +989,153 @@ fn apply_literal_bindings(
     updated
 }
 
-fn resolve_parameter_bindings(
+/// Resolves parameter bindings for a primitive node using the parent's resolved parameters.
+/// - Literal bindings use their value directly
+/// - Exposed bindings look up the value from resolved_params
+/// - Unresolved exposed bindings produce an error
+fn resolve_bindings_with_context(
+    node_id: &str,
     bindings: &HashMap<String, ParameterBinding>,
-) -> HashMap<String, ParameterValue> {
-    bindings
-        .iter()
-        .filter_map(|(name, binding)| match binding {
-            ParameterBinding::Literal { value } => Some((name.clone(), value.clone())),
-            ParameterBinding::Exposed { .. } => None,
-        })
-        .collect()
+    resolved_params: &HashMap<String, ParameterValue>,
+) -> Result<HashMap<String, ParameterValue>, ExpandError> {
+    let mut result = HashMap::new();
+    for (name, binding) in bindings {
+        match binding {
+            ParameterBinding::Literal { value } => {
+                result.insert(name.clone(), value.clone());
+            }
+            ParameterBinding::Exposed { parent_param } => {
+                // Look up the value from parent's resolved parameters
+                if let Some(value) = resolved_params.get(parent_param) {
+                    result.insert(name.clone(), value.clone());
+                } else {
+                    return Err(ExpandError::UnresolvedExposedBinding {
+                        node_id: node_id.to_string(),
+                        parameter: name.clone(),
+                        referenced: parent_param.clone(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(result)
 }
 
+/// A.1: Resolves parameters for a primitive node using specs, bindings, and defaults.
+/// - Explicit bindings (Literal or Exposed) take precedence
+/// - If no binding, apply default from primitive spec
+/// - If no binding and no default and required, error
+fn resolve_impl_parameters(
+    node_id: &str,
+    specs: &[ParameterMetadata],
+    bindings: &HashMap<String, ParameterBinding>,
+    parent_resolved: &HashMap<String, ParameterValue>,
+) -> Result<HashMap<String, ParameterValue>, ExpandError> {
+    let mut result = HashMap::new();
+
+    for spec in specs {
+        match bindings.get(&spec.name) {
+            Some(ParameterBinding::Literal { value }) => {
+                result.insert(spec.name.clone(), value.clone());
+            }
+            Some(ParameterBinding::Exposed { parent_param }) => {
+                if let Some(value) = parent_resolved.get(parent_param) {
+                    result.insert(spec.name.clone(), value.clone());
+                } else {
+                    return Err(ExpandError::UnresolvedExposedBinding {
+                        node_id: node_id.to_string(),
+                        parameter: spec.name.clone(),
+                        referenced: parent_param.clone(),
+                    });
+                }
+            }
+            None => {
+                // A.1: Apply default if available
+                if let Some(default) = &spec.default {
+                    result.insert(spec.name.clone(), default.clone());
+                } else if spec.required {
+                    return Err(ExpandError::MissingRequiredParameter {
+                        cluster_id: node_id.to_string(),
+                        parameter: spec.name.clone(),
+                    });
+                }
+                // else: optional with no default, omit
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// A.1: Builds resolved parameter values for a nested cluster instantiation.
+/// - Explicit bindings (Literal or Exposed) take precedence
+/// - If no binding, apply default from cluster parameter spec
+/// - If no binding and no default and required, error
+fn build_resolved_params(
+    cluster_id: &str,
+    specs: &[ParameterSpec],
+    bindings: &HashMap<String, ParameterBinding>,
+    resolved_params: &HashMap<String, ParameterValue>,
+) -> Result<HashMap<String, ParameterValue>, ExpandError> {
+    let mut result = HashMap::new();
+
+    for spec in specs {
+        match bindings.get(&spec.name) {
+            Some(ParameterBinding::Literal { value }) => {
+                result.insert(spec.name.clone(), value.clone());
+            }
+            Some(ParameterBinding::Exposed { parent_param }) => {
+                if let Some(value) = resolved_params.get(parent_param) {
+                    result.insert(spec.name.clone(), value.clone());
+                } else {
+                    return Err(ExpandError::UnresolvedExposedBinding {
+                        node_id: cluster_id.to_string(),
+                        parameter: spec.name.clone(),
+                        referenced: parent_param.clone(),
+                    });
+                }
+            }
+            None => {
+                // A.1: Apply default if available
+                if let Some(default) = &spec.default {
+                    result.insert(spec.name.clone(), default.clone());
+                } else if spec.required {
+                    return Err(ExpandError::MissingRequiredParameter {
+                        cluster_id: cluster_id.to_string(),
+                        parameter: spec.name.clone(),
+                    });
+                }
+                // else: optional with no default, omit
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// A.2: Map boundary outputs, failing if any node_id is unmapped
 fn map_boundary_outputs(
     outputs: &[OutputPortSpec],
     mapping: &HashMap<NodeId, String>,
-) -> Vec<OutputPortSpec> {
-    outputs
-        .iter()
-        .map(|o| OutputPortSpec {
+) -> Result<Vec<OutputPortSpec>, ExpandError> {
+    let mut result = Vec::with_capacity(outputs.len());
+    for o in outputs {
+        let mapped_node_id = mapping
+            .get(&o.maps_to.node_id)
+            .cloned()
+            .ok_or_else(|| ExpandError::UnmappedBoundaryOutput {
+                port_name: o.name.clone(),
+                node_id: o.maps_to.node_id.clone(),
+            })?;
+        result.push(OutputPortSpec {
             name: o.name.clone(),
             maps_to: OutputRef {
-                node_id: mapping
-                    .get(&o.maps_to.node_id)
-                    .cloned()
-                    .unwrap_or_else(|| o.maps_to.node_id.clone()),
+                node_id: mapped_node_id,
                 port_name: o.maps_to.port_name.clone(),
             },
-        })
-        .collect()
+        });
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -992,6 +1188,33 @@ mod tests {
             kind,
             inputs: Vec::new(),
             outputs: outputs_map,
+            parameters: Vec::new(),
+        }
+    }
+
+    /// A.1: Helper to create metadata with parameter specs
+    fn meta_with_params(
+        kind: PrimitiveKind,
+        outputs: &[(&str, ValueType)],
+        params: Vec<ParameterMetadata>,
+    ) -> PrimitiveMetadata {
+        let outputs_map = outputs
+            .iter()
+            .map(|(name, ty)| {
+                (
+                    name.to_string(),
+                    OutputMetadata {
+                        value_type: ty.clone(),
+                        cardinality: Cardinality::Single,
+                    },
+                )
+            })
+            .collect();
+        PrimitiveMetadata {
+            kind,
+            inputs: Vec::new(),
+            outputs: outputs_map,
+            parameters: params,
         }
     }
 
@@ -2142,6 +2365,661 @@ mod tests {
                 && parameter == "threshold"
                 && expected == ParameterType::Number
                 && got == ParameterType::Int
+        ));
+    }
+
+    /// PR-B: Exposed binding propagates through nested clusters to leaf primitive
+    #[test]
+    fn exposed_binding_propagates_to_leaf_primitive() {
+        // Structure:
+        //   Parent cluster (param "threshold": Number)
+        //     └── Nested cluster "middle" (param "inner_t" exposed to "threshold")
+        //           └── Leaf impl (param "leaf_t" exposed to "inner_t")
+        //
+        // Instantiate parent with threshold = Literal(7.0)
+        // Assert: leaf impl receives parameters = { "leaf_t": Number(7.0) }
+
+        // Innermost cluster with a leaf primitive that exposes a parameter
+        let mut inner_nodes = HashMap::new();
+        inner_nodes.insert(
+            "leaf".to_string(),
+            NodeInstance {
+                id: "leaf".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "leaf_t".to_string(),
+                    ParameterBinding::Exposed {
+                        parent_param: "inner_t".to_string(),
+                    },
+                )]),
+            },
+        );
+
+        let inner = ClusterDefinition {
+            id: "inner".to_string(),
+            version: "v1".to_string(),
+            nodes: inner_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: vec![ParameterSpec {
+                name: "inner_t".to_string(),
+                ty: ParameterType::Number,
+                default: None,
+                required: true,
+            }],
+            declared_signature: None,
+        };
+
+        // Middle cluster that instantiates inner with an exposed binding
+        let mut middle_nodes = HashMap::new();
+        middle_nodes.insert(
+            "nested_inner".to_string(),
+            NodeInstance {
+                id: "nested_inner".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "inner".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "inner_t".to_string(),
+                    ParameterBinding::Exposed {
+                        parent_param: "middle_t".to_string(),
+                    },
+                )]),
+            },
+        );
+
+        let middle = ClusterDefinition {
+            id: "middle".to_string(),
+            version: "v1".to_string(),
+            nodes: middle_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: vec![ParameterSpec {
+                name: "middle_t".to_string(),
+                ty: ParameterType::Number,
+                default: None,
+                required: true,
+            }],
+            declared_signature: None,
+        };
+
+        // Outer cluster that provides a literal binding
+        let mut outer_nodes = HashMap::new();
+        outer_nodes.insert(
+            "nested_middle".to_string(),
+            NodeInstance {
+                id: "nested_middle".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "middle".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "middle_t".to_string(),
+                    ParameterBinding::Literal {
+                        value: ParameterValue::Number(7.0),
+                    },
+                )]),
+            },
+        );
+
+        let outer = ClusterDefinition {
+            id: "outer".to_string(),
+            version: "v1".to_string(),
+            nodes: outer_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: Vec::new(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new().with_cluster(inner).with_cluster(middle);
+        let catalog = TestCatalog::default();
+        let expanded = expand(&outer, &loader, &catalog).unwrap();
+
+        // Verify the leaf primitive received the propagated value
+        assert_eq!(expanded.nodes.len(), 1);
+        let leaf_node = expanded.nodes.values().next().unwrap();
+        assert_eq!(leaf_node.implementation.impl_id, "prim");
+        assert_eq!(
+            leaf_node.parameters.get("leaf_t"),
+            Some(&ParameterValue::Number(7.0))
+        );
+    }
+
+    /// PR-B: Unresolved Exposed binding on primitive node is rejected
+    #[test]
+    fn unresolved_exposed_binding_rejected() {
+        // Structure:
+        //   Parent cluster (NO params)
+        //     └── Leaf impl (param "x" exposed to "nonexistent")
+        //
+        // Expand should fail with UnresolvedExposedBinding
+
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "leaf".to_string(),
+            NodeInstance {
+                id: "leaf".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "x".to_string(),
+                    ParameterBinding::Exposed {
+                        parent_param: "nonexistent".to_string(),
+                    },
+                )]),
+            },
+        );
+
+        let cluster = ClusterDefinition {
+            id: "root".to_string(),
+            version: "v1".to_string(),
+            nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: Vec::new(), // No parameters!
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+        let catalog = TestCatalog::default();
+        let result = expand(&cluster, &loader, &catalog);
+
+        assert!(matches!(
+            result,
+            Err(ExpandError::UnresolvedExposedBinding {
+                node_id,
+                parameter,
+                referenced
+            }) if node_id == "leaf"
+                && parameter == "x"
+                && referenced == "nonexistent"
+        ));
+    }
+
+    /// A.1: Default parameter value propagates to leaf when no binding provided
+    #[test]
+    fn defaulted_parameter_propagates_to_leaf() {
+        // Structure:
+        //   Root cluster
+        //     └── Leaf impl "prim" with param "threshold" (default 42.0, no binding)
+        //
+        // Expected: The expanded leaf node gets parameters = { "threshold": 42.0 }
+
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "leaf".to_string(),
+            NodeInstance {
+                id: "leaf".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::new(), // No binding provided
+            },
+        );
+
+        let cluster = ClusterDefinition {
+            id: "root".to_string(),
+            version: "v1".to_string(),
+            nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+
+        // Catalog with primitive that has a default parameter
+        let catalog = TestCatalog::default().with_metadata(
+            "prim",
+            "v1",
+            meta_with_params(
+                PrimitiveKind::Compute,
+                &[("out", ValueType::Number)],
+                vec![ParameterMetadata {
+                    name: "threshold".to_string(),
+                    ty: ParameterType::Number,
+                    default: Some(ParameterValue::Number(42.0)),
+                    required: false,
+                }],
+            ),
+        );
+
+        let expanded = expand(&cluster, &loader, &catalog).unwrap();
+
+        assert_eq!(expanded.nodes.len(), 1);
+        let leaf = expanded.nodes.values().next().unwrap();
+        assert_eq!(
+            leaf.parameters.get("threshold"),
+            Some(&ParameterValue::Number(42.0)),
+            "Default parameter value should be applied"
+        );
+    }
+
+    /// A.1: Explicit binding overrides default parameter value
+    #[test]
+    fn explicit_binding_overrides_default() {
+        // Structure:
+        //   Root cluster
+        //     └── Leaf impl "prim" with param "threshold" (default 42.0, literal binding 99.0)
+        //
+        // Expected: The expanded leaf node gets parameters = { "threshold": 99.0 }
+
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "leaf".to_string(),
+            NodeInstance {
+                id: "leaf".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "threshold".to_string(),
+                    ParameterBinding::Literal {
+                        value: ParameterValue::Number(99.0),
+                    },
+                )]),
+            },
+        );
+
+        let cluster = ClusterDefinition {
+            id: "root".to_string(),
+            version: "v1".to_string(),
+            nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+
+        // Catalog with primitive that has a default parameter
+        let catalog = TestCatalog::default().with_metadata(
+            "prim",
+            "v1",
+            meta_with_params(
+                PrimitiveKind::Compute,
+                &[("out", ValueType::Number)],
+                vec![ParameterMetadata {
+                    name: "threshold".to_string(),
+                    ty: ParameterType::Number,
+                    default: Some(ParameterValue::Number(42.0)),
+                    required: false,
+                }],
+            ),
+        );
+
+        let expanded = expand(&cluster, &loader, &catalog).unwrap();
+
+        assert_eq!(expanded.nodes.len(), 1);
+        let leaf = expanded.nodes.values().next().unwrap();
+        assert_eq!(
+            leaf.parameters.get("threshold"),
+            Some(&ParameterValue::Number(99.0)),
+            "Explicit binding should override default"
+        );
+    }
+
+    /// A.1: Missing required parameter with no default still rejected
+    #[test]
+    fn missing_required_param_no_default_rejected() {
+        // Structure:
+        //   Root cluster
+        //     └── Leaf impl "prim" with required param "threshold" (no default, no binding)
+        //
+        // Expected: Expansion fails with MissingRequiredParameter
+
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "leaf".to_string(),
+            NodeInstance {
+                id: "leaf".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::new(), // No binding provided
+            },
+        );
+
+        let cluster = ClusterDefinition {
+            id: "root".to_string(),
+            version: "v1".to_string(),
+            nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+
+        // Catalog with primitive that has a required parameter (no default)
+        let catalog = TestCatalog::default().with_metadata(
+            "prim",
+            "v1",
+            meta_with_params(
+                PrimitiveKind::Compute,
+                &[("out", ValueType::Number)],
+                vec![ParameterMetadata {
+                    name: "threshold".to_string(),
+                    ty: ParameterType::Number,
+                    default: None,
+                    required: true,
+                }],
+            ),
+        );
+
+        let result = expand(&cluster, &loader, &catalog);
+
+        assert!(matches!(
+            result,
+            Err(ExpandError::MissingRequiredParameter {
+                cluster_id,
+                parameter
+            }) if cluster_id == "leaf"
+                && parameter == "threshold"
+        ));
+    }
+
+    /// A.1: Cluster parameter default propagates to nested cluster expansion
+    #[test]
+    fn cluster_parameter_default_propagates_to_nested() {
+        // Structure:
+        //   Outer cluster
+        //     └── Inner cluster (has param "threshold" with default 42.0, no binding from outer)
+        //           └── Leaf impl "prim" (param "leaf_t" exposed to "threshold")
+        //
+        // Expected: Leaf impl gets parameters = { "leaf_t": 42.0 }
+
+        // Inner cluster: has a parameter with default, and a leaf that exposes it
+        let mut inner_nodes = HashMap::new();
+        inner_nodes.insert(
+            "leaf".to_string(),
+            NodeInstance {
+                id: "leaf".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "leaf_t".to_string(),
+                    ParameterBinding::Exposed {
+                        parent_param: "threshold".to_string(),
+                    },
+                )]),
+            },
+        );
+
+        let inner = ClusterDefinition {
+            id: "inner".to_string(),
+            version: "v1".to_string(),
+            nodes: inner_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: vec![ParameterSpec {
+                name: "threshold".to_string(),
+                ty: ParameterType::Number,
+                default: Some(ParameterValue::Number(42.0)), // Default value
+                required: false,
+            }],
+            declared_signature: None,
+        };
+
+        // Outer cluster: instantiates inner without providing a binding for "threshold"
+        let mut outer_nodes = HashMap::new();
+        outer_nodes.insert(
+            "nested".to_string(),
+            NodeInstance {
+                id: "nested".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "inner".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::new(), // No binding - should use default
+            },
+        );
+
+        let outer = ClusterDefinition {
+            id: "outer".to_string(),
+            version: "v1".to_string(),
+            nodes: outer_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new().with_cluster(inner);
+        let catalog = TestCatalog::default();
+
+        let expanded = expand(&outer, &loader, &catalog).unwrap();
+
+        assert_eq!(expanded.nodes.len(), 1);
+        let leaf = expanded.nodes.values().next().unwrap();
+        assert_eq!(
+            leaf.parameters.get("leaf_t"),
+            Some(&ParameterValue::Number(42.0)),
+            "Cluster parameter default should propagate to nested leaf"
+        );
+    }
+
+    /// C.1: Expansion must assign deterministic runtime_ids for identical cluster definitions
+    #[test]
+    fn expansion_runtime_ids_deterministic() {
+        // Create a cluster with multiple nodes (names chosen to differ in HashMap iteration order)
+        let mut nodes = HashMap::new();
+        for name in ["zebra", "alpha", "mike", "charlie", "bravo"] {
+            nodes.insert(
+                name.to_string(),
+                NodeInstance {
+                    id: name.to_string(),
+                    kind: NodeKind::Impl {
+                        impl_id: "prim".to_string(),
+                        version: "v1".to_string(),
+                    },
+                    parameter_bindings: HashMap::new(),
+                },
+            );
+        }
+
+        let cluster = ClusterDefinition {
+            id: "test".to_string(),
+            version: "v1".to_string(),
+            nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+        let catalog = TestCatalog::default();
+
+        // Expand multiple times and verify runtime_ids are identical
+        let expanded1 = expand(&cluster, &loader, &catalog).unwrap();
+        let expanded2 = expand(&cluster, &loader, &catalog).unwrap();
+        let expanded3 = expand(&cluster, &loader, &catalog).unwrap();
+
+        // Collect (authoring_id, runtime_id) pairs sorted by authoring_id
+        fn collect_id_pairs(graph: &ExpandedGraph) -> Vec<(String, String)> {
+            let mut pairs: Vec<_> = graph
+                .nodes
+                .values()
+                .map(|n| {
+                    let authoring_id = n.authoring_path.last().unwrap().1.clone();
+                    (authoring_id, n.runtime_id.clone())
+                })
+                .collect();
+            pairs.sort_by(|a, b| a.0.cmp(&b.0));
+            pairs
+        }
+
+        let pairs1 = collect_id_pairs(&expanded1);
+        let pairs2 = collect_id_pairs(&expanded2);
+        let pairs3 = collect_id_pairs(&expanded3);
+
+        assert_eq!(
+            pairs1, pairs2,
+            "Runtime IDs must be deterministic across expansions"
+        );
+        assert_eq!(
+            pairs2, pairs3,
+            "Runtime IDs must be deterministic across expansions"
+        );
+
+        // Verify that nodes are assigned in alphabetical order by authoring_id
+        // (alpha=n0, bravo=n1, charlie=n2, mike=n3, zebra=n4)
+        let expected_order = vec!["alpha", "bravo", "charlie", "mike", "zebra"];
+        for (i, name) in expected_order.iter().enumerate() {
+            let expected_runtime_id = format!("n{}", i);
+            let actual = pairs1.iter().find(|(auth, _)| auth == *name).unwrap();
+            assert_eq!(
+                actual.1, expected_runtime_id,
+                "Node '{}' should have runtime_id '{}', got '{}'",
+                name, expected_runtime_id, actual.1
+            );
+        }
+    }
+
+    /// A.2: Boundary output referencing unmapped node must fail expansion
+    #[test]
+    fn unmapped_boundary_output_rejected() {
+        // Create cluster with output port referencing non-existent node
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "real_node".to_string(),
+            NodeInstance {
+                id: "real_node".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+
+        let cluster = ClusterDefinition {
+            id: "test".to_string(),
+            version: "v1".to_string(),
+            nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: vec![OutputPortSpec {
+                name: "out".to_string(),
+                maps_to: OutputRef {
+                    node_id: "nonexistent_node".to_string(), // This node doesn't exist
+                    port_name: "value".to_string(),
+                },
+            }],
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+        let catalog = TestCatalog::default();
+
+        let result = expand(&cluster, &loader, &catalog);
+
+        assert!(matches!(
+            result,
+            Err(ExpandError::UnmappedBoundaryOutput {
+                port_name,
+                node_id
+            }) if port_name == "out" && node_id == "nonexistent_node"
+        ));
+    }
+
+    /// A.3: Nested cluster output port referencing unmapped node must fail expansion
+    #[test]
+    fn nested_output_mapping_failure_rejected() {
+        // Inner cluster has output port referencing non-existent internal node
+        let mut inner_nodes = HashMap::new();
+        inner_nodes.insert(
+            "leaf".to_string(),
+            NodeInstance {
+                id: "leaf".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+
+        let inner = ClusterDefinition {
+            id: "inner".to_string(),
+            version: "v1".to_string(),
+            nodes: inner_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: vec![OutputPortSpec {
+                name: "out".to_string(),
+                maps_to: OutputRef {
+                    node_id: "ghost_node".to_string(), // This node doesn't exist in inner
+                    port_name: "value".to_string(),
+                },
+            }],
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        // Outer cluster instantiates inner
+        let mut outer_nodes = HashMap::new();
+        outer_nodes.insert(
+            "nested".to_string(),
+            NodeInstance {
+                id: "nested".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "inner".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+
+        let outer = ClusterDefinition {
+            id: "outer".to_string(),
+            version: "v1".to_string(),
+            nodes: outer_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new().with_cluster(inner);
+        let catalog = TestCatalog::default();
+
+        let result = expand(&outer, &loader, &catalog);
+
+        assert!(matches!(
+            result,
+            Err(ExpandError::UnmappedNestedOutput {
+                cluster_id,
+                port_name
+            }) if cluster_id == "nested" && port_name == "out"
         ));
     }
 }

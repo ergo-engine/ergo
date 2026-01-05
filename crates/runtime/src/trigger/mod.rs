@@ -152,11 +152,6 @@ pub struct TriggerPrimitiveManifest {
     pub side_effects: bool,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct TriggerState {
-    pub data: HashMap<String, TriggerValue>,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum TriggerValidationError {
     WrongKind {
@@ -211,14 +206,26 @@ pub enum TriggerValidationError {
     },
 }
 
-pub trait TriggerPrimitive {
+/// A trigger primitive that evaluates inputs and emits events.
+///
+/// # TRG-STATE-1: Stateless Triggers
+///
+/// Triggers are stateless across runs. The runtime API intentionally does not
+/// support persisted trigger state. Implementations may use ephemeral
+/// evaluation-local memory only (e.g., stack variables within `evaluate()`),
+/// but no state may be preserved, observed, or depended upon between
+/// invocations.
+///
+/// Temporal patterns requiring memory (once, latch, debounce, count) must be
+/// implemented as clusters where state flows through graph structure or
+/// environment, not trigger internals.
+pub trait TriggerPrimitive: Send + Sync {
     fn manifest(&self) -> &TriggerPrimitiveManifest;
 
     fn evaluate(
         &self,
         inputs: &HashMap<String, TriggerValue>,
         parameters: &HashMap<String, ParameterValue>,
-        state: Option<&mut TriggerState>,
     ) -> HashMap<String, TriggerValue>;
 }
 

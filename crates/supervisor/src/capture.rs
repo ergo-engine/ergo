@@ -23,9 +23,7 @@ impl<L: DecisionLog> DecisionLog for CapturingDecisionLog<L> {
         self.inner.log(entry.clone());
 
         let mut guard = self.bundle.lock().expect("capture bundle poisoned");
-        guard
-            .decisions
-            .push(EpisodeInvocationRecord::from(&entry));
+        guard.decisions.push(EpisodeInvocationRecord::from(&entry));
     }
 }
 
@@ -35,12 +33,7 @@ pub struct CapturingSession<L: DecisionLog, R: RuntimeInvoker> {
 }
 
 impl<L: DecisionLog, R: RuntimeInvoker> CapturingSession<L, R> {
-    pub fn new(
-        graph_id: GraphId,
-        constraints: Constraints,
-        inner_log: L,
-        runtime: R,
-    ) -> Self {
+    pub fn new(graph_id: GraphId, constraints: Constraints, inner_log: L, runtime: R) -> Self {
         let bundle = Arc::new(Mutex::new(CaptureBundle {
             capture_version: "v0".to_string(),
             graph_id: graph_id.clone(),

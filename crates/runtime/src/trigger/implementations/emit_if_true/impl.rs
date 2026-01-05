@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
-use crate::trigger::{
-    TriggerEvent, TriggerPrimitive, TriggerPrimitiveManifest, TriggerState, TriggerValue,
-};
+use crate::trigger::{TriggerEvent, TriggerPrimitive, TriggerPrimitiveManifest, TriggerValue};
 
 use super::manifest::emit_if_true_manifest;
 
@@ -33,7 +31,6 @@ impl TriggerPrimitive for EmitIfTrue {
         &self,
         inputs: &HashMap<String, TriggerValue>,
         _parameters: &HashMap<String, crate::trigger::ParameterValue>,
-        _state: Option<&mut TriggerState>,
     ) -> HashMap<String, TriggerValue> {
         let should_emit = inputs
             .get("input")
@@ -64,7 +61,6 @@ mod tests {
         let outputs_true = trigger.evaluate(
             &HashMap::from([("input".to_string(), TriggerValue::Bool(true))]),
             &HashMap::new(),
-            None,
         );
         assert_eq!(
             outputs_true.get("event"),
@@ -74,7 +70,6 @@ mod tests {
         let outputs_false = trigger.evaluate(
             &HashMap::from([("input".to_string(), TriggerValue::Bool(false))]),
             &HashMap::new(),
-            None,
         );
         assert_eq!(
             outputs_false.get("event"),
@@ -86,7 +81,7 @@ mod tests {
     fn missing_input_panics() {
         let trigger = EmitIfTrue::new();
         expect_panic(|| {
-            trigger.evaluate(&HashMap::new(), &HashMap::new(), None);
+            trigger.evaluate(&HashMap::new(), &HashMap::new());
         });
     }
 }

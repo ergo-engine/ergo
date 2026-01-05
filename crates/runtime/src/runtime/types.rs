@@ -4,7 +4,7 @@ use crate::action::{ActionRegistry, ActionValidationError};
 use crate::cluster::{InputMetadata, OutputMetadata, PrimitiveKind, ValueType};
 use crate::compute::PrimitiveRegistry as ComputeRegistry;
 use crate::source::SourceRegistry;
-use crate::trigger::{TriggerRegistry, TriggerState};
+use crate::trigger::TriggerRegistry;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RuntimeEvent {
@@ -88,6 +88,12 @@ pub enum ValidationError {
     ExternalInputNotAllowed {
         name: String,
     },
+    /// V.MULTI-EDGE: Multiple edges targeting the same input port.
+    /// All inputs currently have Cardinality::Single; fan-in is not supported.
+    MultipleInboundEdges {
+        node: String,
+        input: String,
+    },
 }
 
 #[derive(Debug)]
@@ -97,12 +103,13 @@ pub enum ExecError {
     ParameterTypeConversionFailed { node: String, parameter: String },
     ActionExecutionFailed(ActionValidationError),
     MissingOutput { node: String, output: String },
+    MissingNode { node: String },
 }
 
-#[derive(Debug, Clone)]
-pub struct ExecutionContext {
-    pub trigger_state: HashMap<String, TriggerState>,
-}
+/// Execution context for runtime invocation.
+/// Currently a unit struct; future observability metadata (trace_id, run_id) will be added here.
+#[derive(Debug, Clone, Default)]
+pub struct ExecutionContext;
 
 pub struct Registries<'a> {
     pub sources: &'a SourceRegistry,

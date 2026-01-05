@@ -248,7 +248,11 @@ fn capturing_session_enables_round_trip_replay() {
 
     let bundle = session.into_bundle();
 
-    assert_eq!(bundle.events.len(), 1, "expected exactly one captured event");
+    assert_eq!(
+        bundle.events.len(),
+        1,
+        "expected exactly one captured event"
+    );
     assert_eq!(
         bundle.decisions.len(),
         1,
@@ -264,18 +268,15 @@ fn capturing_session_enables_round_trip_replay() {
     );
 
     assert_eq!(
-        replay_decisions[0].decision,
-        bundle.decisions[0].decision,
+        replay_decisions[0].decision, bundle.decisions[0].decision,
         "decision should round trip through replay"
     );
     assert_eq!(
-        replay_decisions[0].termination,
-        bundle.decisions[0].termination,
+        replay_decisions[0].termination, bundle.decisions[0].termination,
         "termination should round trip through replay"
     );
     assert_eq!(
-        replay_decisions[0].retry_count,
-        bundle.decisions[0].retry_count,
+        replay_decisions[0].retry_count, bundle.decisions[0].retry_count,
         "retry_count should round trip through replay"
     );
 }
@@ -372,8 +373,12 @@ fn tick_with_empty_queue_logs_noop() {
     let log = CapturingLog::new();
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
 
-    let mut supervisor =
-        Supervisor::with_runtime(GraphId::new("test"), Constraints::default(), log.clone(), runtime);
+    let mut supervisor = Supervisor::with_runtime(
+        GraphId::new("test"),
+        Constraints::default(),
+        log.clone(),
+        runtime,
+    );
 
     // Send Tick with no deferred episodes
     let tick = ExternalEvent::mechanical_at(
@@ -384,10 +389,24 @@ fn tick_with_empty_queue_logs_noop() {
     supervisor.on_event(tick);
 
     let entries = log.entries();
-    assert_eq!(entries.len(), 1, "Tick should produce exactly one log entry");
-    assert_eq!(entries[0].decision, Decision::Defer, "Empty queue Tick should log Defer");
-    assert_eq!(entries[0].schedule_at, None, "Empty queue Tick should have no schedule_at");
-    assert!(entries[0].termination.is_none(), "Empty queue Tick should have no termination");
+    assert_eq!(
+        entries.len(),
+        1,
+        "Tick should produce exactly one log entry"
+    );
+    assert_eq!(
+        entries[0].decision,
+        Decision::Defer,
+        "Empty queue Tick should log Defer"
+    );
+    assert_eq!(
+        entries[0].schedule_at, None,
+        "Empty queue Tick should have no schedule_at"
+    );
+    assert!(
+        entries[0].termination.is_none(),
+        "Empty queue Tick should have no termination"
+    );
 }
 
 /// Test that deferred episodes are processed in order: earlier schedule_at first,
