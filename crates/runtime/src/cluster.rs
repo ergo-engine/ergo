@@ -949,18 +949,6 @@ fn apply_literal_bindings(
     updated
 }
 
-fn resolve_parameter_bindings(
-    bindings: &HashMap<String, ParameterBinding>,
-) -> HashMap<String, ParameterValue> {
-    bindings
-        .iter()
-        .filter_map(|(name, binding)| match binding {
-            ParameterBinding::Literal { value } => Some((name.clone(), value.clone())),
-            ParameterBinding::Exposed { .. } => None,
-        })
-        .collect()
-}
-
 /// Resolves parameter bindings for a primitive node using the parent's resolved parameters.
 /// - Literal bindings use their value directly
 /// - Exposed bindings look up the value from resolved_params
