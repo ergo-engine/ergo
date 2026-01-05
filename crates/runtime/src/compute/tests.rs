@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use crate::common::Value;
 use crate::compute::implementations::{
-    Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Lt, Multiply, Negate, Neq, Not, Or, Select,
-    Subtract,
+    Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Lt, Multiply, Negate, Neq, Not, Or,
+    Select, Subtract,
 };
 use crate::compute::ComputePrimitive;
 
@@ -221,6 +221,34 @@ fn comparisons_require_inputs_and_compute() {
             None,
         );
     });
+}
+
+#[test]
+fn gte_basic_true_when_equal() {
+    let gte = Gte::new();
+    let outputs = gte.compute(
+        &HashMap::from([
+            ("a".to_string(), Value::Number(2.0)),
+            ("b".to_string(), Value::Number(2.0)),
+        ]),
+        &HashMap::new(),
+        None,
+    );
+    assert_eq!(outputs.get("result"), Some(&Value::Bool(true)));
+}
+
+#[test]
+fn gte_basic_false_when_less() {
+    let gte = Gte::new();
+    let outputs = gte.compute(
+        &HashMap::from([
+            ("a".to_string(), Value::Number(1.0)),
+            ("b".to_string(), Value::Number(2.0)),
+        ]),
+        &HashMap::new(),
+        None,
+    );
+    assert_eq!(outputs.get("result"), Some(&Value::Bool(false)));
 }
 
 #[test]

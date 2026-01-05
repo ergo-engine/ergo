@@ -13,10 +13,10 @@ use crate::common::ValidationError;
 use crate::compute::implementations::{
     add::add_manifest, and::and_manifest, const_bool::const_bool_manifest,
     const_number::const_number_manifest, divide::divide_manifest, eq::eq_manifest, gt::gt_manifest,
-    lt::lt_manifest, multiply::multiply_manifest, negate::negate_manifest, neq::neq_manifest,
-    not::not_manifest, or::or_manifest, select::select_manifest, subtract::subtract_manifest, Add,
-    And, ConstBool, ConstNumber, Divide, Eq, Gt, Lt, Multiply, Negate, Neq, Not, Or, Select,
-    Subtract,
+    gte::gte_manifest, lt::lt_manifest, multiply::multiply_manifest, negate::negate_manifest,
+    neq::neq_manifest, not::not_manifest, or::or_manifest, select::select_manifest,
+    subtract::subtract_manifest, Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Lt,
+    Multiply, Negate, Neq, Not, Or, Select, Subtract,
 };
 use crate::compute::{ComputePrimitiveManifest, PrimitiveRegistry as ComputeRegistry};
 use crate::source::{
@@ -92,6 +92,9 @@ pub fn core_registries() -> Result<CoreRegistries, CoreRegistrationError> {
         .map_err(CoreRegistrationError::Compute)?;
     computes
         .register(Box::new(Gt::new()))
+        .map_err(CoreRegistrationError::Compute)?;
+    computes
+        .register(Box::new(Gte::new()))
         .map_err(CoreRegistrationError::Compute)?;
     computes
         .register(Box::new(Lt::new()))
@@ -389,6 +392,9 @@ pub fn build_core_catalog() -> CorePrimitiveCatalog {
     catalog
         .register_compute(gt_manifest())
         .expect("gt manifest is valid");
+    catalog
+        .register_compute(gte_manifest())
+        .expect("gte manifest is valid");
     catalog
         .register_compute(lt_manifest())
         .expect("lt manifest is valid");
