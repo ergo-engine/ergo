@@ -200,6 +200,17 @@ Legend:
 
 ---
 
+### CAT-SYNC-1 — Catalog entries have registry counterparts
+
+- **ID:** CAT-SYNC-1
+- **Rule:** Every primitive registered in CorePrimitiveCatalog must have a corresponding entry in the runtime registries.
+- **Disposition:** CLOSE (defense-in-depth)
+- **Enforcement locus:** test (`crates/runtime/src/catalog.rs`)
+- **Test:** `catalog_entries_have_registry_counterparts`
+- **PR/Commit:** <pending>
+
+---
+
 ## Semantics Decision Queue (v1)
 
 ### B.2 — Divide-by-zero behavior

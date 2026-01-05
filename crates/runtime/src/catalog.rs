@@ -619,4 +619,44 @@ mod tests {
                 && got == common::ValueType::Series
         ));
     }
+
+    /// Every catalog entry must have a corresponding registry entry.
+    #[test]
+    fn catalog_entries_have_registry_counterparts() {
+        let catalog = build_core_catalog();
+        let registries = core_registries().expect("core registries should build");
+
+        for ((id, _version), meta) in &catalog.metadata {
+            match meta.kind {
+                PrimitiveKind::Source => {
+                    assert!(
+                        registries.sources.get(id).is_some(),
+                        "catalog source '{}' missing from registry",
+                        id
+                    );
+                }
+                PrimitiveKind::Compute => {
+                    assert!(
+                        registries.computes.get(id).is_some(),
+                        "catalog compute '{}' missing from registry",
+                        id
+                    );
+                }
+                PrimitiveKind::Trigger => {
+                    assert!(
+                        registries.triggers.get(id).is_some(),
+                        "catalog trigger '{}' missing from registry",
+                        id
+                    );
+                }
+                PrimitiveKind::Action => {
+                    assert!(
+                        registries.actions.get(id).is_some(),
+                        "catalog action '{}' missing from registry",
+                        id
+                    );
+                }
+            }
+        }
+    }
 }
