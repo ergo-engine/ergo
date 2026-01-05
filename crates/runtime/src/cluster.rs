@@ -197,9 +197,7 @@ pub struct ExpandedGraph {
 /// X.9 enforcement: Clusters compile away here.
 ///
 /// `ExpandedNode` holds only `ImplementationInstance` — no `NodeKind` enum.
-/// Execution graphs (`ComputeGraph`, `TriggerGraph`, `ActionGraph`, `SourceGraph`)
-/// have no cluster representation. The type system guarantees authoring
-/// constructs cannot reach execution.
+/// The type system guarantees authoring constructs cannot reach execution.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExpandedNode {
     pub runtime_id: String,

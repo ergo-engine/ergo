@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use crate::common::{Value, ValueType};
 
-pub mod graph;
 pub mod implementations;
 pub mod registry;
 
@@ -140,7 +139,6 @@ pub trait SourcePrimitive {
     fn produce(&self, parameters: &HashMap<String, ParameterValue>) -> HashMap<String, Value>;
 }
 
-pub use graph::{NodeOutputRef, SourceGraph, SourceNode};
 pub use implementations::{boolean, number, BooleanSource, NumberSource};
 pub use registry::SourceRegistry;
 
