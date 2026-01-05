@@ -48,25 +48,21 @@ pub fn validate<C: PrimitiveCatalog>(
         .edges
         .iter()
         .map(|e| {
-            if let ExpandedEndpoint::ExternalInput { name } = &e.from {
-                return Err(ValidationError::ExternalInputNotAllowed { name: name.clone() });
-            }
-            if let ExpandedEndpoint::ExternalInput { name } = &e.to {
-                return Err(ValidationError::ExternalInputNotAllowed { name: name.clone() });
-            }
             Ok(ValidatedEdge {
-                from: map_endpoint(&e.from),
-                to: map_endpoint(&e.to),
+                from: map_endpoint(&e.from)?,
+                to: map_endpoint(&e.to)?,
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
 
+    enforce_edge_nodes_exist(&nodes, &edges)?;
     let topo_order = topological_sort(&nodes, &edges)?;
 
     enforce_wiring_matrix(&nodes, &edges)?;
     enforce_required_inputs(&nodes, &edges)?;
     enforce_types(&nodes, &edges)?;
     enforce_action_gating(&nodes, &edges)?;
+    enforce_boundary_outputs(&nodes, &expanded.boundary_outputs)?;
 
     Ok(ValidatedGraph {
         nodes,
@@ -76,14 +72,14 @@ pub fn validate<C: PrimitiveCatalog>(
     })
 }
 
-fn map_endpoint(ep: &ExpandedEndpoint) -> Endpoint {
+fn map_endpoint(ep: &ExpandedEndpoint) -> Result<Endpoint, ValidationError> {
     match ep {
-        ExpandedEndpoint::NodePort { node_id, port_name } => Endpoint::NodePort {
+        ExpandedEndpoint::NodePort { node_id, port_name } => Ok(Endpoint::NodePort {
             node_id: node_id.clone(),
             port_name: port_name.clone(),
-        },
+        }),
         ExpandedEndpoint::ExternalInput { name } => {
-            panic!("ExternalInput should be rejected before mapping: {}", name)
+            Err(ValidationError::ExternalInputNotAllowed { name: name.clone() })
         }
     }
 }
@@ -99,8 +95,13 @@ fn topological_sort(
     for edge in edges {
         let Endpoint::NodePort { node_id: from, .. } = &edge.from;
         let Endpoint::NodePort { node_id: to, .. } = &edge.to;
-        *in_degree.get_mut(to).unwrap() += 1;
-        dependents.get_mut(from).unwrap().push(to.clone());
+        *in_degree
+            .get_mut(to)
+            .ok_or_else(|| ValidationError::UnknownNode(to.clone()))? += 1;
+        dependents
+            .get_mut(from)
+            .ok_or_else(|| ValidationError::UnknownNode(from.clone()))?
+            .push(to.clone());
     }
 
     let mut queue: BTreeSet<String> = in_degree
@@ -117,7 +118,9 @@ fn topological_sort(
 
         if let Some(deps) = dependents.get(&node_id) {
             for dep in deps {
-                let deg = in_degree.get_mut(dep).unwrap();
+                let deg = in_degree
+                    .get_mut(dep)
+                    .ok_or_else(|| ValidationError::UnknownNode(dep.clone()))?;
                 *deg -= 1;
                 if *deg == 0 {
                     queue.insert(dep.clone());
@@ -131,6 +134,24 @@ fn topological_sort(
     }
 
     Ok(sorted)
+}
+
+fn enforce_edge_nodes_exist(
+    nodes: &HashMap<String, ValidatedNode>,
+    edges: &[ValidatedEdge],
+) -> Result<(), ValidationError> {
+    for edge in edges {
+        let Endpoint::NodePort { node_id: from, .. } = &edge.from;
+        if !nodes.contains_key(from) {
+            return Err(ValidationError::UnknownNode(from.clone()));
+        }
+
+        let Endpoint::NodePort { node_id: to, .. } = &edge.to;
+        if !nodes.contains_key(to) {
+            return Err(ValidationError::UnknownNode(to.clone()));
+        }
+    }
+    Ok(())
 }
 
 fn enforce_wiring_matrix(
@@ -275,6 +296,26 @@ fn enforce_action_gating(
             if !action_inputs.get(id).copied().unwrap_or(false) {
                 return Err(ValidationError::ActionNotGated(id.clone()));
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn enforce_boundary_outputs(
+    nodes: &HashMap<String, ValidatedNode>,
+    boundary_outputs: &[crate::cluster::OutputPortSpec],
+) -> Result<(), ValidationError> {
+    for output in boundary_outputs {
+        let target_node = nodes
+            .get(&output.maps_to.node_id)
+            .ok_or_else(|| ValidationError::UnknownNode(output.maps_to.node_id.clone()))?;
+
+        if !target_node.outputs.contains_key(&output.maps_to.port_name) {
+            return Err(ValidationError::MissingOutputMetadata {
+                node: output.maps_to.node_id.clone(),
+                output: output.maps_to.port_name.clone(),
+            });
         }
     }
 

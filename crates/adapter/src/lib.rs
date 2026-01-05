@@ -63,20 +63,18 @@ pub enum RunTermination {
 /// ```compile_fail
 /// use ergo_adapter::ExecutionContext;
 /// use ergo_runtime::runtime::ExecutionContext as RuntimeExecutionContext;
-/// use std::collections::HashMap;
 ///
 /// // Constructor is not visible outside ergo-adapter.
-/// let runtime_ctx = RuntimeExecutionContext { trigger_state: HashMap::new() };
+/// let runtime_ctx = RuntimeExecutionContext;
 /// let _ctx = ExecutionContext::new(runtime_ctx);
 /// ```
 ///
 /// ```compile_fail
 /// use ergo_adapter::ExecutionContext;
 /// use ergo_runtime::runtime::ExecutionContext as RuntimeExecutionContext;
-/// use std::collections::HashMap;
 ///
 /// // Opaque fields cannot be set directly.
-/// let runtime_ctx = RuntimeExecutionContext { trigger_state: HashMap::new() };
+/// let runtime_ctx = RuntimeExecutionContext;
 /// let _ctx = ExecutionContext { inner: runtime_ctx };
 /// ```
 #[derive(Debug, Clone)]
@@ -165,10 +163,7 @@ impl ExternalEvent {
     }
 
     pub fn mechanical_at(event_id: EventId, kind: ExternalEventKind, at: EventTime) -> Self {
-        let runtime_ctx = RuntimeExecutionContext {
-            trigger_state: HashMap::new(),
-        };
-        let context = ExecutionContext::new(runtime_ctx);
+        let context = ExecutionContext::new(RuntimeExecutionContext);
         Self::new(event_id, kind, context, at, EventPayload::default())
     }
 
@@ -182,10 +177,7 @@ impl ExternalEvent {
         at: EventTime,
         payload: EventPayload,
     ) -> Self {
-        let runtime_ctx = RuntimeExecutionContext {
-            trigger_state: HashMap::new(),
-        };
-        let context = ExecutionContext::new(runtime_ctx);
+        let context = ExecutionContext::new(RuntimeExecutionContext);
         Self::new(event_id, kind, context, at, payload)
     }
 
@@ -255,8 +247,7 @@ impl RuntimeHandle {
         };
 
         // Call runtime::run, consume ExecutionReport internally (SUP-2)
-        match ergo_runtime::runtime::run(&self.graph, &*self.catalog, &registries, ctx.inner())
-        {
+        match ergo_runtime::runtime::run(&self.graph, &*self.catalog, &registries, ctx.inner()) {
             Ok(_report) => RunTermination::Completed,
             Err(_) => RunTermination::Failed(ErrKind::RuntimeError),
         }
@@ -349,15 +340,12 @@ impl RuntimeInvoker for FaultRuntimeHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[test]
     fn fault_runtime_handle_aborts_when_deadline_zero() {
         // FaultRuntimeHandle (the test double) should respect deadline=zero
         let handle = FaultRuntimeHandle::new(RunTermination::Completed);
-        let rt_ctx = ergo_runtime::runtime::ExecutionContext {
-            trigger_state: HashMap::new(),
-        };
+        let rt_ctx = ergo_runtime::runtime::ExecutionContext;
         let ctx = ExecutionContext::new(rt_ctx);
         let term = handle.run(
             &GraphId::new("g"),
@@ -377,9 +365,7 @@ mod tests {
             vec![RunTermination::Failed(ErrKind::NetworkTimeout)],
         );
 
-        let rt_ctx = ergo_runtime::runtime::ExecutionContext {
-            trigger_state: HashMap::new(),
-        };
+        let rt_ctx = ergo_runtime::runtime::ExecutionContext;
         let ctx = ExecutionContext::new(rt_ctx);
 
         // First call returns scheduled outcome

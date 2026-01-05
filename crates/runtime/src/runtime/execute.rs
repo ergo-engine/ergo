@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::action::{ActionOutcome, ActionValue};
 use crate::cluster::{PrimitiveKind, ValueType};
-use crate::trigger::{TriggerEvent, TriggerState, TriggerValue};
+use crate::trigger::{TriggerEvent, TriggerValue};
 
 use super::types::{
     Endpoint, ExecError, ExecutionContext, ExecutionReport, Registries, RuntimeEvent, RuntimeValue,
@@ -12,22 +12,24 @@ use super::types::{
 pub fn execute(
     graph: &ValidatedGraph,
     registries: &Registries,
-    ctx: &ExecutionContext,
+    _ctx: &ExecutionContext,
 ) -> Result<ExecutionReport, ExecError> {
     let mut node_outputs: HashMap<String, HashMap<String, RuntimeValue>> = HashMap::new();
-    let mut trigger_state = ctx.trigger_state.clone();
 
     for node_id in &graph.topo_order {
-        let node = graph.nodes.get(node_id).expect("validated node missing");
+        let node = graph
+            .nodes
+            .get(node_id)
+            .ok_or_else(|| ExecError::MissingNode {
+                node: node_id.clone(),
+            })?;
 
         let inputs = collect_inputs(node_id, &node.inputs, &graph.edges, &node_outputs)?;
 
         let outputs = match node.kind {
             PrimitiveKind::Source => execute_source(node, inputs, registries)?,
             PrimitiveKind::Compute => execute_compute(node, inputs, registries)?,
-            PrimitiveKind::Trigger => {
-                execute_trigger(node, inputs, registries, &mut trigger_state)?
-            }
+            PrimitiveKind::Trigger => execute_trigger(node, inputs, registries)?,
             PrimitiveKind::Action => {
                 // R.7: Actions execute only when all trigger event inputs are Emitted.
                 // If any Event input is TriggerEvent::NotEmitted, skip execution.
@@ -188,7 +190,6 @@ fn execute_trigger(
     node: &ValidatedNode,
     inputs: HashMap<String, RuntimeValue>,
     registries: &Registries,
-    state: &mut HashMap<String, TriggerState>,
 ) -> Result<HashMap<String, RuntimeValue>, ExecError> {
     let primitive =
         registries
@@ -219,8 +220,7 @@ fn execute_trigger(
         mapped_parameters.insert(name.clone(), mapped);
     }
 
-    let node_state = state.entry(node.runtime_id.clone()).or_default();
-    let outputs = primitive.evaluate(&mapped_inputs, &mapped_parameters, Some(node_state));
+    let outputs = primitive.evaluate(&mapped_inputs, &mapped_parameters);
     Ok(outputs
         .into_iter()
         .map(|(k, v)| (k, map_trigger_value(v)))

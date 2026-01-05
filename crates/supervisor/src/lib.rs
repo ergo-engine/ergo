@@ -204,7 +204,14 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
         if let Some(delay) = self.rate_limit_delay(now) {
             let schedule_at = now.saturating_add(delay);
             self.enqueue_deferred(schedule_at, episode_id, &event);
-            self.log_decision(&event, Decision::Defer, Some(schedule_at), episode_id, None, 0);
+            self.log_decision(
+                &event,
+                Decision::Defer,
+                Some(schedule_at),
+                episode_id,
+                None,
+                0,
+            );
             return;
         }
 
@@ -302,8 +309,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
             self.recent_invocations.push_back(now);
         }
 
-        let (termination, retry_count) =
-            self.invoke_with_retries(&item.origin_event_id, &item.ctx);
+        let (termination, retry_count) = self.invoke_with_retries(&item.origin_event_id, &item.ctx);
 
         self.in_flight = self.in_flight.saturating_sub(1);
 

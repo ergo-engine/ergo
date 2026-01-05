@@ -9,7 +9,9 @@ use crate::cluster::{
 use crate::compute::implementations::{Add, ConstNumber};
 use crate::compute::PrimitiveRegistry as ComputeRegistry;
 use crate::runtime::run;
-use crate::runtime::types::{ExecutionContext, Registries, RuntimeValue};
+use crate::runtime::types::{
+    ExecError, ExecutionContext, Registries, RuntimeValue, ValidationError,
+};
 use crate::source::{SourceKind, SourcePrimitive, SourcePrimitiveManifest, SourceRegistry};
 use crate::trigger::TriggerRegistry;
 
@@ -220,9 +222,7 @@ fn unified_runtime_executes_compute_graph() {
         actions: &crate::action::ActionRegistry::new(),
     };
 
-    let ctx = ExecutionContext {
-        trigger_state: HashMap::new(),
-    };
+    let ctx = ExecutionContext;
 
     let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
     assert_eq!(report.outputs.get("sum"), Some(&RuntimeValue::Number(7.0)));
@@ -288,9 +288,7 @@ fn parameters_flow_into_compute_execution() {
         actions: &action::ActionRegistry::new(),
     };
 
-    let ctx = ExecutionContext {
-        trigger_state: HashMap::new(),
-    };
+    let ctx = ExecutionContext;
 
     let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
     assert_eq!(report.outputs.get("out"), Some(&RuntimeValue::Number(4.5)));
@@ -434,9 +432,7 @@ fn hello_world_graph_executes_with_core_catalog_and_registries() {
         actions: &registries.actions,
     };
 
-    let ctx = ExecutionContext {
-        trigger_state: HashMap::new(),
-    };
+    let ctx = ExecutionContext;
 
     let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
     assert_eq!(
@@ -725,9 +721,7 @@ fn r7_action_skipped_when_trigger_not_emitted() {
         actions: &registries.actions,
     };
 
-    let ctx = ExecutionContext {
-        trigger_state: HashMap::new(),
-    };
+    let ctx = ExecutionContext;
 
     let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
 
@@ -739,4 +733,124 @@ fn r7_action_skipped_when_trigger_not_emitted() {
         )),
         "R.7: Action must return Skipped when gating trigger emits NotEmitted"
     );
+}
+
+#[test]
+fn validate_returns_error_when_edge_references_unknown_node() {
+    let mut nodes = HashMap::new();
+    nodes.insert(
+        "src1".to_string(),
+        ExpandedNode {
+            runtime_id: "src1".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "const1".to_string(),
+                version: "v1".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+
+    let edges = vec![crate::cluster::ExpandedEdge {
+        from: ExpandedEndpoint::NodePort {
+            node_id: "src1".to_string(),
+            port_name: "out".to_string(),
+        },
+        to: ExpandedEndpoint::NodePort {
+            node_id: "missing".to_string(),
+            port_name: "in".to_string(),
+        },
+    }];
+
+    let expanded = ExpandedGraph {
+        nodes,
+        edges,
+        boundary_inputs: Vec::new(),
+        boundary_outputs: Vec::new(),
+    };
+
+    let mut catalog = TestCatalog::default();
+    catalog
+        .metadata
+        .insert(("const1".to_string(), "v1".to_string()), source_metadata());
+
+    let err = crate::runtime::validate(&expanded, &catalog).unwrap_err();
+    match err {
+        ValidationError::UnknownNode(node) => assert_eq!(node, "missing"),
+        other => panic!("expected UnknownNode, got {:?}", other),
+    }
+}
+
+#[test]
+fn validate_rejects_invalid_boundary_output_port() {
+    let mut nodes = HashMap::new();
+    nodes.insert(
+        "src1".to_string(),
+        ExpandedNode {
+            runtime_id: "src1".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "const1".to_string(),
+                version: "v1".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+
+    let expanded = ExpandedGraph {
+        nodes,
+        edges: Vec::new(),
+        boundary_inputs: Vec::new(),
+        boundary_outputs: vec![crate::cluster::OutputPortSpec {
+            name: "missing".to_string(),
+            maps_to: crate::cluster::OutputRef {
+                node_id: "src1".to_string(),
+                port_name: "does_not_exist".to_string(),
+            },
+        }],
+    };
+
+    let mut catalog = TestCatalog::default();
+    catalog
+        .metadata
+        .insert(("const1".to_string(), "v1".to_string()), source_metadata());
+
+    let err = crate::runtime::validate(&expanded, &catalog).unwrap_err();
+    match err {
+        ValidationError::MissingOutputMetadata { node, output } => {
+            assert_eq!(node, "src1");
+            assert_eq!(output, "does_not_exist");
+        }
+        other => panic!("expected MissingOutputMetadata, got {:?}", other),
+    }
+}
+
+#[test]
+fn execute_returns_error_when_topology_references_missing_node() {
+    let graph = crate::runtime::types::ValidatedGraph {
+        nodes: HashMap::new(),
+        edges: Vec::new(),
+        topo_order: vec!["ghost".to_string()],
+        boundary_outputs: Vec::new(),
+    };
+
+    let sources = SourceRegistry::new();
+    let computes = ComputeRegistry::new();
+    let triggers = TriggerRegistry::new();
+    let actions = crate::action::ActionRegistry::new();
+
+    let registries = Registries {
+        sources: &sources,
+        computes: &computes,
+        triggers: &triggers,
+        actions: &actions,
+    };
+
+    let ctx = ExecutionContext;
+
+    let err = crate::runtime::execute(&graph, &registries, &ctx).unwrap_err();
+    match err {
+        ExecError::MissingNode { node } => assert_eq!(node, "ghost"),
+        other => panic!("expected ExecError::MissingNode, got {:?}", other),
+    }
 }
