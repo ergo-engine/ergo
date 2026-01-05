@@ -218,10 +218,19 @@ pub enum ExpandedEndpoint {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExpandError {
     EmptyCluster,
-    MissingCluster { id: String, version: Version },
-    DuplicateInputPort { name: String },
-    DuplicateOutputPort { name: String },
-    DuplicateParameter { name: String },
+    MissingCluster {
+        id: String,
+        version: Version,
+    },
+    DuplicateInputPort {
+        name: String,
+    },
+    DuplicateOutputPort {
+        name: String,
+    },
+    DuplicateParameter {
+        name: String,
+    },
     ParameterDefaultTypeMismatch {
         name: String,
         expected: ParameterType,
@@ -253,6 +262,12 @@ pub enum ExpandError {
         parameter: String,
         expected: ParameterType,
         got: ParameterType,
+    },
+    /// Exposed binding was not resolved during expansion (no parent provided a value)
+    UnresolvedExposedBinding {
+        node_id: String,
+        parameter: String,
+        referenced: String,
     },
 }
 
@@ -293,7 +308,7 @@ pub fn expand<L: ClusterLoader>(
     validate_cluster_definition(cluster_def)?;
 
     let mut ctx = ExpandContext::new();
-    let build = expand_with_context(cluster_def, loader, catalog, &mut ctx, &[], &[])?;
+    let build = expand_with_context(cluster_def, loader, catalog, &mut ctx, &[], &HashMap::new())?;
 
     let mut graph = build.graph;
     graph.boundary_inputs = cluster_def.input_ports.clone();
@@ -312,8 +327,8 @@ pub fn expand<L: ClusterLoader>(
     }
 
     if let Some(declared) = &cluster_def.declared_signature {
-        let inferred = infer_signature(&graph, catalog)
-            .map_err(ExpandError::SignatureInferenceFailed)?;
+        let inferred =
+            infer_signature(&graph, catalog).map_err(ExpandError::SignatureInferenceFailed)?;
         validate_declared_signature(declared, &inferred)
             .map_err(ExpandError::DeclaredSignatureInvalid)?;
     }
@@ -645,7 +660,7 @@ fn expand_with_context<L: ClusterLoader>(
     catalog: &impl PrimitiveCatalog,
     ctx: &mut ExpandContext,
     authoring_prefix: &[(String, NodeId)],
-    _parent_parameters: &[ParameterSpec],
+    resolved_params: &HashMap<String, ParameterValue>,
 ) -> Result<ExpandBuild, ExpandError> {
     if cluster_def.nodes.is_empty() {
         return Err(ExpandError::EmptyCluster);
@@ -671,6 +686,23 @@ fn expand_with_context<L: ClusterLoader>(
                 let mut authoring_path = authoring_prefix.to_vec();
                 authoring_path.push((cluster_def.id.clone(), node.id.clone()));
 
+                // Resolve Exposed bindings using parent's resolved parameters
+                let resolved_bindings =
+                    resolve_bindings_with_context(&node.parameter_bindings, resolved_params)?;
+
+                // Validate no Exposed bindings remain unresolved
+                for (name, binding) in &node.parameter_bindings {
+                    if let ParameterBinding::Exposed { parent_param } = binding {
+                        if !resolved_params.contains_key(parent_param) {
+                            return Err(ExpandError::UnresolvedExposedBinding {
+                                node_id: node.id.clone(),
+                                parameter: name.clone(),
+                                referenced: parent_param.clone(),
+                            });
+                        }
+                    }
+                }
+
                 graph.nodes.insert(
                     runtime_id.clone(),
                     ExpandedNode {
@@ -680,7 +712,7 @@ fn expand_with_context<L: ClusterLoader>(
                             impl_id: impl_id.clone(),
                             version: version.clone(),
                         },
-                        parameters: resolve_parameter_bindings(&node.parameter_bindings),
+                        parameters: resolved_bindings,
                     },
                 );
 
@@ -706,6 +738,12 @@ fn expand_with_context<L: ClusterLoader>(
 
                 let bound_nested = apply_literal_bindings(&nested_def, &node.parameter_bindings);
 
+                // Build resolved parameter values for the nested cluster:
+                // - Literal bindings use their value directly
+                // - Exposed bindings look up the value from our resolved_params
+                let nested_resolved_params =
+                    build_resolved_params(&node.parameter_bindings, resolved_params);
+
                 let mut nested_prefix = authoring_prefix.to_vec();
                 nested_prefix.push((cluster_def.id.clone(), node.id.clone()));
 
@@ -715,7 +753,7 @@ fn expand_with_context<L: ClusterLoader>(
                     catalog,
                     ctx,
                     &nested_prefix,
-                    &cluster_def.parameters,
+                    &nested_resolved_params,
                 )?;
 
                 merge_graph(&mut graph, nested_build.graph);
@@ -921,6 +959,54 @@ fn resolve_parameter_bindings(
             ParameterBinding::Exposed { .. } => None,
         })
         .collect()
+}
+
+/// Resolves parameter bindings for a primitive node using the parent's resolved parameters.
+/// - Literal bindings use their value directly
+/// - Exposed bindings look up the value from resolved_params
+fn resolve_bindings_with_context(
+    bindings: &HashMap<String, ParameterBinding>,
+    resolved_params: &HashMap<String, ParameterValue>,
+) -> Result<HashMap<String, ParameterValue>, ExpandError> {
+    let mut result = HashMap::new();
+    for (name, binding) in bindings {
+        match binding {
+            ParameterBinding::Literal { value } => {
+                result.insert(name.clone(), value.clone());
+            }
+            ParameterBinding::Exposed { parent_param } => {
+                // Look up the value from parent's resolved parameters
+                if let Some(value) = resolved_params.get(parent_param) {
+                    result.insert(name.clone(), value.clone());
+                }
+                // If not found, validation will catch it separately
+            }
+        }
+    }
+    Ok(result)
+}
+
+/// Builds resolved parameter values for a nested cluster instantiation.
+/// - Literal bindings use their value directly
+/// - Exposed bindings look up the value from the current resolved_params
+fn build_resolved_params(
+    bindings: &HashMap<String, ParameterBinding>,
+    resolved_params: &HashMap<String, ParameterValue>,
+) -> HashMap<String, ParameterValue> {
+    let mut result = HashMap::new();
+    for (name, binding) in bindings {
+        match binding {
+            ParameterBinding::Literal { value } => {
+                result.insert(name.clone(), value.clone());
+            }
+            ParameterBinding::Exposed { parent_param } => {
+                if let Some(value) = resolved_params.get(parent_param) {
+                    result.insert(name.clone(), value.clone());
+                }
+            }
+        }
+    }
+    result
 }
 
 fn map_boundary_outputs(
@@ -2142,6 +2228,185 @@ mod tests {
                 && parameter == "threshold"
                 && expected == ParameterType::Number
                 && got == ParameterType::Int
+        ));
+    }
+
+    /// PR-B: Exposed binding propagates through nested clusters to leaf primitive
+    #[test]
+    fn exposed_binding_propagates_to_leaf_primitive() {
+        // Structure:
+        //   Parent cluster (param "threshold": Number)
+        //     └── Nested cluster "middle" (param "inner_t" exposed to "threshold")
+        //           └── Leaf impl (param "leaf_t" exposed to "inner_t")
+        //
+        // Instantiate parent with threshold = Literal(7.0)
+        // Assert: leaf impl receives parameters = { "leaf_t": Number(7.0) }
+
+        // Innermost cluster with a leaf primitive that exposes a parameter
+        let mut inner_nodes = HashMap::new();
+        inner_nodes.insert(
+            "leaf".to_string(),
+            NodeInstance {
+                id: "leaf".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "leaf_t".to_string(),
+                    ParameterBinding::Exposed {
+                        parent_param: "inner_t".to_string(),
+                    },
+                )]),
+            },
+        );
+
+        let inner = ClusterDefinition {
+            id: "inner".to_string(),
+            version: "v1".to_string(),
+            nodes: inner_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: vec![ParameterSpec {
+                name: "inner_t".to_string(),
+                ty: ParameterType::Number,
+                default: None,
+                required: true,
+            }],
+            declared_signature: None,
+        };
+
+        // Middle cluster that instantiates inner with an exposed binding
+        let mut middle_nodes = HashMap::new();
+        middle_nodes.insert(
+            "nested_inner".to_string(),
+            NodeInstance {
+                id: "nested_inner".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "inner".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "inner_t".to_string(),
+                    ParameterBinding::Exposed {
+                        parent_param: "middle_t".to_string(),
+                    },
+                )]),
+            },
+        );
+
+        let middle = ClusterDefinition {
+            id: "middle".to_string(),
+            version: "v1".to_string(),
+            nodes: middle_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: vec![ParameterSpec {
+                name: "middle_t".to_string(),
+                ty: ParameterType::Number,
+                default: None,
+                required: true,
+            }],
+            declared_signature: None,
+        };
+
+        // Outer cluster that provides a literal binding
+        let mut outer_nodes = HashMap::new();
+        outer_nodes.insert(
+            "nested_middle".to_string(),
+            NodeInstance {
+                id: "nested_middle".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "middle".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "middle_t".to_string(),
+                    ParameterBinding::Literal {
+                        value: ParameterValue::Number(7.0),
+                    },
+                )]),
+            },
+        );
+
+        let outer = ClusterDefinition {
+            id: "outer".to_string(),
+            version: "v1".to_string(),
+            nodes: outer_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: Vec::new(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new().with_cluster(inner).with_cluster(middle);
+        let catalog = TestCatalog::default();
+        let expanded = expand(&outer, &loader, &catalog).unwrap();
+
+        // Verify the leaf primitive received the propagated value
+        assert_eq!(expanded.nodes.len(), 1);
+        let leaf_node = expanded.nodes.values().next().unwrap();
+        assert_eq!(leaf_node.implementation.impl_id, "prim");
+        assert_eq!(
+            leaf_node.parameters.get("leaf_t"),
+            Some(&ParameterValue::Number(7.0))
+        );
+    }
+
+    /// PR-B: Unresolved Exposed binding on primitive node is rejected
+    #[test]
+    fn unresolved_exposed_binding_rejected() {
+        // Structure:
+        //   Parent cluster (NO params)
+        //     └── Leaf impl (param "x" exposed to "nonexistent")
+        //
+        // Expand should fail with UnresolvedExposedBinding
+
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "leaf".to_string(),
+            NodeInstance {
+                id: "leaf".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "x".to_string(),
+                    ParameterBinding::Exposed {
+                        parent_param: "nonexistent".to_string(),
+                    },
+                )]),
+            },
+        );
+
+        let cluster = ClusterDefinition {
+            id: "root".to_string(),
+            version: "v1".to_string(),
+            nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: Vec::new(), // No parameters!
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+        let catalog = TestCatalog::default();
+        let result = expand(&cluster, &loader, &catalog);
+
+        assert!(matches!(
+            result,
+            Err(ExpandError::UnresolvedExposedBinding {
+                node_id,
+                parameter,
+                referenced
+            }) if node_id == "leaf"
+                && parameter == "x"
+                && referenced == "nonexistent"
         ));
     }
 }
