@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::common::Value;
 use crate::compute::implementations::{
     Abs, Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Lt, Lte, Max, Min, Multiply,
-    Negate, Neq, Not, Or, Select, Subtract,
+    Negate, Neq, Not, Or, Select, SelectBool, Subtract,
 };
 use crate::compute::ComputePrimitive;
 
@@ -445,4 +445,34 @@ fn select_requires_all_inputs_and_routes_without_casts() {
             None,
         );
     });
+}
+
+#[test]
+fn select_bool_true_branch_selected() {
+    let select_bool = SelectBool::new();
+    let outputs = select_bool.compute(
+        &HashMap::from([
+            ("cond".to_string(), Value::Bool(true)),
+            ("when_true".to_string(), Value::Bool(true)),
+            ("when_false".to_string(), Value::Bool(false)),
+        ]),
+        &HashMap::new(),
+        None,
+    );
+    assert_eq!(outputs.get("result"), Some(&Value::Bool(true)));
+}
+
+#[test]
+fn select_bool_false_branch_selected() {
+    let select_bool = SelectBool::new();
+    let outputs = select_bool.compute(
+        &HashMap::from([
+            ("cond".to_string(), Value::Bool(false)),
+            ("when_true".to_string(), Value::Bool(true)),
+            ("when_false".to_string(), Value::Bool(false)),
+        ]),
+        &HashMap::new(),
+        None,
+    );
+    assert_eq!(outputs.get("result"), Some(&Value::Bool(false)));
 }

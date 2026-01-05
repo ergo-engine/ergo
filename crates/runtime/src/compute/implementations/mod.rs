@@ -17,6 +17,7 @@ pub mod neq;
 pub mod not;
 pub mod or;
 pub mod select;
+pub mod select_bool;
 pub mod subtract;
 
 pub use abs::Abs;
@@ -38,4 +39,5 @@ pub use neq::Neq;
 pub use not::Not;
 pub use or::Or;
 pub use select::Select;
+pub use select_bool::SelectBool;
 pub use subtract::Subtract;

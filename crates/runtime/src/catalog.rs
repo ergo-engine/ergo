@@ -15,9 +15,9 @@ use crate::compute::implementations::{
     const_number::const_number_manifest, divide::divide_manifest, eq::eq_manifest, gt::gt_manifest,
     gte::gte_manifest, lt::lt_manifest, lte::lte_manifest, max::max_manifest, min::min_manifest,
     multiply::multiply_manifest, negate::negate_manifest, neq::neq_manifest, not::not_manifest,
-    or::or_manifest, select::select_manifest, subtract::subtract_manifest, Abs, Add, And,
-    ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Lt, Lte, Max, Min, Multiply, Negate, Neq, Not, Or,
-    Select, Subtract,
+    or::or_manifest, select::select_manifest, select_bool::select_bool_manifest,
+    subtract::subtract_manifest, Abs, Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Lt,
+    Lte, Max, Min, Multiply, Negate, Neq, Not, Or, Select, SelectBool, Subtract,
 };
 use crate::compute::{ComputePrimitiveManifest, PrimitiveRegistry as ComputeRegistry};
 use crate::source::{
@@ -129,6 +129,9 @@ pub fn core_registries() -> Result<CoreRegistries, CoreRegistrationError> {
         .map_err(CoreRegistrationError::Compute)?;
     computes
         .register(Box::new(Select::new()))
+        .map_err(CoreRegistrationError::Compute)?;
+    computes
+        .register(Box::new(SelectBool::new()))
         .map_err(CoreRegistrationError::Compute)?;
 
     let mut triggers = TriggerRegistry::new();
@@ -441,6 +444,9 @@ pub fn build_core_catalog() -> CorePrimitiveCatalog {
     catalog
         .register_compute(select_manifest())
         .expect("select manifest is valid");
+    catalog
+        .register_compute(select_bool_manifest())
+        .expect("select_bool manifest is valid");
 
     // Triggers
     catalog.register_trigger(emit_if_true_manifest());
