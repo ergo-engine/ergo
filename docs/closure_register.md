@@ -125,23 +125,29 @@ Legend:
 ---
 
 ### A.2 — Boundary output mapping must not silently fallback
+
 - **ID:** A.2
-- **Rule:** If a boundary output references an unmapped node_id during expansion, expansion must fail with typed error (no authoring-id fallback).
+- **Rule:** If a boundary output references an unmapped node_id during expansion, expansion must fail with typed error.
 - **Disposition:** CLOSE
-- **Enforcement locus:** expand (`crates/runtime/src/cluster.rs:1107-1110`)
-- **Error:** `ExpandError::UnmappedBoundaryOutput { port_name, node_id }` (new)
-- **Test:** `unmapped_boundary_output_rejected`
+- **Enforcement locus:** expand (`crates/runtime/src/cluster.rs:1112-1135`)
+  - `map_boundary_outputs` returns `Result<Vec<OutputPortSpec>, ExpandError>`
+  - Returns error when `mapping.get()` fails instead of fallback
+- **Error:** `ExpandError::UnmappedBoundaryOutput { port_name, node_id }`
+- **Test:** `unmapped_boundary_output_rejected` (cluster.rs:2905-2951)
 - **PR/Commit:** <pending>
 
 ---
 
 ### A.3 — Nested output mapping must not silently skip
+
 - **ID:** A.3
-- **Rule:** If nested output mapping fails during expansion, expansion must fail (no silent omission that later resolves to ExternalInput / misroutes).
+- **Rule:** If nested output mapping fails during expansion, expansion must fail with typed error.
 - **Disposition:** CLOSE
-- **Enforcement locus:** expand (`crates/runtime/src/cluster.rs:793-805`)
-- **Error:** `ExpandError::UnmappedNestedOutput { cluster_id, port_name }` (new) OR reuse an existing error type
-- **Test:** `nested_output_mapping_failure_rejected`
+- **Enforcement locus:** expand (`crates/runtime/src/cluster.rs:806-824`)
+  - Nested cluster output mapping verifies all ports mapped
+  - Returns error when target node has no mapping
+- **Error:** `ExpandError::UnmappedNestedOutput { cluster_id, port_name }`
+- **Test:** `nested_output_mapping_failure_rejected` (cluster.rs:2953-3024)
 - **PR/Commit:** <pending>
 
 ---
