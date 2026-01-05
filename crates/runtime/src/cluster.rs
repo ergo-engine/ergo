@@ -281,6 +281,16 @@ pub enum ExpandError {
         parameter: String,
         referenced: String,
     },
+    /// A.2: Boundary output references unmapped node_id
+    UnmappedBoundaryOutput {
+        port_name: String,
+        node_id: String,
+    },
+    /// A.3: Nested cluster output port references unmapped node
+    UnmappedNestedOutput {
+        cluster_id: String,
+        port_name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -324,7 +334,7 @@ pub fn expand<L: ClusterLoader>(
 
     let mut graph = build.graph;
     graph.boundary_inputs = cluster_def.input_ports.clone();
-    graph.boundary_outputs = map_boundary_outputs(&cluster_def.output_ports, &build.node_mapping);
+    graph.boundary_outputs = map_boundary_outputs(&cluster_def.output_ports, &build.node_mapping)?;
 
     // E.3 invariant: ExternalInput must not appear as edge target (sink) after expansion
     for edge in &graph.edges {
@@ -793,19 +803,23 @@ fn expand_with_context<L: ClusterLoader>(
                 }
                 cluster_input_map.insert(node.id.clone(), input_map);
 
+                // A.3: Map all output ports, failing if any node_id is unmapped
                 let mut output_map: HashMap<String, ExpandedEndpoint> = HashMap::new();
                 for output_port in &bound_nested.output_ports {
-                    if let Some(node_id) =
-                        nested_build.node_mapping.get(&output_port.maps_to.node_id)
-                    {
-                        output_map.insert(
-                            output_port.name.clone(),
-                            ExpandedEndpoint::NodePort {
-                                node_id: node_id.clone(),
-                                port_name: output_port.maps_to.port_name.clone(),
-                            },
-                        );
-                    }
+                    let mapped_node_id = nested_build
+                        .node_mapping
+                        .get(&output_port.maps_to.node_id)
+                        .ok_or_else(|| ExpandError::UnmappedNestedOutput {
+                            cluster_id: node.id.clone(),
+                            port_name: output_port.name.clone(),
+                        })?;
+                    output_map.insert(
+                        output_port.name.clone(),
+                        ExpandedEndpoint::NodePort {
+                            node_id: mapped_node_id.clone(),
+                            port_name: output_port.maps_to.port_name.clone(),
+                        },
+                    );
                 }
                 cluster_output_map.insert(node.id.clone(), output_map);
 
@@ -1099,23 +1113,29 @@ fn build_resolved_params(
     Ok(result)
 }
 
+/// A.2: Map boundary outputs, failing if any node_id is unmapped
 fn map_boundary_outputs(
     outputs: &[OutputPortSpec],
     mapping: &HashMap<NodeId, String>,
-) -> Vec<OutputPortSpec> {
-    outputs
-        .iter()
-        .map(|o| OutputPortSpec {
+) -> Result<Vec<OutputPortSpec>, ExpandError> {
+    let mut result = Vec::with_capacity(outputs.len());
+    for o in outputs {
+        let mapped_node_id = mapping
+            .get(&o.maps_to.node_id)
+            .cloned()
+            .ok_or_else(|| ExpandError::UnmappedBoundaryOutput {
+                port_name: o.name.clone(),
+                node_id: o.maps_to.node_id.clone(),
+            })?;
+        result.push(OutputPortSpec {
             name: o.name.clone(),
             maps_to: OutputRef {
-                node_id: mapping
-                    .get(&o.maps_to.node_id)
-                    .cloned()
-                    .unwrap_or_else(|| o.maps_to.node_id.clone()),
+                node_id: mapped_node_id,
                 port_name: o.maps_to.port_name.clone(),
             },
-        })
-        .collect()
+        });
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -2880,5 +2900,126 @@ mod tests {
                 name, expected_runtime_id, actual.1
             );
         }
+    }
+
+    /// A.2: Boundary output referencing unmapped node must fail expansion
+    #[test]
+    fn unmapped_boundary_output_rejected() {
+        // Create cluster with output port referencing non-existent node
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "real_node".to_string(),
+            NodeInstance {
+                id: "real_node".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+
+        let cluster = ClusterDefinition {
+            id: "test".to_string(),
+            version: "v1".to_string(),
+            nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: vec![OutputPortSpec {
+                name: "out".to_string(),
+                maps_to: OutputRef {
+                    node_id: "nonexistent_node".to_string(), // This node doesn't exist
+                    port_name: "value".to_string(),
+                },
+            }],
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+        let catalog = TestCatalog::default();
+
+        let result = expand(&cluster, &loader, &catalog);
+
+        assert!(matches!(
+            result,
+            Err(ExpandError::UnmappedBoundaryOutput {
+                port_name,
+                node_id
+            }) if port_name == "out" && node_id == "nonexistent_node"
+        ));
+    }
+
+    /// A.3: Nested cluster output port referencing unmapped node must fail expansion
+    #[test]
+    fn nested_output_mapping_failure_rejected() {
+        // Inner cluster has output port referencing non-existent internal node
+        let mut inner_nodes = HashMap::new();
+        inner_nodes.insert(
+            "leaf".to_string(),
+            NodeInstance {
+                id: "leaf".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+
+        let inner = ClusterDefinition {
+            id: "inner".to_string(),
+            version: "v1".to_string(),
+            nodes: inner_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: vec![OutputPortSpec {
+                name: "out".to_string(),
+                maps_to: OutputRef {
+                    node_id: "ghost_node".to_string(), // This node doesn't exist in inner
+                    port_name: "value".to_string(),
+                },
+            }],
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        // Outer cluster instantiates inner
+        let mut outer_nodes = HashMap::new();
+        outer_nodes.insert(
+            "nested".to_string(),
+            NodeInstance {
+                id: "nested".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "inner".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+
+        let outer = ClusterDefinition {
+            id: "outer".to_string(),
+            version: "v1".to_string(),
+            nodes: outer_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new().with_cluster(inner);
+        let catalog = TestCatalog::default();
+
+        let result = expand(&outer, &loader, &catalog);
+
+        assert!(matches!(
+            result,
+            Err(ExpandError::UnmappedNestedOutput {
+                cluster_id,
+                port_name
+            }) if cluster_id == "nested" && port_name == "out"
+        ));
     }
 }
