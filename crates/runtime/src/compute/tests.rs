@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use crate::common::Value;
 use crate::compute::implementations::{
-    Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Lt, Lte, Multiply, Negate, Neq, Not, Or,
-    Select, Subtract,
+    Abs, Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Lt, Lte, Multiply, Negate, Neq,
+    Not, Or, Select, Subtract,
 };
 use crate::compute::ComputePrimitive;
 
@@ -142,6 +142,28 @@ fn negate_requires_input_and_computes() {
     expect_panic(|| {
         negate.compute(&HashMap::new(), &HashMap::new(), None);
     });
+}
+
+#[test]
+fn abs_positive_is_identity() {
+    let abs = Abs::new();
+    let outputs = abs.compute(
+        &HashMap::from([("value".to_string(), Value::Number(3.5))]),
+        &HashMap::new(),
+        None,
+    );
+    assert_eq!(outputs.get("result"), Some(&Value::Number(3.5)));
+}
+
+#[test]
+fn abs_negative_is_flipped() {
+    let abs = Abs::new();
+    let outputs = abs.compute(
+        &HashMap::from([("value".to_string(), Value::Number(-3.5))]),
+        &HashMap::new(),
+        None,
+    );
+    assert_eq!(outputs.get("result"), Some(&Value::Number(3.5)));
 }
 
 #[test]

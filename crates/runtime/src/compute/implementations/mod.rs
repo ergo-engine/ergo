@@ -1,3 +1,4 @@
+pub mod abs;
 pub mod add;
 pub mod and;
 pub mod const_bool;
@@ -16,6 +17,7 @@ pub mod or;
 pub mod select;
 pub mod subtract;
 
+pub use abs::Abs;
 pub use add::Add;
 pub use and::And;
 pub use const_bool::ConstBool;
