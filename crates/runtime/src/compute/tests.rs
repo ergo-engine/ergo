@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::common::Value;
 use crate::compute::implementations::{
-    Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Lt, Multiply, Negate, Neq, Not, Or,
+    Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Lt, Lte, Multiply, Negate, Neq, Not, Or,
     Select, Subtract,
 };
 use crate::compute::ComputePrimitive;
@@ -243,6 +243,34 @@ fn gte_basic_false_when_less() {
     let outputs = gte.compute(
         &HashMap::from([
             ("a".to_string(), Value::Number(1.0)),
+            ("b".to_string(), Value::Number(2.0)),
+        ]),
+        &HashMap::new(),
+        None,
+    );
+    assert_eq!(outputs.get("result"), Some(&Value::Bool(false)));
+}
+
+#[test]
+fn lte_basic_true_when_equal() {
+    let lte = Lte::new();
+    let outputs = lte.compute(
+        &HashMap::from([
+            ("a".to_string(), Value::Number(2.0)),
+            ("b".to_string(), Value::Number(2.0)),
+        ]),
+        &HashMap::new(),
+        None,
+    );
+    assert_eq!(outputs.get("result"), Some(&Value::Bool(true)));
+}
+
+#[test]
+fn lte_basic_false_when_greater() {
+    let lte = Lte::new();
+    let outputs = lte.compute(
+        &HashMap::from([
+            ("a".to_string(), Value::Number(3.0)),
             ("b".to_string(), Value::Number(2.0)),
         ]),
         &HashMap::new(),
