@@ -691,7 +691,11 @@ fn expand_with_context<L: ClusterLoader>(
     let mut cluster_output_map: HashMap<NodeId, HashMap<String, ExpandedEndpoint>> = HashMap::new();
     let mut cluster_input_map: HashMap<NodeId, HashMap<String, String>> = HashMap::new();
 
-    for node in cluster_def.nodes.values() {
+    // C.1: Iterate nodes in sorted key order for deterministic runtime_id assignment
+    let mut sorted_node_ids: Vec<_> = cluster_def.nodes.keys().collect();
+    sorted_node_ids.sort();
+    for node_id in sorted_node_ids {
+        let node = cluster_def.nodes.get(node_id).unwrap();
         match &node.kind {
             NodeKind::Impl { impl_id, version } => {
                 let runtime_id = ctx.next_runtime_id();
@@ -2797,5 +2801,84 @@ mod tests {
             Some(&ParameterValue::Number(42.0)),
             "Cluster parameter default should propagate to nested leaf"
         );
+    }
+
+    /// C.1: Expansion must assign deterministic runtime_ids for identical cluster definitions
+    #[test]
+    fn expansion_runtime_ids_deterministic() {
+        // Create a cluster with multiple nodes (names chosen to differ in HashMap iteration order)
+        let mut nodes = HashMap::new();
+        for name in ["zebra", "alpha", "mike", "charlie", "bravo"] {
+            nodes.insert(
+                name.to_string(),
+                NodeInstance {
+                    id: name.to_string(),
+                    kind: NodeKind::Impl {
+                        impl_id: "prim".to_string(),
+                        version: "v1".to_string(),
+                    },
+                    parameter_bindings: HashMap::new(),
+                },
+            );
+        }
+
+        let cluster = ClusterDefinition {
+            id: "test".to_string(),
+            version: "v1".to_string(),
+            nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+        let catalog = TestCatalog::default();
+
+        // Expand multiple times and verify runtime_ids are identical
+        let expanded1 = expand(&cluster, &loader, &catalog).unwrap();
+        let expanded2 = expand(&cluster, &loader, &catalog).unwrap();
+        let expanded3 = expand(&cluster, &loader, &catalog).unwrap();
+
+        // Collect (authoring_id, runtime_id) pairs sorted by authoring_id
+        fn collect_id_pairs(graph: &ExpandedGraph) -> Vec<(String, String)> {
+            let mut pairs: Vec<_> = graph
+                .nodes
+                .values()
+                .map(|n| {
+                    let authoring_id = n.authoring_path.last().unwrap().1.clone();
+                    (authoring_id, n.runtime_id.clone())
+                })
+                .collect();
+            pairs.sort_by(|a, b| a.0.cmp(&b.0));
+            pairs
+        }
+
+        let pairs1 = collect_id_pairs(&expanded1);
+        let pairs2 = collect_id_pairs(&expanded2);
+        let pairs3 = collect_id_pairs(&expanded3);
+
+        assert_eq!(
+            pairs1, pairs2,
+            "Runtime IDs must be deterministic across expansions"
+        );
+        assert_eq!(
+            pairs2, pairs3,
+            "Runtime IDs must be deterministic across expansions"
+        );
+
+        // Verify that nodes are assigned in alphabetical order by authoring_id
+        // (alpha=n0, bravo=n1, charlie=n2, mike=n3, zebra=n4)
+        let expected_order = vec!["alpha", "bravo", "charlie", "mike", "zebra"];
+        for (i, name) in expected_order.iter().enumerate() {
+            let expected_runtime_id = format!("n{}", i);
+            let actual = pairs1.iter().find(|(auth, _)| auth == *name).unwrap();
+            assert_eq!(
+                actual.1, expected_runtime_id,
+                "Node '{}' should have runtime_id '{}', got '{}'",
+                name, expected_runtime_id, actual.1
+            );
+        }
     }
 }
