@@ -53,6 +53,7 @@ fn add_metadata() -> PrimitiveMetadata {
             },
         ],
         outputs,
+        parameters: Vec::new(),
     }
 }
 
@@ -70,6 +71,7 @@ fn source_metadata() -> PrimitiveMetadata {
         kind: PrimitiveKind::Source,
         inputs: Vec::new(),
         outputs,
+        parameters: Vec::new(),
     }
 }
 
@@ -273,6 +275,7 @@ fn parameters_flow_into_compute_execution() {
                     cardinality: crate::cluster::Cardinality::Single,
                 },
             )]),
+            parameters: Vec::new(),
         },
     );
 

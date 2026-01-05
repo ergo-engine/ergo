@@ -5,8 +5,8 @@ use crate::action::{
     AckAction, ActionRegistry, ActionValidationError, ActionValueType, AnnotateAction,
 };
 use crate::cluster::{
-    Cardinality, InputMetadata, OutputMetadata, PrimitiveCatalog, PrimitiveKind, PrimitiveMetadata,
-    ValueType, Version,
+    Cardinality, InputMetadata, OutputMetadata, ParameterMetadata, ParameterType, ParameterValue,
+    PrimitiveCatalog, PrimitiveKind, PrimitiveMetadata, ValueType, Version,
 };
 use crate::common;
 use crate::common::ValidationError;
@@ -167,12 +167,28 @@ impl CorePrimitiveCatalog {
             })
             .collect();
 
+        // A.1: Extract parameter specs with defaults
+        let parameters = manifest
+            .parameters
+            .into_iter()
+            .map(|p| {
+                let required = p.default.is_none();
+                ParameterMetadata {
+                    name: p.name,
+                    ty: map_compute_param_type(p.value_type),
+                    default: p.default.map(map_compute_param_value),
+                    required,
+                }
+            })
+            .collect();
+
         self.metadata.insert(
             (manifest.id.clone(), manifest.version.clone()),
             PrimitiveMetadata {
                 kind: PrimitiveKind::Compute,
                 inputs,
                 outputs,
+                parameters,
             },
         );
     }
@@ -202,12 +218,28 @@ impl CorePrimitiveCatalog {
             })
             .collect();
 
+        // A.1: Extract parameter specs with defaults
+        let parameters = manifest
+            .parameters
+            .into_iter()
+            .map(|p| {
+                let required = p.default.is_none();
+                ParameterMetadata {
+                    name: p.name,
+                    ty: map_trigger_param_type(p.value_type),
+                    default: p.default.map(map_trigger_param_value),
+                    required,
+                }
+            })
+            .collect();
+
         self.metadata.insert(
             (manifest.id.clone(), manifest.version.clone()),
             PrimitiveMetadata {
                 kind: PrimitiveKind::Trigger,
                 inputs,
                 outputs,
+                parameters,
             },
         );
     }
@@ -228,12 +260,28 @@ impl CorePrimitiveCatalog {
             })
             .collect();
 
+        // A.1: Extract parameter specs with defaults
+        let parameters = manifest
+            .parameters
+            .into_iter()
+            .map(|p| {
+                let required = p.default.is_none();
+                ParameterMetadata {
+                    name: p.name,
+                    ty: map_source_param_type(p.value_type),
+                    default: p.default.map(map_source_param_value),
+                    required,
+                }
+            })
+            .collect();
+
         self.metadata.insert(
             (manifest.id.clone(), manifest.version.clone()),
             PrimitiveMetadata {
                 kind: PrimitiveKind::Source,
                 inputs,
                 outputs,
+                parameters,
             },
         );
     }
@@ -263,12 +311,28 @@ impl CorePrimitiveCatalog {
             })
             .collect();
 
+        // A.1: Extract parameter specs with defaults
+        let parameters = manifest
+            .parameters
+            .into_iter()
+            .map(|p| {
+                let required = p.default.is_none();
+                ParameterMetadata {
+                    name: p.name,
+                    ty: map_action_param_type(p.value_type),
+                    default: p.default.map(map_action_param_value),
+                    required,
+                }
+            })
+            .collect();
+
         self.metadata.insert(
             (manifest.id.clone(), manifest.version.clone()),
             PrimitiveMetadata {
                 kind: PrimitiveKind::Action,
                 inputs,
                 outputs,
+                parameters,
             },
         );
     }
@@ -339,5 +403,83 @@ fn map_action_value_type(value_type: ActionValueType) -> ValueType {
         ActionValueType::Number => ValueType::Number,
         ActionValueType::Bool => ValueType::Bool,
         ActionValueType::String => ValueType::String,
+    }
+}
+
+// A.1: Parameter type/value mapping functions for expansion-time default resolution
+
+fn map_source_param_type(ty: crate::source::ParameterType) -> ParameterType {
+    match ty {
+        crate::source::ParameterType::Int => ParameterType::Int,
+        crate::source::ParameterType::Number => ParameterType::Number,
+        crate::source::ParameterType::Bool => ParameterType::Bool,
+        crate::source::ParameterType::String => ParameterType::String,
+        crate::source::ParameterType::Enum => ParameterType::Enum,
+    }
+}
+
+fn map_source_param_value(val: crate::source::ParameterValue) -> ParameterValue {
+    match val {
+        crate::source::ParameterValue::Int(i) => ParameterValue::Int(i),
+        crate::source::ParameterValue::Number(n) => ParameterValue::Number(n),
+        crate::source::ParameterValue::Bool(b) => ParameterValue::Bool(b),
+        crate::source::ParameterValue::String(s) => ParameterValue::String(s),
+        crate::source::ParameterValue::Enum(e) => ParameterValue::Enum(e),
+    }
+}
+
+fn map_compute_param_type(ty: common::ValueType) -> ParameterType {
+    match ty {
+        common::ValueType::Number => ParameterType::Number,
+        common::ValueType::Series => ParameterType::Number, // Series params not supported; fallback
+        common::ValueType::Bool => ParameterType::Bool,
+    }
+}
+
+fn map_compute_param_value(val: common::Value) -> ParameterValue {
+    match val {
+        common::Value::Number(n) => ParameterValue::Number(n),
+        common::Value::Series(_) => ParameterValue::Number(0.0), // Series params not supported
+        common::Value::Bool(b) => ParameterValue::Bool(b),
+    }
+}
+
+fn map_trigger_param_type(ty: crate::trigger::ParameterType) -> ParameterType {
+    match ty {
+        crate::trigger::ParameterType::Int => ParameterType::Int,
+        crate::trigger::ParameterType::Number => ParameterType::Number,
+        crate::trigger::ParameterType::Bool => ParameterType::Bool,
+        crate::trigger::ParameterType::String => ParameterType::String,
+        crate::trigger::ParameterType::Enum => ParameterType::Enum,
+    }
+}
+
+fn map_trigger_param_value(val: crate::trigger::ParameterValue) -> ParameterValue {
+    match val {
+        crate::trigger::ParameterValue::Int(i) => ParameterValue::Int(i),
+        crate::trigger::ParameterValue::Number(n) => ParameterValue::Number(n),
+        crate::trigger::ParameterValue::Bool(b) => ParameterValue::Bool(b),
+        crate::trigger::ParameterValue::String(s) => ParameterValue::String(s),
+        crate::trigger::ParameterValue::Enum(e) => ParameterValue::Enum(e),
+    }
+}
+
+fn map_action_param_type(ty: crate::action::ParameterType) -> ParameterType {
+    match ty {
+        crate::action::ParameterType::Int => ParameterType::Int,
+        crate::action::ParameterType::Number => ParameterType::Number,
+        crate::action::ParameterType::Bool => ParameterType::Bool,
+        crate::action::ParameterType::String => ParameterType::String,
+        crate::action::ParameterType::Enum => ParameterType::Enum,
+    }
+}
+
+fn map_action_param_value(val: crate::action::ParameterValue) -> ParameterValue {
+    match val {
+        crate::action::ParameterValue::Int(i) => ParameterValue::Int(i),
+        crate::action::ParameterValue::Number(n) => ParameterValue::Number(n),
+        crate::action::ParameterValue::Bool(b) => ParameterValue::Bool(b),
+        crate::action::ParameterValue::String(s) => ParameterValue::String(s),
+        crate::action::ParameterValue::Enum(e) => ParameterValue::Enum(e),
     }
 }
