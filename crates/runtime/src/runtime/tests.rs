@@ -854,3 +854,96 @@ fn execute_returns_error_when_topology_references_missing_node() {
         other => panic!("expected ExecError::MissingNode, got {:?}", other),
     }
 }
+
+/// V.MULTI-EDGE: Multiple edges targeting the same input port are rejected.
+#[test]
+fn validate_rejects_multiple_edges_to_same_input() {
+    let mut nodes = HashMap::new();
+    nodes.insert(
+        "src1".to_string(),
+        ExpandedNode {
+            runtime_id: "src1".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "const1".to_string(),
+                version: "v1".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+    nodes.insert(
+        "src2".to_string(),
+        ExpandedNode {
+            runtime_id: "src2".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "const2".to_string(),
+                version: "v1".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+    nodes.insert(
+        "add1".to_string(),
+        ExpandedNode {
+            runtime_id: "add1".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "add".to_string(),
+                version: "v1".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+
+    // Both sources wired to the same input port "a" on add1
+    let edges = vec![
+        crate::cluster::ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "src1".to_string(),
+                port_name: "out".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "add1".to_string(),
+                port_name: "a".to_string(),
+            },
+        },
+        crate::cluster::ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "src2".to_string(),
+                port_name: "out".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "add1".to_string(),
+                port_name: "a".to_string(), // Same port as first edge!
+            },
+        },
+    ];
+
+    let expanded = ExpandedGraph {
+        nodes,
+        edges,
+        boundary_inputs: Vec::new(),
+        boundary_outputs: Vec::new(),
+    };
+
+    let mut catalog = TestCatalog::default();
+    catalog
+        .metadata
+        .insert(("add".to_string(), "v1".to_string()), add_metadata());
+    catalog
+        .metadata
+        .insert(("const1".to_string(), "v1".to_string()), source_metadata());
+    catalog
+        .metadata
+        .insert(("const2".to_string(), "v1".to_string()), source_metadata());
+
+    let err = crate::runtime::validate(&expanded, &catalog).unwrap_err();
+    match err {
+        ValidationError::MultipleInboundEdges { node, input } => {
+            assert_eq!(node, "add1");
+            assert_eq!(input, "a");
+        }
+        other => panic!("expected MultipleInboundEdges, got {:?}", other),
+    }
+}

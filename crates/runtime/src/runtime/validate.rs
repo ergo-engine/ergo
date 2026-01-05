@@ -56,6 +56,7 @@ pub fn validate<C: PrimitiveCatalog>(
         .collect::<Result<Vec<_>, _>>()?;
 
     enforce_edge_nodes_exist(&nodes, &edges)?;
+    enforce_single_edge_per_input(&edges)?;
     let topo_order = topological_sort(&nodes, &edges)?;
 
     enforce_wiring_matrix(&nodes, &edges)?;
@@ -334,4 +335,26 @@ fn wiring_allowed(from: &PrimitiveKind, to: &PrimitiveKind) -> bool {
 
         _ => false,
     }
+}
+
+/// V.MULTI-EDGE: Reject multiple edges targeting the same input port.
+/// All inputs currently have Cardinality::Single; fan-in is not supported.
+fn enforce_single_edge_per_input(edges: &[ValidatedEdge]) -> Result<(), ValidationError> {
+    let mut inbound_count: HashMap<(&String, &String), usize> = HashMap::new();
+
+    for edge in edges {
+        let Endpoint::NodePort { node_id, port_name } = &edge.to;
+        *inbound_count.entry((node_id, port_name)).or_insert(0) += 1;
+    }
+
+    for ((node_id, port_name), count) in inbound_count {
+        if count > 1 {
+            return Err(ValidationError::MultipleInboundEdges {
+                node: node_id.clone(),
+                input: port_name.clone(),
+            });
+        }
+    }
+
+    Ok(())
 }

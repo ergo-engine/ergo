@@ -88,6 +88,12 @@ pub enum ValidationError {
     ExternalInputNotAllowed {
         name: String,
     },
+    /// V.MULTI-EDGE: Multiple edges targeting the same input port.
+    /// All inputs currently have Cardinality::Single; fan-in is not supported.
+    MultipleInboundEdges {
+        node: String,
+        input: String,
+    },
 }
 
 #[derive(Debug)]

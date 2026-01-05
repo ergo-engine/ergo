@@ -342,8 +342,12 @@ fn map_action_value(v: ActionValue) -> RuntimeValue {
 fn map_to_action_value(v: &RuntimeValue, node: &str, port: &str) -> Result<ActionValue, ExecError> {
     match v {
         RuntimeValue::Event(RuntimeEvent::Action(e)) => Ok(ActionValue::Event(e.clone())),
-        RuntimeValue::Event(RuntimeEvent::Trigger(_)) => {
+        RuntimeValue::Event(RuntimeEvent::Trigger(TriggerEvent::Emitted)) => {
             Ok(ActionValue::Event(crate::action::ActionOutcome::Attempted))
+        }
+        RuntimeValue::Event(RuntimeEvent::Trigger(TriggerEvent::NotEmitted)) => {
+            // R.7: should_skip_action() must catch NotEmitted before this point.
+            unreachable!("R.7 violation: NotEmitted must be caught by should_skip_action")
         }
         RuntimeValue::Number(n) => Ok(ActionValue::Number(*n)),
         RuntimeValue::Bool(b) => Ok(ActionValue::Bool(*b)),
