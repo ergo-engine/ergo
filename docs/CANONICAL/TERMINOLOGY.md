@@ -132,6 +132,35 @@ Migration of code symbols is tracked in PHASE_INVARIANTS.md.
 
 ---
 
+## 9. Domain Neutrality in Core Layers
+
+The core layers (adapter, supervisor, runtime) must remain **domain-neutral**. Terms from any specific vertical (e.g., trading, gaming, IoT) must not appear in core abstractions.
+
+### Suspect Terms (Trading Vertical)
+
+The following terms have trading connotations and should be avoided or renamed in core:
+
+| Term     | Status             | Replacement | Notes                                                                    |
+|----------|--------------------| ------------|--------------------------------------------------------------------------|
+| `Tick`   | **Rename pending** | `Pump`      | "Tick" implies market data; "Pump" is domain-neutral for periodic events |
+| `Filled` | **Rename pending** | `Completed` | "Filled" implies order execution; "Completed" is generic                 |
+
+### Naming Rule
+
+When adding new types, events, or concepts to core layers:
+1. Ask: "Does this term make sense outside of trading?"
+2. If not, choose a domain-neutral alternative
+3. Vertical-specific terminology belongs in vertical crates, not core
+
+### Current Status
+
+- `ExternalEventKind::Tick` → `ExternalEventKind::Pump` (pending)
+- `RunTermination::Filled` → `RunTermination::Completed` (pending)
+
+These renames are tracked but not yet implemented. Tests in `replay_harness.rs` already use `Command` instead of `Tick` to avoid coupling to the deferred-retry behavior.
+
+---
+
 ## Authority
 
 This document is canonical for terminology.

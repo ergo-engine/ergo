@@ -1,13 +1,13 @@
 ---
 Authority: CANONICAL
-Version: v0.18
+Version: v0.19
 Owner: Claude (Structural Auditor)
 Last Updated: 2025-01-05
 ---
 
 # Phase Invariants — v0
 
-**Tracked invariants:** 70
+**Tracked invariants:** 74
 
 This document defines the invariants that must hold at each phase boundary in the system. It is the authoritative reference for what is true, where that truth is enforced, and what happens if it is violated.
 
@@ -366,6 +366,8 @@ must be implemented as clusters with explicit state flow through environment.
 | SUP-5 | ErrKind is mechanical only | SUPERVISOR.md §3 | ✓ | — | — | — |
 | SUP-6 | Episode atomicity is invocation-scoped | SUPERVISOR.md §3 | — | — | — | — |
 | SUP-7 | DecisionLog is write-only | SUPERVISOR.md §3 | ✓ | — | — | ✓ |
+| SUP-TICK-1 | Tick events use deferred-retry scheduling | — | — | — | — | ✓ |
+| RTHANDLE-ID-1 | RuntimeHandle discards graph_id and event_id | — | ✓ | — | — | ✓ |
 
 ### Notes
 
@@ -375,6 +377,8 @@ must be implemented as clusters with explicit state flow through environment.
 - **SUP-4:** `should_retry()` matches only `NetworkTimeout|AdapterUnavailable|RuntimeError|TimedOut`.
 - **SUP-5:** `ErrKind` enum contains only mechanical variants; no domain-flavored errors.
 - **SUP-7:** `DecisionLog` trait has only `fn log()`; `records()` is on concrete impl, not trait.
+- **SUP-TICK-1:** Tick events have special deferred-retry behavior distinct from Command events. Test: `replay_harness.rs` uses Command (not Tick) to avoid interference.
+- **RTHANDLE-ID-1:** `RuntimeHandle::run()` explicitly discards `graph_id` and `event_id` parameters (adapter/lib.rs:234-235). Only `ctx.inner()` is passed to underlying runtime. This ensures replay determinism — fault injection keys on EventId only (REP-3).
 
 ---
 
@@ -398,6 +402,8 @@ must be implemented as clusters with explicit state flow through environment.
 | REP-4 | Capture/runtime type separation | — | ✓ | — | — | — |
 | REP-5 | No wall-clock time in supervisor | — | — | — | — | ✓ |
 | REP-6 | Stateful trigger state captured for replay | N/A | N/A | N/A | N/A | ✅ CLOSED BY CLARIFICATION |
+| REP-SCOPE | Replay covers supervisor scheduling only | — | — | — | — | — |
+| SOURCE-TRUST | Source determinism is trust-based | — | — | — | — | — |
 
 ### Notes
 
@@ -421,6 +427,9 @@ Replay determinism is preserved by existing adapter capture (REP-1 through REP-5
 additional capture mechanism is required.
 
 **Authority:** Sebastian (Freeze Authority), 2025-12-28
+
+- **REP-SCOPE:** Replay determinism covers supervisor scheduling decisions only. It does not capture or replay the internal execution of the runtime graph. Source outputs, compute results, and action side effects are not recorded. Replay verifies that given the same external events, the supervisor makes identical scheduling decisions.
+- **SOURCE-TRUST:** Source primitive determinism is trust-based, not enforced. The `SourcePrimitiveManifest` declares `execution.deterministic = true`, but the trait has no compile-time restrictions preventing non-deterministic implementations. Enforcement is by convention and code review. See `source/registry.rs::validate_manifest()`.
 
 ---
 
@@ -523,3 +532,4 @@ Changes to this document require the same review bar as changes to frozen specs.
 | v0.16 | 2025-01-05 | Claude Code | X.10 added: reject Series compute parameters at registration (Codex audit finding) |
 | v0.17 | 2025-01-05 | Claude Code | X.11 added: guard Int→f64 conversion for exact representability (Codex audit finding) |
 | v0.18 | 2025-01-05 | Claude Code | REP-1 strengthened: point-of-use hash verification in supervisor replay path (REP-1b) |
+| v0.19 | 2025-01-05 | Claude Code | Added SUP-TICK-1, RTHANDLE-ID-1 (orchestration); REP-SCOPE, SOURCE-TRUST (replay scope/trust documentation) |
