@@ -131,7 +131,10 @@ impl Default for EventPayload {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExternalEventKind {
-    Tick,
+    /// Periodic event for graph evaluation cycles.
+    /// Renamed from `Tick` for domain neutrality (see TERMINOLOGY.md §9).
+    #[serde(alias = "Tick")]
+    Pump,
     DataAvailable,
     Command,
 }
