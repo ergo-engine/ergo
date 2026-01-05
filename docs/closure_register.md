@@ -110,11 +110,16 @@ Legend:
 ---
 
 ### C.1 — Runtime ID assignment deterministic across runs
+
 - **ID:** C.1
 - **Rule:** Expansion must assign deterministic `runtime_id`s for identical cluster definitions (no HashMap iteration dependence).
 - **Disposition:** CLOSE
-- **Enforcement locus:** expand (`crates/runtime/src/cluster.rs` node iteration / runtime_id assignment)
-- **Test:** `expansion_runtime_ids_deterministic`
+- **Enforcement locus:** expand (`crates/runtime/src/cluster.rs:694-698`)
+  - Node keys collected and sorted lexicographically before iteration
+  - `ctx.next_runtime_id()` called in stable order
+- **Test:** `expansion_runtime_ids_deterministic` (cluster.rs:2806-2883)
+  - 5 nodes with varying names, expanded 3 times, IDs identical
+  - Verifies alphabetical ordering (alpha→n0, bravo→n1, etc.)
 - **PR/Commit:** <pending>
 
 ---
