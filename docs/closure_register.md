@@ -211,6 +211,34 @@ Legend:
 
 ---
 
+### CAPTURE-FMT-1 — Capture format version is single-source-of-truth
+
+- **ID:** CAPTURE-FMT-1
+- **Rule:** The capture bundle format version must be defined in exactly one place and referenced everywhere else.
+- **Disposition:** CLOSE
+- **Enforcement locus:** constant (`crates/supervisor/src/lib.rs`)
+  - `pub(crate) const CAPTURE_FORMAT_VERSION: &str = "v0";`
+  - `capture.rs` uses `crate::CAPTURE_FORMAT_VERSION.to_string()` for bundle creation
+  - `replay.rs` uses `crate::CAPTURE_FORMAT_VERSION` for version validation
+- **Test:** N/A (compile-time consistency)
+- **PR/Commit:** cd4dd86
+
+---
+
+### SUP-NOW-1 — Wall-clock ban covers entire supervisor crate
+
+- **ID:** SUP-NOW-1
+- **Rule:** No supervisor source file may use `SystemTime::now` or `Instant::now`. Deterministic replay requires all timing to flow through captured events.
+- **Disposition:** CLOSE
+- **Enforcement locus:** test (`crates/supervisor/tests/replay_harness.rs`)
+  - `no_wall_clock_usage` test scans all `.rs` files in `src/` directory
+  - Checks for forbidden patterns: `SystemTime::now`, `Instant::now`
+  - Fails with descriptive error identifying file and pattern
+- **Test:** `no_wall_clock_usage`
+- **PR/Commit:** cd4dd86
+
+---
+
 ## Semantics Decision Queue (v1)
 
 ### B.2 — Divide-by-zero behavior

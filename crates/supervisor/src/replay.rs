@@ -31,7 +31,7 @@ pub enum ReplayError {
 }
 
 pub fn validate_bundle(bundle: &CaptureBundle) -> Result<(), ReplayError> {
-    if bundle.capture_version != "v0" {
+    if bundle.capture_version != crate::CAPTURE_FORMAT_VERSION {
         return Err(ReplayError::UnsupportedVersion {
             capture_version: bundle.capture_version.clone(),
         });
