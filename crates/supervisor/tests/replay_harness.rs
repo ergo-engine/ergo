@@ -150,13 +150,33 @@ fn payload_hashes_are_stable() {
     assert!(record.validate_hash());
 }
 
+/// SUP-NOW-1: Wall-clock ban must cover entire supervisor crate.
+/// Bans SystemTime::now and Instant::now to ensure deterministic replay.
 #[test]
 fn no_wall_clock_usage() {
-    let src = include_str!("../src/lib.rs");
-    assert!(
-        !src.contains("SystemTime"),
-        "wall clock usage is forbidden in supervisor"
-    );
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let src_dir = std::path::Path::new(&manifest_dir).join("src");
+
+    let forbidden_patterns = ["SystemTime::now", "Instant::now"];
+
+    for entry in std::fs::read_dir(&src_dir).expect("failed to read src directory") {
+        let entry = entry.expect("failed to read directory entry");
+        let path = entry.path();
+
+        if path.extension().map_or(false, |ext| ext == "rs") {
+            let contents = std::fs::read_to_string(&path).expect("failed to read source file");
+            let filename = path.file_name().unwrap().to_string_lossy();
+
+            for pattern in &forbidden_patterns {
+                assert!(
+                    !contents.contains(pattern),
+                    "wall clock usage '{}' found in {}: forbidden by SUP-NOW-1",
+                    pattern,
+                    filename
+                );
+            }
+        }
+    }
 }
 
 #[test]

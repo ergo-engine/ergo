@@ -10,6 +10,9 @@ use ergo_runtime::catalog::{CorePrimitiveCatalog, CoreRegistries};
 use ergo_runtime::cluster::ExpandedGraph;
 use serde::{Deserialize, Serialize};
 
+/// Capture bundle format version. Used for forward-compatibility checks.
+pub(crate) const CAPTURE_FORMAT_VERSION: &str = "v0";
+
 mod capture;
 pub mod replay;
 

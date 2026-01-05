@@ -35,7 +35,7 @@ pub struct CapturingSession<L: DecisionLog, R: RuntimeInvoker> {
 impl<L: DecisionLog, R: RuntimeInvoker> CapturingSession<L, R> {
     pub fn new(graph_id: GraphId, constraints: Constraints, inner_log: L, runtime: R) -> Self {
         let bundle = Arc::new(Mutex::new(CaptureBundle {
-            capture_version: "v0".to_string(),
+            capture_version: crate::CAPTURE_FORMAT_VERSION.to_string(),
             graph_id: graph_id.clone(),
             config: constraints.clone(),
             events: Vec::new(),
