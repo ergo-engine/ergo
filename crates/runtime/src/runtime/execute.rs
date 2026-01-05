@@ -171,9 +171,18 @@ fn execute_compute(
     let mut mapped_parameters: HashMap<String, crate::common::Value> = HashMap::new();
     for (name, val) in &node.parameters {
         let mapped = map_to_compute_parameter_value(val).ok_or_else(|| {
-            ExecError::ParameterTypeConversionFailed {
-                node: node.runtime_id.clone(),
-                parameter: name.clone(),
+            // X.11: If Int conversion failed, it's out of range; otherwise type mismatch
+            if let crate::cluster::ParameterValue::Int(i) = val {
+                ExecError::ParameterOutOfRange {
+                    node: node.runtime_id.clone(),
+                    parameter: name.clone(),
+                    value: *i,
+                }
+            } else {
+                ExecError::ParameterTypeConversionFailed {
+                    node: node.runtime_id.clone(),
+                    parameter: name.clone(),
+                }
             }
         })?;
         mapped_parameters.insert(name.clone(), mapped);
@@ -282,11 +291,22 @@ fn map_to_compute_value(v: &RuntimeValue) -> Option<crate::common::Value> {
     }
 }
 
+/// X.11: Maximum safe integer for exact f64 representation (2^53).
+const MAX_SAFE_INT: i64 = 9_007_199_254_740_992;
+
 fn map_to_compute_parameter_value(
     v: &crate::cluster::ParameterValue,
 ) -> Option<crate::common::Value> {
     match v {
-        crate::cluster::ParameterValue::Int(i) => Some(crate::common::Value::Number(*i as f64)),
+        crate::cluster::ParameterValue::Int(i) => {
+            // X.11: Guard against precision loss for |i| > 2^53
+            // Note: Use explicit bounds instead of i.abs() to avoid overflow panic on i64::MIN
+            if *i >= -MAX_SAFE_INT && *i <= MAX_SAFE_INT {
+                Some(crate::common::Value::Number(*i as f64))
+            } else {
+                None // Caller will produce ParameterOutOfRange with full context
+            }
+        }
         crate::cluster::ParameterValue::Number(n) => Some(crate::common::Value::Number(*n)),
         crate::cluster::ParameterValue::Bool(b) => Some(crate::common::Value::Bool(*b)),
         _ => None,

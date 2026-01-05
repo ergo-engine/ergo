@@ -1,13 +1,13 @@
 ---
 Authority: CANONICAL
-Version: v0.16
+Version: v0.17
 Owner: Claude (Structural Auditor)
 Last Updated: 2025-01-05
 ---
 
 # Phase Invariants — v0
 
-**Tracked invariants:** 69
+**Tracked invariants:** 70
 
 This document defines the invariants that must hold at each phase boundary in the system. It is the authoritative reference for what is true, where that truth is enforced, and what happens if it is violated.
 
@@ -105,6 +105,7 @@ These invariants hold across all phases. Violation at any point is a system-leve
 | X.8 | Triggers emit events | ontology.md §2.3 | — | — | ✓ | ✓ |
 | X.9 | Authoring constructs compile away before execution | V0_FREEZE.md §7 | — | ✓ | — | ✓ |
 | X.10 | Compute parameter types must not include Series | (inferred) | — | — | ✓ | ✓ |
+| X.11 | Int→f64 conversion must be exactly representable (\|i\| ≤ 2^53) | (inferred) | — | — | ✓ | ✓ |
 
 ### Notes
 
@@ -113,6 +114,7 @@ These invariants hold across all phases. Violation at any point is a system-leve
 - **X.7:** ✅ **CLOSED.** Enforced in `compute/registry.rs::validate_manifest` (returns `NoInputsDeclared` when `inputs.is_empty()` for Compute manifests). Test: `compute_with_zero_inputs_rejected` in `compute/registry.rs`.
 - **X.9:** Requires assertion at execution entry that no `ClusterDefinition` or `NodeKind::Cluster` survives.
 - **X.10:** ✅ **CLOSED.** Enforced in `catalog.rs::register_compute()` (returns `ValidationError::UnsupportedParameterType` when parameter has `ValueType::Series`). Test: `series_parameter_type_rejected` in `catalog.rs`. Prior behavior silently coerced Series to Number(0.0); now rejects at registration time.
+- **X.11:** ✅ **CLOSED.** Enforced in `execute.rs::map_to_compute_parameter_value()` (returns `None` for Int values where `|i| > 2^53`). Caller produces `ExecError::ParameterOutOfRange { node, parameter, value }`. Tests: `int_parameter_within_f64_exact_range_allowed`, `int_parameter_out_of_range_rejected`. Prior behavior silently converted all Int to f64, losing precision for large values.
 
 ---
 
@@ -518,3 +520,4 @@ Changes to this document require the same review bar as changes to frozen specs.
 | v0.14 | 2025-01-05 | Claude Code | V.7 added (single edge per input); R.7 strengthened (explicit TriggerEvent matching); I.3-I.5 strengthened (nested Exposed binding propagation); TRG-STATE-1 enforcement locus confirmed |
 | v0.15 | 2025-01-05 | Claude Code | Audit #2 closures: E.8 added (deterministic runtime IDs); I.3 strengthened (default application); E.2 strengthened (mapping failures explicit) |
 | v0.16 | 2025-01-05 | Claude Code | X.10 added: reject Series compute parameters at registration (Codex audit finding) |
+| v0.17 | 2025-01-05 | Claude Code | X.11 added: guard Int→f64 conversion for exact representability (Codex audit finding) |

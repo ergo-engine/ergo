@@ -101,6 +101,12 @@ pub enum ExecError {
     UnknownPrimitive { id: String, version: String },
     TypeConversionFailed { node: String, port: String },
     ParameterTypeConversionFailed { node: String, parameter: String },
+    /// X.11: Int parameter value exceeds f64 exact representation range (|i| > 2^53).
+    ParameterOutOfRange {
+        node: String,
+        parameter: String,
+        value: i64,
+    },
     ActionExecutionFailed(ActionValidationError),
     MissingOutput { node: String, output: String },
     MissingNode { node: String },

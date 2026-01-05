@@ -858,6 +858,244 @@ fn execute_returns_error_when_topology_references_missing_node() {
     }
 }
 
+/// X.11: Int parameter at f64 exact range boundary (2^53) should succeed.
+#[test]
+fn int_parameter_within_f64_exact_range_allowed() {
+    let mut nodes = HashMap::new();
+    nodes.insert(
+        "const_number".to_string(),
+        ExpandedNode {
+            runtime_id: "const_number".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "const_number".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            // X.11: Use Int at exact boundary (2^53)
+            parameters: HashMap::from([(
+                "value".to_string(),
+                crate::cluster::ParameterValue::Int(9_007_199_254_740_992), // 2^53
+            )]),
+        },
+    );
+
+    let expanded = ExpandedGraph {
+        nodes,
+        edges: Vec::new(),
+        boundary_inputs: Vec::new(),
+        boundary_outputs: vec![crate::cluster::OutputPortSpec {
+            name: "out".to_string(),
+            maps_to: crate::cluster::OutputRef {
+                node_id: "const_number".to_string(),
+                port_name: "value".to_string(),
+            },
+        }],
+    };
+
+    let mut catalog = TestCatalog::default();
+    catalog.metadata.insert(
+        ("const_number".to_string(), "0.1.0".to_string()),
+        PrimitiveMetadata {
+            kind: PrimitiveKind::Compute,
+            inputs: vec![],
+            outputs: HashMap::from([(
+                "value".to_string(),
+                OutputMetadata {
+                    value_type: ValueType::Number,
+                    cardinality: crate::cluster::Cardinality::Single,
+                },
+            )]),
+            parameters: Vec::new(),
+        },
+    );
+
+    let mut compute_registry = ComputeRegistry::new();
+    compute_registry
+        .register(Box::new(ConstNumber::new()))
+        .unwrap();
+
+    let registries = Registries {
+        sources: &SourceRegistry::new(),
+        computes: &compute_registry,
+        triggers: &TriggerRegistry::new(),
+        actions: &action::ActionRegistry::new(),
+    };
+
+    let ctx = ExecutionContext;
+
+    let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
+    // 2^53 converts exactly to f64
+    assert_eq!(
+        report.outputs.get("out"),
+        Some(&RuntimeValue::Number(9_007_199_254_740_992.0))
+    );
+}
+
+/// X.11: Int parameter exceeding f64 exact range (2^53 + 1) should fail.
+#[test]
+fn int_parameter_out_of_range_rejected() {
+    let mut nodes = HashMap::new();
+    nodes.insert(
+        "const_number".to_string(),
+        ExpandedNode {
+            runtime_id: "const_number".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "const_number".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            // X.11: Use Int beyond exact range (2^53 + 1)
+            parameters: HashMap::from([(
+                "value".to_string(),
+                crate::cluster::ParameterValue::Int(9_007_199_254_740_993), // 2^53 + 1
+            )]),
+        },
+    );
+
+    let expanded = ExpandedGraph {
+        nodes,
+        edges: Vec::new(),
+        boundary_inputs: Vec::new(),
+        boundary_outputs: vec![crate::cluster::OutputPortSpec {
+            name: "out".to_string(),
+            maps_to: crate::cluster::OutputRef {
+                node_id: "const_number".to_string(),
+                port_name: "value".to_string(),
+            },
+        }],
+    };
+
+    let mut catalog = TestCatalog::default();
+    catalog.metadata.insert(
+        ("const_number".to_string(), "0.1.0".to_string()),
+        PrimitiveMetadata {
+            kind: PrimitiveKind::Compute,
+            inputs: vec![],
+            outputs: HashMap::from([(
+                "value".to_string(),
+                OutputMetadata {
+                    value_type: ValueType::Number,
+                    cardinality: crate::cluster::Cardinality::Single,
+                },
+            )]),
+            parameters: Vec::new(),
+        },
+    );
+
+    let mut compute_registry = ComputeRegistry::new();
+    compute_registry
+        .register(Box::new(ConstNumber::new()))
+        .unwrap();
+
+    let registries = Registries {
+        sources: &SourceRegistry::new(),
+        computes: &compute_registry,
+        triggers: &TriggerRegistry::new(),
+        actions: &action::ActionRegistry::new(),
+    };
+
+    let ctx = ExecutionContext;
+
+    let result = run(&expanded, &catalog, &registries, &ctx);
+    assert!(result.is_err(), "Expected execution to fail for out-of-range Int");
+
+    match result.unwrap_err() {
+        crate::runtime::RuntimeError::Execution(ExecError::ParameterOutOfRange {
+            node,
+            parameter,
+            value,
+        }) => {
+            assert_eq!(node, "const_number");
+            assert_eq!(parameter, "value");
+            assert_eq!(value, 9_007_199_254_740_993);
+        }
+        other => panic!("Expected ParameterOutOfRange, got {:?}", other),
+    }
+}
+
+/// X.11: i64::MIN must be rejected without panic (no .abs() overflow).
+#[test]
+fn int_parameter_i64_min_rejected() {
+    let mut nodes = HashMap::new();
+    nodes.insert(
+        "const_number".to_string(),
+        ExpandedNode {
+            runtime_id: "const_number".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "const_number".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            // X.11: i64::MIN would panic with .abs(), must reject gracefully
+            parameters: HashMap::from([(
+                "value".to_string(),
+                crate::cluster::ParameterValue::Int(i64::MIN),
+            )]),
+        },
+    );
+
+    let expanded = ExpandedGraph {
+        nodes,
+        edges: Vec::new(),
+        boundary_inputs: Vec::new(),
+        boundary_outputs: vec![crate::cluster::OutputPortSpec {
+            name: "out".to_string(),
+            maps_to: crate::cluster::OutputRef {
+                node_id: "const_number".to_string(),
+                port_name: "value".to_string(),
+            },
+        }],
+    };
+
+    let mut catalog = TestCatalog::default();
+    catalog.metadata.insert(
+        ("const_number".to_string(), "0.1.0".to_string()),
+        PrimitiveMetadata {
+            kind: PrimitiveKind::Compute,
+            inputs: vec![],
+            outputs: HashMap::from([(
+                "value".to_string(),
+                OutputMetadata {
+                    value_type: ValueType::Number,
+                    cardinality: crate::cluster::Cardinality::Single,
+                },
+            )]),
+            parameters: Vec::new(),
+        },
+    );
+
+    let mut compute_registry = ComputeRegistry::new();
+    compute_registry
+        .register(Box::new(ConstNumber::new()))
+        .unwrap();
+
+    let registries = Registries {
+        sources: &SourceRegistry::new(),
+        computes: &compute_registry,
+        triggers: &TriggerRegistry::new(),
+        actions: &action::ActionRegistry::new(),
+    };
+
+    let ctx = ExecutionContext;
+
+    // Must not panic, must return error
+    let result = run(&expanded, &catalog, &registries, &ctx);
+    assert!(result.is_err(), "Expected execution to fail for i64::MIN");
+
+    match result.unwrap_err() {
+        crate::runtime::RuntimeError::Execution(ExecError::ParameterOutOfRange {
+            node,
+            parameter,
+            value,
+        }) => {
+            assert_eq!(node, "const_number");
+            assert_eq!(parameter, "value");
+            assert_eq!(value, i64::MIN);
+        }
+        other => panic!("Expected ParameterOutOfRange, got {:?}", other),
+    }
+}
+
 /// V.MULTI-EDGE: Multiple edges targeting the same input port are rejected.
 #[test]
 fn validate_rejects_multiple_edges_to_same_input() {

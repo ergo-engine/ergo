@@ -167,6 +167,23 @@ Legend:
 
 ---
 
+### X.11 — Int→f64 conversion must be exactly representable
+
+- **ID:** X.11
+- **Rule:** Int parameter values converted to f64 must be within exact representation range (|i| ≤ 2^53). Values outside this range are rejected to prevent silent precision loss.
+- **Disposition:** CLOSE
+- **Enforcement locus:** execution (`crates/runtime/src/runtime/execute.rs:285-304`)
+  - `MAX_SAFE_INT` constant defined as 9_007_199_254_740_992 (2^53)
+  - `map_to_compute_parameter_value` returns `None` for Int where `i.abs() > MAX_SAFE_INT`
+  - Caller in `execute_compute` produces `ExecError::ParameterOutOfRange` with full context
+- **Error:** `ExecError::ParameterOutOfRange { node, parameter, value }`
+- **Tests:**
+  - `int_parameter_within_f64_exact_range_allowed` (tests.rs)
+  - `int_parameter_out_of_range_rejected` (tests.rs)
+- **PR/Commit:** <pending>
+
+---
+
 ## Semantics Decision Queue (v1)
 
 ### B.2 — Divide-by-zero behavior
