@@ -379,4 +379,19 @@ mod tests {
         let term = handle.run(&GraphId::new("g"), &EventId::new("e1"), &ctx, None);
         assert_eq!(term, RunTermination::Completed);
     }
+
+    /// TEST-PUMP-SERDE-1: Verify Pump serializes as "Pump" not "Tick".
+    /// The serde(alias = "Tick") allows deserialization of legacy data,
+    /// but serialization must produce the canonical name.
+    #[test]
+    fn pump_serializes_as_pump_not_tick() {
+        let serialized = serde_json::to_string(&ExternalEventKind::Pump).unwrap();
+        assert_eq!(serialized, "\"Pump\"", "Pump must serialize as 'Pump', not legacy 'Tick'");
+
+        // Also verify the alias still works for deserialization (backward compat)
+        let from_pump: ExternalEventKind = serde_json::from_str("\"Pump\"").unwrap();
+        let from_tick: ExternalEventKind = serde_json::from_str("\"Tick\"").unwrap();
+        assert_eq!(from_pump, ExternalEventKind::Pump);
+        assert_eq!(from_tick, ExternalEventKind::Pump);
+    }
 }
