@@ -252,6 +252,37 @@ Legend:
 
 ---
 
+## UI-REF-CLIENT-1
+
+**Date:** 2026-01-05
+**Status:** CLOSED
+**Category:** Trust Boundary Clarification
+
+### Finding
+
+`crates/ui-authoring` was implicitly treated as a canonical contract implementation. Audit revealed:
+
+- TypeScript types are incomplete (InputPortSpec, RuntimeEvent)
+- No TypeScript type checking (missing tsconfig.json)
+- Reference client conveniences should not be relied upon by production clients
+
+### Resolution
+
+Reframe as **Reference Client**:
+
+- Runtime contract authority is Rust types + UI_RUNTIME_CONTRACT.md
+- TypeScript mirror is best-effort, not enforcement
+- UI-side validation is advisory only
+
+### v1 Tracking
+
+- UI-TSCHECK-1: Add tsconfig.json
+- UI-CONTRACT-ALIGN-1: Fix TS contract drift
+- UI-COERCION-1: Remove Inspector silent fallbacks
+- UI-INT-GUARD-1: Add Int range guards
+
+---
+
 ## Semantics Decision Queue (v1)
 
 ### B.2 — Divide-by-zero behavior

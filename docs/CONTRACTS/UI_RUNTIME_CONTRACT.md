@@ -1,13 +1,24 @@
 ---
 Authority: CONTRACTS
 Version: v0
-Last Updated: 2025-12-22
+Last Updated: 2026-01-05
 Derived From: src/runtime/tests.rs::hello_world_graph_executes_with_core_catalog_and_registries
 ---
 
 # UI ↔ Runtime Contract
 
 This document defines the exact data structure a UI must emit to drive the Primitive Library runtime.
+
+---
+
+## Trust Boundary Notice
+
+**`crates/ui-authoring` is a Reference Client, not a canonical contract implementation.**
+
+- **Authority:** Runtime contract authority is Rust types in `crates/runtime/src/cluster.rs` + this document
+- **TypeScript mirror:** `contractTypes.ts` is a best-effort mirror; not enforcement
+- **No guarantees:** Reference UI may have conveniences (e.g., default values, loose typing) that a production client must not rely on
+- **Validation:** All contract enforcement happens at runtime; UI-side validation is advisory only
 
 ---
 
