@@ -1,3 +1,13 @@
+---
+Authority: CANONICAL
+Version: v0
+Last Updated: 2026-01-06
+Owner: Claude (Structural Auditor)
+Scope: v0 baseline declaration, v1 workstream rules
+Verified Against Tag: v0.28-kernel-closed
+Change Rule: Operational log
+---
+
 # Kernel Closure and v1 Workstream Declaration
 
 **Status:** The v0 kernel is closed. Work may continue, but the kernel's meaning is now a fixed reference point.

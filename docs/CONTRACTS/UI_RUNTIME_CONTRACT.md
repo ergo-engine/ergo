@@ -3,6 +3,9 @@ Authority: CONTRACTS
 Version: v0
 Last Updated: 2026-01-05
 Derived From: src/runtime/tests.rs::hello_world_graph_executes_with_core_catalog_and_registries
+Scope: Data structures UI must emit for runtime
+Verified Against Tag: v0.28-kernel-closed
+Change Rule: Review required
 ---
 
 # UI ↔ Runtime Contract

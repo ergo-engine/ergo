@@ -2,6 +2,9 @@
 Authority: FROZEN
 Version: v0
 Last Updated: 2025-12-22
+Scope: Trust boundary, replay guarantees, capture requirements
+Verified Against Tag: v0.28-kernel-closed
+Change Rule: v1 only
 ---
 
 # Adapter Contract — v0
