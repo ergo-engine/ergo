@@ -4,8 +4,36 @@
  * Shows parameters and boundary outputs for the selected node.
  */
 
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import type { UINode, UIParamValue, UIBoundaryOutput } from '../graph/internalModel';
+
+// ============================================================================
+// Numeric Validation (UI-COERCION-1, UI-INT-GUARD-1)
+// ============================================================================
+
+/**
+ * Parse a string to a finite number, returning undefined for invalid input.
+ * UI-COERCION-1: No silent fallback to 0.
+ */
+function parseFiniteNumber(s: string): number | undefined {
+  if (s.trim() === '') return undefined;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * Parse a string to a safe integer, returning undefined for invalid input.
+ * UI-INT-GUARD-1: Validates |i| <= 2^53 per X.11.
+ */
+function parseSafeInteger(s: string): number | undefined {
+  if (s.trim() === '') return undefined;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return undefined;
+  if (!Number.isSafeInteger(n)) return undefined;
+  return n;
+}
+
+type ValidationError = string | null;
 
 export interface InspectorProps {
   selectedNode: UINode | null;
@@ -22,6 +50,47 @@ export const Inspector: React.FC<InspectorProps> = ({
   onAddBoundaryOutput,
   onRemoveBoundaryOutput,
 }) => {
+  // Track validation errors per parameter (UI-COERCION-1, UI-INT-GUARD-1)
+  const [paramErrors, setParamErrors] = useState<Record<string, ValidationError>>({});
+
+  // Validate and update a numeric parameter
+  const handleNumericChange = useCallback((
+    nodeId: string,
+    paramKey: string,
+    paramType: 'number' | 'int',
+    inputValue: string
+  ) => {
+    if (!onParamChange) return;
+
+    if (paramType === 'int') {
+      // UI-INT-GUARD-1: Validate safe integer range
+      const parsed = parseSafeInteger(inputValue);
+      if (parsed === undefined) {
+        setParamErrors(prev => ({
+          ...prev,
+          [paramKey]: inputValue.trim() === ''
+            ? 'Required'
+            : 'Invalid integer (must be |i| ≤ 2^53)'
+        }));
+        return;
+      }
+      setParamErrors(prev => ({ ...prev, [paramKey]: null }));
+      onParamChange(nodeId, paramKey, { type: 'int', value: parsed });
+    } else {
+      // UI-COERCION-1: No silent fallback to 0
+      const parsed = parseFiniteNumber(inputValue);
+      if (parsed === undefined) {
+        setParamErrors(prev => ({
+          ...prev,
+          [paramKey]: inputValue.trim() === '' ? 'Required' : 'Invalid number'
+        }));
+        return;
+      }
+      setParamErrors(prev => ({ ...prev, [paramKey]: null }));
+      onParamChange(nodeId, paramKey, { type: 'number', value: parsed });
+    }
+  }, [onParamChange]);
+
   if (!selectedNode) {
     return (
       <div style={styles.container}>
@@ -60,35 +129,39 @@ export const Inspector: React.FC<InspectorProps> = ({
         {Object.entries(selectedNode.params).length === 0 ? (
           <div style={styles.empty}>No parameters</div>
         ) : (
-          Object.entries(selectedNode.params).map(([key, param]) => (
-            <div key={key} style={styles.paramRow}>
-              <span style={styles.label}>{key}</span>
-              <input
-                style={styles.input}
-                type={param.type === 'bool' ? 'checkbox' : 'text'}
-                value={param.type === 'bool' ? undefined : String(param.value)}
-                checked={param.type === 'bool' ? param.value : undefined}
-                onChange={(e) => {
-                  if (!onParamChange) return;
-                  let newValue: UIParamValue;
-                  switch (param.type) {
-                    case 'bool':
-                      newValue = { type: 'bool', value: e.target.checked };
-                      break;
-                    case 'number':
-                      newValue = { type: 'number', value: parseFloat(e.target.value) || 0 };
-                      break;
-                    case 'int':
-                      newValue = { type: 'int', value: parseInt(e.target.value) || 0 };
-                      break;
-                    default:
-                      newValue = { type: param.type, value: e.target.value };
-                  }
-                  onParamChange(selectedNode.id, key, newValue);
-                }}
-              />
-            </div>
-          ))
+          Object.entries(selectedNode.params).map(([key, param]) => {
+            const error = paramErrors[key];
+            const isNumeric = param.type === 'number' || param.type === 'int';
+
+            return (
+              <div key={key} style={styles.paramRow}>
+                <span style={styles.label}>{key}</span>
+                <div style={styles.inputWrapper}>
+                  <input
+                    style={{
+                      ...styles.input,
+                      ...(error ? styles.inputError : {}),
+                    }}
+                    type={param.type === 'bool' ? 'checkbox' : 'text'}
+                    defaultValue={param.type === 'bool' ? undefined : String(param.value)}
+                    checked={param.type === 'bool' ? param.value : undefined}
+                    onChange={(e) => {
+                      if (!onParamChange) return;
+
+                      if (param.type === 'bool') {
+                        onParamChange(selectedNode.id, key, { type: 'bool', value: e.target.checked });
+                      } else if (isNumeric) {
+                        handleNumericChange(selectedNode.id, key, param.type, e.target.value);
+                      } else {
+                        onParamChange(selectedNode.id, key, { type: param.type, value: e.target.value });
+                      }
+                    }}
+                  />
+                  {error && <div style={styles.errorText}>{error}</div>}
+                </div>
+              </div>
+            );
+          })
         )}
       </div>
 
@@ -173,6 +246,20 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#e2e8f0',
     padding: '4px 8px',
     width: 100,
+  },
+  inputError: {
+    borderColor: '#ef4444',
+    backgroundColor: '#2d2233',
+  },
+  inputWrapper: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+  },
+  errorText: {
+    color: '#ef4444',
+    fontSize: 10,
+    marginTop: 2,
   },
   outputRow: {
     display: 'flex',
