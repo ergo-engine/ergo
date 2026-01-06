@@ -1,13 +1,13 @@
 ---
 Authority: CANONICAL
-Version: v0.19
+Version: v0.21
 Owner: Claude (Structural Auditor)
-Last Updated: 2025-01-05
+Last Updated: 2026-01-05
 ---
 
 # Phase Invariants — v0
 
-**Tracked invariants:** 74
+**Tracked invariants:** 75
 
 This document defines the invariants that must hold at each phase boundary in the system. It is the authoritative reference for what is true, where that truth is enforced, and what happens if it is violated.
 
@@ -106,6 +106,7 @@ These invariants hold across all phases. Violation at any point is a system-leve
 | X.9 | Authoring constructs compile away before execution | V0_FREEZE.md §7 | — | ✓ | — | ✓ |
 | X.10 | Compute parameter types must not include Series | (inferred) | — | — | ✓ | ✓ |
 | X.11 | Int→f64 conversion must be exactly representable (\|i\| ≤ 2^53) | (inferred) | — | — | ✓ | ✓ |
+| X.12 | Every ValueType has at least one source producer | (inferred) | — | — | — | ✓ |
 
 ### Notes
 
@@ -115,6 +116,7 @@ These invariants hold across all phases. Violation at any point is a system-leve
 - **X.9:** Requires assertion at execution entry that no `ClusterDefinition` or `NodeKind::Cluster` survives.
 - **X.10:** ✅ **CLOSED.** Enforced in `catalog.rs::register_compute()` (returns `ValidationError::UnsupportedParameterType` when parameter has `ValueType::Series`). Test: `series_parameter_type_rejected` in `catalog.rs`. Prior behavior silently coerced Series to Number(0.0); now rejects at registration time.
 - **X.11:** ✅ **CLOSED.** Enforced in `execute.rs::map_to_compute_parameter_value()` (returns `None` for Int values where `|i| > 2^53`). Caller produces `ExecError::ParameterOutOfRange { node, parameter, value }`. Tests: `int_parameter_within_f64_exact_range_allowed`, `int_parameter_out_of_range_rejected`. Prior behavior silently converted all Int to f64, losing precision for large values.
+- **X.12 / STRING-SOURCE-1:** ✅ **CLOSED.** `string_source` added to complete ValueType surface coverage. Prior state: `ValueType::String` existed in cluster/runtime types but `common::ValueType` lacked String, creating a gap where string outputs could be declared but never originated. Implementation required adding `common::ValueType::String` and `common::Value::String` variants, which triggered exhaustive match cascade across four mapping functions (`map_compute_param_type`, `map_compute_param_value`, `map_common_value_type`, `map_common_value`). Tests: `string_source_emits_configured_value`, `string_source_defaults_to_empty_string`.
 
 ---
 
@@ -547,3 +549,4 @@ Changes to this document require the same review bar as changes to frozen specs.
 | v0.18 | 2025-01-05 | Claude Code | REP-1 strengthened: point-of-use hash verification in supervisor replay path (REP-1b) |
 | v0.19 | 2025-01-05 | Claude Code | Added SUP-TICK-1, RTHANDLE-ID-1 (orchestration); REP-SCOPE, SOURCE-TRUST (replay scope/trust documentation) |
 | v0.20 | 2026-01-05 | Claude Code | Added UI-REF-CLIENT-1: ui-authoring reframed as reference client |
+| v0.21 | 2026-01-05 | Claude Code | Added X.12 / STRING-SOURCE-1: ValueType surface coverage complete with string_source primitive |

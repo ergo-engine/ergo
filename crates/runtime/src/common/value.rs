@@ -3,6 +3,7 @@ pub enum ValueType {
     Number,
     Series,
     Bool,
+    String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -15,6 +16,7 @@ pub enum Value {
     Number(f64),
     Series(Vec<f64>),
     Bool(bool),
+    String(String),
 }
 
 impl Value {
@@ -23,6 +25,7 @@ impl Value {
             Value::Number(_) => ValueType::Number,
             Value::Series(_) => ValueType::Series,
             Value::Bool(_) => ValueType::Bool,
+            Value::String(_) => ValueType::String,
         }
     }
 
@@ -43,6 +46,13 @@ impl Value {
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Value::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    pub fn as_string(&self) -> Option<&str> {
+        match self {
+            Value::String(s) => Some(s),
             _ => None,
         }
     }

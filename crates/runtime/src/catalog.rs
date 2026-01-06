@@ -21,8 +21,8 @@ use crate::compute::implementations::{
 };
 use crate::compute::{ComputePrimitiveManifest, PrimitiveRegistry as ComputeRegistry};
 use crate::source::{
-    implementations::{boolean_source_manifest, number_source_manifest},
-    BooleanSource, NumberSource, SourceRegistry, SourceValidationError,
+    implementations::{boolean_source_manifest, number_source_manifest, string_source_manifest},
+    BooleanSource, NumberSource, SourceRegistry, SourceValidationError, StringSource,
 };
 use crate::trigger::{
     implementations::emit_if_true::emit_if_true_manifest, EmitIfTrue, TriggerRegistry,
@@ -67,6 +67,9 @@ pub fn core_registries() -> Result<CoreRegistries, CoreRegistrationError> {
         .map_err(CoreRegistrationError::Source)?;
     sources
         .register(Box::new(BooleanSource::new()))
+        .map_err(CoreRegistrationError::Source)?;
+    sources
+        .register(Box::new(StringSource::new()))
         .map_err(CoreRegistrationError::Source)?;
 
     let mut computes = ComputeRegistry::new();
@@ -382,6 +385,7 @@ pub fn build_core_catalog() -> CorePrimitiveCatalog {
     // Sources
     catalog.register_source(number_source_manifest());
     catalog.register_source(boolean_source_manifest());
+    catalog.register_source(string_source_manifest());
 
     // Computes (X.10: all core compute manifests use supported parameter types)
     catalog
@@ -463,6 +467,7 @@ fn map_common_value_type(value_type: common::ValueType) -> ValueType {
         common::ValueType::Number => ValueType::Number,
         common::ValueType::Series => ValueType::Series,
         common::ValueType::Bool => ValueType::Bool,
+        common::ValueType::String => ValueType::String,
     }
 }
 
@@ -512,6 +517,7 @@ fn map_compute_param_type(ty: common::ValueType) -> Option<ParameterType> {
         common::ValueType::Number => Some(ParameterType::Number),
         common::ValueType::Series => None, // X.10: Series params not supported
         common::ValueType::Bool => Some(ParameterType::Bool),
+        common::ValueType::String => Some(ParameterType::String),
     }
 }
 
@@ -523,6 +529,7 @@ fn map_compute_param_value(val: common::Value) -> ParameterValue {
             unreachable!("X.10: Series parameter type should be rejected at registration")
         }
         common::Value::Bool(b) => ParameterValue::Bool(b),
+        common::Value::String(s) => ParameterValue::String(s),
     }
 }
 

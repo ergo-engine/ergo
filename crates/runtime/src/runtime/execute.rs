@@ -279,6 +279,7 @@ fn map_common_value(v: crate::common::Value) -> RuntimeValue {
         crate::common::Value::Number(n) => RuntimeValue::Number(n),
         crate::common::Value::Series(s) => RuntimeValue::Series(s),
         crate::common::Value::Bool(b) => RuntimeValue::Bool(b),
+        crate::common::Value::String(s) => RuntimeValue::String(s),
     }
 }
 
