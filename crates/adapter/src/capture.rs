@@ -32,7 +32,10 @@ impl ExternalEventRecord {
 
     /// Reconstructs an ExternalEvent without validating payload integrity.
     /// Prefer `rehydrate_checked()` in replay paths.
-    pub fn rehydrate(&self) -> ExternalEvent {
+    ///
+    /// This is `pub(crate)` to prevent external callers from bypassing
+    /// hash validation. See HARDEN-REHYDRATE-1.
+    pub(crate) fn rehydrate(&self) -> ExternalEvent {
         ExternalEvent::with_payload(
             self.event_id.clone(),
             self.kind,
