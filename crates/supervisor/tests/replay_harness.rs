@@ -151,13 +151,25 @@ fn payload_hashes_are_stable() {
 }
 
 /// SUP-NOW-1: Wall-clock ban must cover entire supervisor crate.
-/// Bans SystemTime::now and Instant::now to ensure deterministic replay.
+/// Bans SystemTime::now, Instant::now, and related patterns to ensure deterministic replay.
+///
+/// SUP-NOW-SCAN-1: Defense-in-depth static scan. This is a cheap, deterministic check
+/// that catches common wall-clock usage patterns. It does NOT catch all aliasing
+/// (e.g., `use std::time::Instant::now; now()` or macro-generated code).
+/// For full assurance, replay tests must exercise all code paths.
 #[test]
 fn no_wall_clock_usage() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let src_dir = std::path::Path::new(&manifest_dir).join("src");
 
-    let forbidden_patterns = ["SystemTime::now", "Instant::now"];
+    // Forbidden patterns (SUP-NOW-SCAN-1):
+    // - Explicit type::now() calls
+    // - Broader `::now()` catches aliased type names (e.g., `ST::now()`)
+    let forbidden_patterns = [
+        "SystemTime::now",
+        "Instant::now",
+        "::now()", // Broader catch for aliased imports like `use std::time::Instant as I; I::now()`
+    ];
 
     for entry in std::fs::read_dir(&src_dir).expect("failed to read src directory") {
         let entry = entry.expect("failed to read directory entry");
