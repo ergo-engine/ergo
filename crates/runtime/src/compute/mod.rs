@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use crate::common::{PrimitiveKind, Value, ValueType};
 
-pub mod graph;
 pub mod implementations;
 pub mod registry;
 
@@ -73,7 +72,6 @@ pub trait ComputePrimitive {
     ) -> HashMap<String, Value>;
 }
 
-pub use graph::{ComputeGraph, GraphNode, InputBinding, NodeOutputRef};
 pub use implementations::{
     add, and, const_bool, const_number, divide, eq, gt, lt, multiply, negate, neq, not, or, select,
     subtract, Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Lt, Multiply, Negate, Neq, Not, Or,
