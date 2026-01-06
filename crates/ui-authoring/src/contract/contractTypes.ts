@@ -90,10 +90,22 @@ export type RuntimeValue =
   | { type: 'Event'; value: RuntimeEvent }
   | { type: 'String'; value: string };
 
-export interface RuntimeEvent {
-  kind: string;
-  payload?: unknown;
+/**
+ * RuntimeEvent is a tagged union matching Rust's RuntimeEvent enum.
+ * UI-CONTRACT-ALIGN-1: Aligned with Rust enum structure.
+ */
+export type RuntimeEvent =
+  | { type: 'Trigger'; event: TriggerEvent }
+  | { type: 'Action'; outcome: ActionOutcome };
+
+export interface TriggerEvent {
+  triggered: boolean;
 }
+
+export type ActionOutcome =
+  | { status: 'Completed' }
+  | { status: 'Skipped' }
+  | { status: 'Failed'; error: string };
 
 // ============================================================================
 // Execution Report

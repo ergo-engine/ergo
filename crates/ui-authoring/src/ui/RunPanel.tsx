@@ -194,8 +194,15 @@ function formatRuntimeValue(value: RuntimeValue): string {
       return `"${value.value}"`;
     case 'Series':
       return `[${value.value.slice(0, 3).join(', ')}${value.value.length > 3 ? '...' : ''}]`;
-    case 'Event':
-      return `Event(${value.value.kind})`;
+    case 'Event': {
+      // UI-CONTRACT-ALIGN-1: Handle tagged union RuntimeEvent
+      const event = value.value;
+      if (event.type === 'Trigger') {
+        return `Event(Trigger: ${event.event.triggered ? 'fired' : 'not fired'})`;
+      } else {
+        return `Event(Action: ${event.outcome.status})`;
+      }
+    }
   }
 }
 
