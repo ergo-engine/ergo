@@ -139,7 +139,7 @@ pub trait SourcePrimitive {
     fn produce(&self, parameters: &HashMap<String, ParameterValue>) -> HashMap<String, Value>;
 }
 
-pub use implementations::{boolean, number, BooleanSource, NumberSource};
+pub use implementations::{boolean, number, string, BooleanSource, NumberSource, StringSource};
 pub use registry::SourceRegistry;
 
 #[cfg(test)]

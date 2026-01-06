@@ -252,6 +252,36 @@ Legend:
 
 ---
 
+## STRING-SOURCE-1 — ValueType::String has a source producer
+
+**Date:** 2026-01-05
+**Status:** CLOSED
+**Category:** stdlib Surface Coverage
+
+### Finding
+
+`ValueType::String` existed in the type system (`cluster::ValueType`, `RuntimeValue`) but had no source primitive to produce string values. This created a surface gap where string outputs could be declared but never originated.
+
+### Resolution
+
+Added `string_source` primitive:
+
+- `crates/runtime/src/source/implementations/string/` (mod.rs, manifest.rs, impl.rs)
+- `common::ValueType::String` and `common::Value::String` variants added
+- Registered in `catalog.rs` (both `core_registries()` and `build_core_catalog()`)
+- Four mapping functions updated to handle new variant (exhaustive match cascade)
+
+### Tests
+
+- `string_source_emits_configured_value`
+- `string_source_defaults_to_empty_string`
+
+### PR/Commit
+
+PR #20 (feat/string-source)
+
+---
+
 ## UI-REF-CLIENT-1
 
 **Date:** 2026-01-05
