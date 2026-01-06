@@ -2,6 +2,9 @@
 Authority: FROZEN
 Version: v0
 Last Amended: 2025-12-28
+Scope: What is frozen vs patchable, version boundaries
+Verified Against Tag: v0.28-kernel-closed
+Change Rule: v1 only
 ---
 
 # Primitive Ontology & Execution — v0 Freeze

@@ -3,6 +3,9 @@ Authority: CANONICAL
 Version: v0.21
 Owner: Claude (Structural Auditor)
 Last Updated: 2026-01-05
+Scope: Phase boundaries, enforcement loci, gap tracking
+Verified Against Tag: v0.28-kernel-closed
+Change Rule: Operational log
 ---
 
 # Phase Invariants — v0

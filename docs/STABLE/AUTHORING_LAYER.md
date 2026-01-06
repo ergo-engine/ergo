@@ -2,6 +2,9 @@
 Authority: STABLE
 Version: v0
 Last Updated: 2025-12-22
+Scope: Cluster concepts, fractal composition, boundary kinds
+Verified Against Tag: v0.28-kernel-closed
+Change Rule: Additive only
 ---
 
 # Authoring Layer

@@ -2,6 +2,9 @@
 Authority: STABLE
 Version: v0.2
 Last Updated: 2025-12-22
+Scope: Data structures, inference algorithm, validation rules
+Verified Against Tag: v0.28-kernel-closed
+Change Rule: Additive only
 ---
 
 # Cluster Specification

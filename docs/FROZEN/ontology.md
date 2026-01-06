@@ -2,6 +2,9 @@
 Authority: FROZEN
 Version: v0
 Last Amended: 2025-12-28
+Scope: Four primitives, wiring matrix, causal roles
+Verified Against Tag: v0.28-kernel-closed
+Change Rule: v1 only
 ---
 
 # Ontology

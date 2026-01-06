@@ -1,5 +1,9 @@
 # Ergo Documentation
 
+**[Start Here: INDEX.md](INDEX.md)** — Documentation entry point with reading order and topic navigation.
+
+---
+
 This directory is the authoritative home for specifications and doctrine.
 
 ---

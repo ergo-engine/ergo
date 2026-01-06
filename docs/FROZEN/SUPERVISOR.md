@@ -2,6 +2,9 @@
 Authority: FROZEN
 Version: v0
 Last Amended: 2025-12-27
+Scope: Orchestration layer, episode semantics, replay
+Verified Against Tag: v0.28-kernel-closed
+Change Rule: v1 only
 ---
 
 # Execution Supervisor — v0

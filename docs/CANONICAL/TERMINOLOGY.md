@@ -3,6 +3,9 @@ Authority: CANONICAL
 Version: v0
 Last Updated: 2025-12-22
 Owner: Claude (Structural Auditor)
+Scope: Canonical terms - primitive, implementation, cluster
+Verified Against Tag: v0.28-kernel-closed
+Change Rule: Operational log
 ---
 
 # Terminology — v0
