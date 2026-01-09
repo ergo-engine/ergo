@@ -386,7 +386,10 @@ mod tests {
     #[test]
     fn pump_serializes_as_pump_not_tick() {
         let serialized = serde_json::to_string(&ExternalEventKind::Pump).unwrap();
-        assert_eq!(serialized, "\"Pump\"", "Pump must serialize as 'Pump', not legacy 'Tick'");
+        assert_eq!(
+            serialized, "\"Pump\"",
+            "Pump must serialize as 'Pump', not legacy 'Tick'"
+        );
 
         // Also verify the alias still works for deserialization (backward compat)
         let from_pump: ExternalEventKind = serde_json::from_str("\"Pump\"").unwrap();

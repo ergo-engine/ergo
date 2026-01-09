@@ -82,7 +82,9 @@ fn replay_inner<R: RuntimeInvoker + Clone>(
     Ok(decision_log.records())
 }
 
-fn rehydrate_event(record: &ExternalEventRecord) -> Result<ergo_adapter::ExternalEvent, ReplayError> {
+fn rehydrate_event(
+    record: &ExternalEventRecord,
+) -> Result<ergo_adapter::ExternalEvent, ReplayError> {
     record.rehydrate_checked().map_err(|err| match err {
         CaptureError::PayloadHashMismatch { .. } => ReplayError::HashMismatch {
             event_id: record.event_id.clone(),

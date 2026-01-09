@@ -997,7 +997,10 @@ fn int_parameter_out_of_range_rejected() {
     let ctx = ExecutionContext;
 
     let result = run(&expanded, &catalog, &registries, &ctx);
-    assert!(result.is_err(), "Expected execution to fail for out-of-range Int");
+    assert!(
+        result.is_err(),
+        "Expected execution to fail for out-of-range Int"
+    );
 
     match result.unwrap_err() {
         crate::runtime::RuntimeError::Execution(ExecError::ParameterOutOfRange {
