@@ -711,6 +711,9 @@ fn expand_with_context<L: ClusterLoader>(
                 authoring_path.push((cluster_def.id.clone(), node.id.clone()));
 
                 // A.1: Look up primitive specs to get parameter defaults
+                // TODO(I.6): Exact-match lookup only; no constraint parsing/resolution.
+                // Future: parse version as constraint (e.g., ">=1.0.0, <2.0.0") and
+                // find satisfying version from catalog.
                 let primitive_meta = catalog.get(impl_id, version);
 
                 // A.1: Resolve parameters:
@@ -751,6 +754,8 @@ fn expand_with_context<L: ClusterLoader>(
                 cluster_id,
                 version,
             } => {
+                // TODO(I.6): Exact-match lookup only; no constraint parsing/resolution.
+                // Future: resolve constraint to concrete version before loading.
                 let nested_def = loader.load(cluster_id, version).ok_or_else(|| {
                     ExpandError::MissingCluster {
                         id: cluster_id.clone(),
@@ -1118,13 +1123,12 @@ fn map_boundary_outputs(
 ) -> Result<Vec<OutputPortSpec>, ExpandError> {
     let mut result = Vec::with_capacity(outputs.len());
     for o in outputs {
-        let mapped_node_id = mapping
-            .get(&o.maps_to.node_id)
-            .cloned()
-            .ok_or_else(|| ExpandError::UnmappedBoundaryOutput {
+        let mapped_node_id = mapping.get(&o.maps_to.node_id).cloned().ok_or_else(|| {
+            ExpandError::UnmappedBoundaryOutput {
                 port_name: o.name.clone(),
                 node_id: o.maps_to.node_id.clone(),
-            })?;
+            }
+        })?;
         result.push(OutputPortSpec {
             name: o.name.clone(),
             maps_to: OutputRef {
