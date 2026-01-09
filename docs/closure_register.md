@@ -318,6 +318,12 @@ Reframe as **Reference Client**:
 ### B.2 — Divide-by-zero behavior
 - **ID:** B.2
 - **Current behavior:** IEEE 754 propagation (`inf`, `-inf`, `NaN`)
-- **Disposition:** V1 SEMANTICS
-- **Decision needed:** Document IEEE 754 as acceptable in v0 vs. add explicit zero-check with typed error in v1 (semantics change)
-- **PR/Commit:** <pending / doc note optional>
+- **Location:** `crates/runtime/src/compute/implementations/divide/impl.rs` (see `TODO(B.2)`)
+- **Disposition:** V1 SEMANTICS — no v0 change
+- **Risks:**
+  - NaN propagates silently through downstream computations
+  - NaN comparisons are non-deterministic (`NaN != NaN`), affecting replay fidelity
+  - Downstream branching on NaN may diverge across runs
+- **Decision needed (v1):** Either "structured error on divisor==0" vs "allow IEEE + canonicalization rules"
+- **Tracking:** Issue #7
+- **PR/Commit:** docs-only marker added

@@ -43,6 +43,11 @@ impl ComputePrimitive for Divide {
             .and_then(|v| v.as_number())
             .expect("missing required numeric input 'b'");
 
+        // TODO(B.2): IEEE 754 divide-by-zero produces inf/-inf/NaN, not an error.
+        // Risks: NaN propagates silently; NaN comparisons are non-deterministic
+        // for replay; downstream branching on NaN may diverge across runs.
+        // Decision deferred to v1: either "structured error on divisor==0"
+        // vs "allow IEEE + canonicalization rules". See issue #7.
         HashMap::from([("result".to_string(), Value::Number(a / b))])
     }
 }
