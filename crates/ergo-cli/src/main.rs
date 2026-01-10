@@ -100,8 +100,7 @@ fn write_replay_artifact(path: &Path, bundle: &CaptureBundle) -> Result<(), Stri
 
     let data = serde_json::to_string_pretty(bundle)
         .map_err(|err| format!("serialize replay bundle: {err}"))?;
-    fs::write(path, format!("{data}\n"))
-        .map_err(|err| format!("write replay artifact: {err}"))?;
+    fs::write(path, format!("{data}\n")).map_err(|err| format!("write replay artifact: {err}"))?;
     Ok(())
 }
 
@@ -289,7 +288,11 @@ fn print_fixture_summaries(
 
         println!(
             "episode {}: decision={} TriggerA={} TriggerB={} ActionA={} ActionB={}",
-            episode.label, decision_label, trigger_a_status, trigger_b_status, action_a_status,
+            episode.label,
+            decision_label,
+            trigger_a_status,
+            trigger_b_status,
+            action_a_status,
             action_b_status
         );
     }
@@ -373,10 +376,12 @@ mod tests {
     #[test]
     fn fixture_run_creates_replay_and_replays_ok() -> Result<(), String> {
         let index = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let temp_dir = std::env::temp_dir()
-            .join(format!("ergo-cli-fixture-test-{}-{}", std::process::id(), index));
-        fs::create_dir_all(&temp_dir)
-            .map_err(|err| format!("create temp dir: {err}"))?;
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-cli-fixture-test-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
 
         let fixture_path = temp_dir.join("fixture.jsonl");
         let output_path = temp_dir.join("fixture-replay.json");
