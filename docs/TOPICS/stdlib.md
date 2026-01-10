@@ -8,25 +8,47 @@
 
 The v0 kernel includes domain-neutral standard library atoms.
 
-### Sources
+Total stdlib implementations: 29
+
+### Sources (4)
 
 - `number_source` — Produces a configured number value
+- `boolean_source` — Produces a configured boolean value
 - `string_source` — Produces a configured string value (STRING-SOURCE-1)
+- `context_number_source` — Reads number from ExecutionContext (CONTEXT-NUMBER-SOURCE-1)
 
-### Computes
+### Computes (22)
 
-- `add`, `multiply`, `subtract`, `divide` — Arithmetic
-- `gt`, `gte`, `lt`, `lte` — Comparison
-- `abs`, `min`, `max` — Unary/binary operations
-- `select_bool` — Conditional selection
+- `const_number` — Outputs a constant number
+- `const_bool` — Outputs a constant boolean
+- `add` — Adds two numbers
+- `subtract` — Subtracts two numbers
+- `multiply` — Multiplies two numbers
+- `divide` — Divides two numbers
+- `abs` — Absolute value
+- `negate` — Negates a number
+- `gt` — Greater than comparison
+- `gte` — Greater than or equal comparison
+- `lt` — Less than comparison
+- `lte` — Less than or equal comparison
+- `eq` — Equality comparison
+- `neq` — Inequality comparison
+- `min` — Minimum of two numbers
+- `max` — Maximum of two numbers
+- `and` — Logical AND
+- `or` — Logical OR
+- `not` — Logical NOT
+- `select` — Select between two numbers based on condition
+- `select_bool` — Select between two booleans based on condition
 
-### Triggers
+### Triggers (1)
 
-- `emit_if_true` — Emits event when input is true
+- `emit_if_true` — Emits when input is true
 
-### Actions
+### Actions (2)
 
-- `ack_action` — Acknowledges trigger (test primitive)
+- `ack_action` — Acknowledges execution
+- `annotate_action` — Adds annotation to execution context
 
 **Catalog:** `crates/runtime/src/catalog.rs`
 
@@ -63,8 +85,8 @@ Every `ValueType` must have at least one source producer (X.12).
 
 | ValueType | Source |
 |-----------|--------|
-| Number | number_source |
-| Bool | number_source + compute |
+| Number | number_source, context_number_source |
+| Bool | boolean_source |
 | String | string_source |
 | Series | (derived from compute) |
 | Event | (derived from trigger) |

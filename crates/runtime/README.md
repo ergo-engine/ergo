@@ -61,12 +61,12 @@ Context keys are strings. Current implementations:
 
 All default behaviors are deterministic. Missing or malformed payload data produces consistent outputs across replay.
 
-## Core stdlib wiring
+## Core stdlib wiring (29 implementations)
 
-- Sources: `number_source`, `boolean_source`, `string_source`, `context_number_source`
-- Computes: `const_number`, `const_bool`, `add`, `subtract`, `multiply`, `divide`, `negate`, `gt`, `lt`, `eq`, `neq`, `and`, `or`, `not`, `select`
-- Trigger: `emit_if_true`
-- Actions: `ack_action`, `annotate_action`
+- **Sources (4):** `number_source`, `boolean_source`, `string_source`, `context_number_source`
+- **Computes (22):** `const_number`, `const_bool`, `add`, `subtract`, `multiply`, `divide`, `abs`, `negate`, `gt`, `gte`, `lt`, `lte`, `eq`, `neq`, `min`, `max`, `and`, `or`, `not`, `select`, `select_bool`
+- **Trigger (1):** `emit_if_true`
+- **Actions (2):** `ack_action`, `annotate_action`
 
 Helpers:
 - `catalog::build_core_catalog()` builds a `PrimitiveCatalog` for validation/inference

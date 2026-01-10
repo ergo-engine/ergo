@@ -313,6 +313,41 @@ Reframe as **Reference Client**:
 
 ---
 
+## CONTEXT-NUMBER-SOURCE-1 — Payload-derived context value
+
+**Date:** 2026-01-10
+**Status:** CLOSED
+**Category:** Source Coverage Completion
+
+### Finding
+
+Source primitives lacked ability to read values from event payloads.
+source.md §3 specifies "All dependencies must be parameters or orchestrator context"
+but no context-reading source existed.
+
+### Resolution
+
+Added `context_number_source`:
+- Reads key "x" from ExecutionContext via `ctx.value(key).and_then(|v| v.as_number())`
+- Returns 0.0 on missing key or type mismatch (deterministic default)
+- `SourcePrimitive::produce()` signature extended to receive `&ExecutionContext`
+
+### Justification
+- source.md §3: "All dependencies must be parameters or orchestrator context"
+- source.md §6: Lists `context_string` as canonical v0 example
+- SUPERVISOR.md §2.2: ExecutionContext contains "event payloads"
+- DEMO-2: Vertical proof showing trigger flip based on payload x=0.0 vs x=5.0
+
+### Tests
+- `context_number_source_reads_context_value`
+- `context_number_source_missing_key_returns_default`
+- `context_number_source_wrong_type_returns_default`
+
+### PR/Commit
+PR #31, #32
+
+---
+
 ## Semantics Decision Queue (v1)
 
 ### B.2 — Divide-by-zero behavior
