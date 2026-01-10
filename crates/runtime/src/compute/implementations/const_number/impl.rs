@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::common::Value;
-use crate::compute::{ComputePrimitive, ComputePrimitiveManifest, PrimitiveState};
+use crate::compute::{ComputeError, ComputePrimitive, ComputePrimitiveManifest, PrimitiveState};
 
 use super::manifest::const_number_manifest;
 
@@ -33,12 +33,12 @@ impl ComputePrimitive for ConstNumber {
         _inputs: &HashMap<String, Value>,
         parameters: &HashMap<String, Value>,
         _state: Option<&mut PrimitiveState>,
-    ) -> HashMap<String, Value> {
+    ) -> Result<HashMap<String, Value>, ComputeError> {
         let value = parameters
             .get("value")
             .and_then(|v| v.as_number())
             .expect("missing required parameter 'value' for const_number");
 
-        HashMap::from([("value".to_string(), Value::Number(value))])
+        Ok(HashMap::from([("value".to_string(), Value::Number(value))]))
     }
 }

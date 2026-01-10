@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::common::Value;
-use crate::compute::{ComputePrimitive, ComputePrimitiveManifest, PrimitiveState};
+use crate::compute::{ComputeError, ComputePrimitive, ComputePrimitiveManifest, PrimitiveState};
 
 use super::manifest::abs_manifest;
 
@@ -33,12 +33,15 @@ impl ComputePrimitive for Abs {
         inputs: &HashMap<String, Value>,
         _parameters: &HashMap<String, Value>,
         _state: Option<&mut PrimitiveState>,
-    ) -> HashMap<String, Value> {
+    ) -> Result<HashMap<String, Value>, ComputeError> {
         let value = inputs
             .get("value")
             .and_then(|v| v.as_number())
             .expect("missing required numeric input 'value'");
 
-        HashMap::from([("result".to_string(), Value::Number(value.abs()))])
+        Ok(HashMap::from([(
+            "result".to_string(),
+            Value::Number(value.abs()),
+        )]))
     }
 }

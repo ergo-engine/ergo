@@ -15,9 +15,10 @@ use crate::compute::implementations::{
     const_number::const_number_manifest, divide::divide_manifest, eq::eq_manifest, gt::gt_manifest,
     gte::gte_manifest, lt::lt_manifest, lte::lte_manifest, max::max_manifest, min::min_manifest,
     multiply::multiply_manifest, negate::negate_manifest, neq::neq_manifest, not::not_manifest,
-    or::or_manifest, select::select_manifest, select_bool::select_bool_manifest,
-    subtract::subtract_manifest, Abs, Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Lt,
-    Lte, Max, Min, Multiply, Negate, Neq, Not, Or, Select, SelectBool, Subtract,
+    or::or_manifest, safe_divide::safe_divide_manifest, select::select_manifest,
+    select_bool::select_bool_manifest, subtract::subtract_manifest, Abs, Add, And, ConstBool,
+    ConstNumber, Divide, Eq, Gt, Gte, Lt, Lte, Max, Min, Multiply, Negate, Neq, Not, Or,
+    SafeDivide, Select, SelectBool, Subtract,
 };
 use crate::compute::{ComputePrimitiveManifest, PrimitiveRegistry as ComputeRegistry};
 use crate::source::{
@@ -100,6 +101,9 @@ pub fn core_registries() -> Result<CoreRegistries, CoreRegistrationError> {
         .map_err(CoreRegistrationError::Compute)?;
     computes
         .register(Box::new(Divide::new()))
+        .map_err(CoreRegistrationError::Compute)?;
+    computes
+        .register(Box::new(SafeDivide::new()))
         .map_err(CoreRegistrationError::Compute)?;
     computes
         .register(Box::new(Negate::new()))
@@ -417,6 +421,9 @@ pub fn build_core_catalog() -> CorePrimitiveCatalog {
     catalog
         .register_compute(divide_manifest())
         .expect("divide manifest is valid");
+    catalog
+        .register_compute(safe_divide_manifest())
+        .expect("safe_divide manifest is valid");
     catalog
         .register_compute(negate_manifest())
         .expect("negate manifest is valid");

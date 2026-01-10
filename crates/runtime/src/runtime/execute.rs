@@ -140,6 +140,7 @@ fn execute_source(
     }
 
     let outputs = primitive.produce(&mapped_parameters, ctx);
+    ensure_finite(&node.runtime_id, &outputs)?;
     Ok(outputs
         .into_iter()
         .map(|(k, v)| (k, map_common_value(v)))
@@ -189,7 +190,15 @@ fn execute_compute(
         mapped_parameters.insert(name.clone(), mapped);
     }
 
-    let outputs = primitive.compute(&mapped_inputs, &mapped_parameters, None);
+    let outputs = primitive
+        .compute(&mapped_inputs, &mapped_parameters, None)
+        .map_err(|error| ExecError::ComputeFailed {
+            node: node.runtime_id.clone(),
+            id: node.impl_id.clone(),
+            version: node.version.clone(),
+            error,
+        })?;
+    ensure_finite(&node.runtime_id, &outputs)?;
     Ok(outputs
         .into_iter()
         .map(|(k, v)| (k, map_common_value(v)))
@@ -273,6 +282,42 @@ fn execute_action(
         .into_iter()
         .map(|(k, v)| (k, map_action_value(v)))
         .collect())
+}
+
+/// NUM-FINITE-1: Reject non-finite numeric outputs before propagation.
+///
+/// This guard ensures that NaN, inf, and -inf cannot reach triggers or actions,
+/// preventing counterintuitive behavior (e.g., NaN comparisons always return false).
+///
+/// Called after compute and source outputs are produced, before values enter
+/// the node_outputs map.
+///
+/// See: NUM-FINITE-1 in PHASE_INVARIANTS.md
+fn ensure_finite(
+    node: &str,
+    outputs: &HashMap<String, crate::common::Value>,
+) -> Result<(), ExecError> {
+    for (port, value) in outputs {
+        match value {
+            crate::common::Value::Number(n) if !n.is_finite() => {
+                return Err(ExecError::NonFiniteOutput {
+                    node: node.to_string(),
+                    port: port.to_string(),
+                });
+            }
+            crate::common::Value::Series(values)
+                if values.iter().any(|value| !value.is_finite()) =>
+            {
+                return Err(ExecError::NonFiniteOutput {
+                    node: node.to_string(),
+                    port: port.to_string(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
 }
 
 fn map_common_value(v: crate::common::Value) -> RuntimeValue {
@@ -446,4 +491,40 @@ fn produce_skipped_outputs(node: &ValidatedNode) -> HashMap<String, RuntimeValue
             (name.clone(), value)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_finite;
+    use crate::common::Value;
+
+    #[test]
+    fn num_finite_guard_rejects_nan() {
+        let outputs =
+            std::collections::HashMap::from([("result".to_string(), Value::Number(f64::NAN))]);
+        let result = ensure_finite("test_node", &outputs);
+        assert!(matches!(
+            result,
+            Err(super::ExecError::NonFiniteOutput { .. })
+        ));
+    }
+
+    #[test]
+    fn num_finite_guard_rejects_infinity() {
+        let outputs =
+            std::collections::HashMap::from([("result".to_string(), Value::Number(f64::INFINITY))]);
+        let result = ensure_finite("test_node", &outputs);
+        assert!(matches!(
+            result,
+            Err(super::ExecError::NonFiniteOutput { .. })
+        ));
+    }
+
+    #[test]
+    fn num_finite_guard_allows_finite() {
+        let outputs =
+            std::collections::HashMap::from([("result".to_string(), Value::Number(42.0))]);
+        let result = ensure_finite("test_node", &outputs);
+        assert!(result.is_ok());
+    }
 }

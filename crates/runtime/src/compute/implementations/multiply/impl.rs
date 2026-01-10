@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::common::Value;
-use crate::compute::{ComputePrimitive, ComputePrimitiveManifest, PrimitiveState};
+use crate::compute::{ComputeError, ComputePrimitive, ComputePrimitiveManifest, PrimitiveState};
 
 use super::manifest::multiply_manifest;
 
@@ -33,7 +33,7 @@ impl ComputePrimitive for Multiply {
         inputs: &HashMap<String, Value>,
         _parameters: &HashMap<String, Value>,
         _state: Option<&mut PrimitiveState>,
-    ) -> HashMap<String, Value> {
+    ) -> Result<HashMap<String, Value>, ComputeError> {
         let a = inputs
             .get("a")
             .and_then(|v| v.as_number())
@@ -45,6 +45,6 @@ impl ComputePrimitive for Multiply {
 
         let mut outputs = HashMap::new();
         outputs.insert("result".to_string(), Value::Number(a * b));
-        outputs
+        Ok(outputs)
     }
 }

@@ -380,10 +380,13 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
 
     fn should_retry(termination: &RunTermination) -> bool {
         match termination {
-            RunTermination::Failed(err) => matches!(
-                err,
-                ErrKind::NetworkTimeout | ErrKind::AdapterUnavailable | ErrKind::RuntimeError
-            ),
+            RunTermination::Failed(err) => match err {
+                ErrKind::SemanticError => false,
+                ErrKind::NetworkTimeout | ErrKind::AdapterUnavailable | ErrKind::RuntimeError => {
+                    true
+                }
+                _ => false,
+            },
             RunTermination::TimedOut => true,
             _ => false,
         }
@@ -410,5 +413,48 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
             retry_count,
         };
         self.decision_log.log(entry);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DecisionLog, DecisionLogEntry, ErrKind, RunTermination, RuntimeInvoker, Supervisor,
+    };
+
+    struct TestLog;
+
+    impl DecisionLog for TestLog {
+        fn log(&self, _entry: DecisionLogEntry) {}
+    }
+
+    struct TestRuntime;
+
+    impl RuntimeInvoker for TestRuntime {
+        fn run(
+            &self,
+            _graph_id: &ergo_adapter::GraphId,
+            _event_id: &ergo_adapter::EventId,
+            _ctx: &ergo_adapter::ExecutionContext,
+            _deadline: Option<std::time::Duration>,
+        ) -> RunTermination {
+            RunTermination::Completed
+        }
+    }
+
+    #[test]
+    fn semantic_error_not_retryable() {
+        let termination = RunTermination::Failed(ErrKind::SemanticError);
+        assert!(!Supervisor::<TestLog, TestRuntime>::should_retry(
+            &termination
+        ));
+    }
+
+    #[test]
+    fn runtime_error_is_retryable() {
+        let termination = RunTermination::Failed(ErrKind::RuntimeError);
+        assert!(Supervisor::<TestLog, TestRuntime>::should_retry(
+            &termination
+        ));
     }
 }

@@ -72,8 +72,8 @@ mod tests {
     use super::*;
     use crate::common::{PrimitiveKind, Value, ValueType};
     use crate::compute::{
-        Cadence, ComputePrimitive, ComputePrimitiveManifest, ExecutionSpec, InputSpec, OutputSpec,
-        PrimitiveState, StateSpec,
+        Cadence, ComputeError, ComputePrimitive, ComputePrimitiveManifest, ExecutionSpec,
+        InputSpec, OutputSpec, PrimitiveState, StateSpec,
     };
 
     struct ZeroInputCompute {
@@ -117,8 +117,11 @@ mod tests {
             _inputs: &std::collections::HashMap<String, Value>,
             _parameters: &std::collections::HashMap<String, Value>,
             _state: Option<&mut PrimitiveState>,
-        ) -> std::collections::HashMap<String, Value> {
-            std::collections::HashMap::from([("out".to_string(), Value::Number(0.0))])
+        ) -> Result<std::collections::HashMap<String, Value>, ComputeError> {
+            Ok(std::collections::HashMap::from([(
+                "out".to_string(),
+                Value::Number(0.0),
+            )]))
         }
     }
 
@@ -167,9 +170,12 @@ mod tests {
             inputs: &std::collections::HashMap<String, Value>,
             _parameters: &std::collections::HashMap<String, Value>,
             _state: Option<&mut PrimitiveState>,
-        ) -> std::collections::HashMap<String, Value> {
+        ) -> Result<std::collections::HashMap<String, Value>, ComputeError> {
             let v = inputs.get("in").and_then(|v| v.as_number()).unwrap_or(0.0);
-            std::collections::HashMap::from([("out".to_string(), Value::Number(v))])
+            Ok(std::collections::HashMap::from([(
+                "out".to_string(),
+                Value::Number(v),
+            )]))
         }
     }
 

@@ -348,17 +348,63 @@ PR #31, #32
 
 ---
 
-## Semantics Decision Queue (v1)
+## B.2 — Divide-by-Zero Semantics
 
-### B.2 — Divide-by-zero behavior
-- **ID:** B.2
-- **Current behavior:** IEEE 754 propagation (`inf`, `-inf`, `NaN`)
-- **Location:** `crates/runtime/src/compute/implementations/divide/impl.rs` (see `TODO(B.2)`)
-- **Disposition:** V1 SEMANTICS — no v0 change
-- **Risks:**
-  - NaN propagates silently through downstream computations
-  - NaN comparisons are non-deterministic (`NaN != NaN`), affecting replay fidelity
-  - Downstream branching on NaN may diverge across runs
-- **Decision needed (v1):** Either "structured error on divisor==0" vs "allow IEEE + canonicalization rules"
-- **Tracking:** Issue #7
-- **PR/Commit:** docs-only marker added
+**Date:** 2026-01-10  
+**Status:** CLOSED  
+**Category:** Compute Semantics
+
+### Finding
+
+Divide implementation used IEEE 754 semantics, producing inf/-inf/NaN on divide-by-zero. These values propagated silently through the graph, causing counterintuitive trigger behavior.
+
+### Resolution
+
+Adopted Option C after stress-testing with ChatGPT:
+
+1. **`divide`** (v0.2.0) — Math-true semantics
+   - Zero check: `impl.rs` line 55
+   - Returns `Err(ComputeError::DivisionByZero)`: line 56
+   - Finite check: line 60
+   - Returns `Err(ComputeError::NonFiniteResult)`: line 61
+   - Version bump: `manifest.rs` line 9
+
+2. **`safe_divide`** (v0.1.0) — Explicit fallback semantics
+   - Zero check: `impl.rs` line 60
+   - Returns fallback: line 61
+   - Non-finite check: lines 63-64
+   - Returns fallback: line 67
+   - Fallback parameter required: `manifest.rs` lines 28, 31
+   - Registered: `catalog.rs` lines 106, 425
+
+3. **NUM-FINITE-1** — Runtime guard
+   - Definition: `execute.rs` line 296
+   - Number check: line 302
+   - Series check: line 308
+   - Called after Source: line 143
+   - Called after Compute: line 201
+   - Error type: `types.rs` line 127
+
+4. **ErrKind::SemanticError** — Non-retryable classification
+   - Definition: `lib.rs` lines 50-56
+   - Retry logic: `lib.rs` lines 381, 384-386
+
+### Justification
+
+- Ontology §1.4 (Non-Normative): "Division by zero is undefined" is math, not domain policy
+- Separating `divide` (strict) from `safe_divide` (explicit fallback) keeps primitives math-true
+- NUM-FINITE-1 provides defense-in-depth against non-finite values from any source
+
+### Tests
+- `divide_by_zero_errors`
+- `divide_by_negative_zero_errors`
+- `divide_zero_by_zero_errors`
+- `divide_overflow_errors`
+- `safe_divide_by_zero_uses_fallback`
+- `safe_divide_overflow_uses_fallback`
+- `num_finite_guard_rejects_nan`
+- `num_finite_guard_rejects_infinity`
+- `semantic_error_not_retryable`
+
+### PR/Commit
+PR #35, commit 7baa74c

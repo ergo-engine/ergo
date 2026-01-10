@@ -3,43 +3,45 @@ use std::collections::HashMap;
 use crate::common::Value;
 use crate::compute::{ComputeError, ComputePrimitive, ComputePrimitiveManifest, PrimitiveState};
 
-use super::manifest::divide_manifest;
+use super::manifest::safe_divide_manifest;
 
-pub struct Divide {
+pub struct SafeDivide {
     manifest: ComputePrimitiveManifest,
 }
 
-impl Divide {
+impl SafeDivide {
     pub fn new() -> Self {
         Self {
-            manifest: divide_manifest(),
+            manifest: safe_divide_manifest(),
         }
     }
 }
 
-impl Default for Divide {
+impl Default for SafeDivide {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ComputePrimitive for Divide {
+impl ComputePrimitive for SafeDivide {
     fn manifest(&self) -> &ComputePrimitiveManifest {
         &self.manifest
     }
 
-    /// B.2: Strict divide - math-true semantics.
+    /// Safe divide with explicit fallback.
     ///
-    /// Returns `Err(DivisionByZero)` when `b == 0.0`.
-    /// Returns `Err(NonFiniteResult)` when result overflows to inf.
+    /// Returns `fallback` when:
+    /// - `b == 0.0` (would be division by zero)
+    /// - Result is non-finite (overflow)
     ///
-    /// For fallback-on-zero behavior, use `safe_divide`.
+    /// This implementation never errors for zero/non-finite conditions.
+    /// The author explicitly chooses the fallback value, encoding domain policy.
     ///
     /// See: B.2 in PHASE_INVARIANTS.md
     fn compute(
         &self,
         inputs: &HashMap<String, Value>,
-        _parameters: &HashMap<String, Value>,
+        parameters: &HashMap<String, Value>,
         _state: Option<&mut PrimitiveState>,
     ) -> Result<HashMap<String, Value>, ComputeError> {
         let a = inputs
@@ -50,16 +52,21 @@ impl ComputePrimitive for Divide {
             .get("b")
             .and_then(|v| v.as_number())
             .expect("missing required numeric input 'b'");
+        let fallback = parameters
+            .get("fallback")
+            .and_then(|v| v.as_number())
+            .expect("missing required parameter 'fallback'");
 
-        // B.2: Strict divide - error on zero or non-finite result.
-        if b == 0.0 {
-            return Err(ComputeError::DivisionByZero);
-        }
-
-        let result = a / b;
-        if !result.is_finite() {
-            return Err(ComputeError::NonFiniteResult);
-        }
+        let result = if b == 0.0 {
+            fallback
+        } else {
+            let r = a / b;
+            if r.is_finite() {
+                r
+            } else {
+                fallback
+            }
+        };
 
         Ok(HashMap::from([(
             "result".to_string(),

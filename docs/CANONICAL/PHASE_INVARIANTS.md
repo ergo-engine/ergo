@@ -10,7 +10,7 @@ Change Rule: Operational log
 
 # Phase Invariants — v0
 
-**Tracked invariants:** 75
+**Tracked invariants:** 77
 
 This document defines the invariants that must hold at each phase boundary in the system. It is the authoritative reference for what is true, where that truth is enforced, and what happens if it is violated.
 
@@ -120,6 +120,52 @@ These invariants hold across all phases. Violation at any point is a system-leve
 - **X.10:** ✅ **CLOSED.** Enforced in `catalog.rs::register_compute()` (returns `ValidationError::UnsupportedParameterType` when parameter has `ValueType::Series`). Test: `series_parameter_type_rejected` in `catalog.rs`. Prior behavior silently coerced Series to Number(0.0); now rejects at registration time.
 - **X.11:** ✅ **CLOSED.** Enforced in `execute.rs::map_to_compute_parameter_value()` (returns `None` for Int values where `|i| > 2^53`). Caller produces `ExecError::ParameterOutOfRange { node, parameter, value }`. Tests: `int_parameter_within_f64_exact_range_allowed`, `int_parameter_out_of_range_rejected`. Prior behavior silently converted all Int to f64, losing precision for large values.
 - **X.12 / STRING-SOURCE-1:** ✅ **CLOSED.** `string_source` added to complete ValueType surface coverage. Prior state: `ValueType::String` existed in cluster/runtime types but `common::ValueType` lacked String, creating a gap where string outputs could be declared but never originated. Implementation required adding `common::ValueType::String` and `common::Value::String` variants, which triggered exhaustive match cascade across four mapping functions (`map_compute_param_type`, `map_compute_param_value`, `map_common_value_type`, `map_common_value`). Tests: `string_source_emits_configured_value`, `string_source_defaults_to_empty_string`.
+
+---
+
+### NUM-FINITE-1 — Non-Finite Output Guard
+
+**Status:** Enforced  
+**Location:** `crates/runtime/src/runtime/execute.rs`
+
+Non-finite numeric values (NaN, inf, -inf) are rejected at the execution boundary before they can propagate to downstream nodes.
+
+**Enforcement:**
+- `ensure_finite()` defined at line 296
+- Number check at line 302
+- Series check at line 308
+- Guard called after Source outputs (line 143)
+- Guard called after Compute outputs (line 201)
+- Violation produces `ExecError::NonFiniteOutput { node, port }` (types.rs line 127)
+
+**Rationale:**
+- Non-finite values cause counterintuitive trigger behavior (NaN comparisons always false)
+- Prevents semantic corruption from reaching actions
+- Defense in depth for implementation bugs
+
+---
+
+### B.2 — Divide-by-Zero Semantics
+
+**Status:** Enforced  
+**Location:** `crates/runtime/src/compute/implementations/divide/impl.rs`
+
+Division by zero produces `ComputeError::DivisionByZero`, not IEEE 754 inf/NaN.
+
+**Enforcement:**
+- Zero check at line 55
+- Returns `DivisionByZero` at line 56
+- Finite check at line 60
+- Returns `NonFiniteResult` at line 61
+
+**Implementations:**
+- `divide` (v0.2.0): Math-true. Errors on `b == 0` or non-finite result.
+- `safe_divide` (v0.1.0): Requires `fallback` parameter. Returns fallback on zero/non-finite.
+
+**Rationale:**
+- "Division by zero is undefined" is math, not policy
+- Policy (what to substitute) belongs in `safe_divide`, not `divide`
+- Preserves Non-Normative principle (ontology.md §1.4)
 
 ---
 
