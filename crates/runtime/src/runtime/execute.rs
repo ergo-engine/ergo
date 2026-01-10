@@ -12,7 +12,7 @@ use super::types::{
 pub fn execute(
     graph: &ValidatedGraph,
     registries: &Registries,
-    _ctx: &ExecutionContext,
+    ctx: &ExecutionContext,
 ) -> Result<ExecutionReport, ExecError> {
     let mut node_outputs: HashMap<String, HashMap<String, RuntimeValue>> = HashMap::new();
 
@@ -27,7 +27,7 @@ pub fn execute(
         let inputs = collect_inputs(node_id, &node.inputs, &graph.edges, &node_outputs)?;
 
         let outputs = match node.kind {
-            PrimitiveKind::Source => execute_source(node, inputs, registries)?,
+            PrimitiveKind::Source => execute_source(node, inputs, registries, ctx)?,
             PrimitiveKind::Compute => execute_compute(node, inputs, registries)?,
             PrimitiveKind::Trigger => execute_trigger(node, inputs, registries)?,
             PrimitiveKind::Action => {
@@ -117,6 +117,7 @@ fn execute_source(
     node: &ValidatedNode,
     _inputs: HashMap<String, RuntimeValue>,
     registries: &Registries,
+    ctx: &ExecutionContext,
 ) -> Result<HashMap<String, RuntimeValue>, ExecError> {
     let primitive =
         registries
@@ -138,7 +139,7 @@ fn execute_source(
         mapped_parameters.insert(name.clone(), mapped);
     }
 
-    let outputs = primitive.produce(&mapped_parameters);
+    let outputs = primitive.produce(&mapped_parameters, ctx);
     Ok(outputs
         .into_iter()
         .map(|(k, v)| (k, map_common_value(v)))

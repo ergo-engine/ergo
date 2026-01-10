@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::common::Value;
+use crate::runtime::ExecutionContext;
 use crate::source::{ParameterValue, SourcePrimitive, SourcePrimitiveManifest};
 
 use super::manifest::string_source_manifest;
@@ -28,7 +29,11 @@ impl SourcePrimitive for StringSource {
         &self.manifest
     }
 
-    fn produce(&self, parameters: &HashMap<String, ParameterValue>) -> HashMap<String, Value> {
+    fn produce(
+        &self,
+        parameters: &HashMap<String, ParameterValue>,
+        _ctx: &ExecutionContext,
+    ) -> HashMap<String, Value> {
         let value = parameters
             .get("value")
             .and_then(|v| match v {

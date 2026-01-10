@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use ergo_runtime::catalog::{CorePrimitiveCatalog, CoreRegistries};
 use ergo_runtime::cluster::ExpandedGraph;
+use ergo_runtime::common::Value;
 use ergo_runtime::runtime::ExecutionContext as RuntimeExecutionContext;
 use ergo_runtime::runtime::Registries;
 use serde::{Deserialize, Serialize};
@@ -65,7 +66,7 @@ pub enum RunTermination {
 /// use ergo_runtime::runtime::ExecutionContext as RuntimeExecutionContext;
 ///
 /// // Constructor is not visible outside ergo-adapter.
-/// let runtime_ctx = RuntimeExecutionContext;
+/// let runtime_ctx = RuntimeExecutionContext::default();
 /// let _ctx = ExecutionContext::new(runtime_ctx);
 /// ```
 ///
@@ -74,7 +75,7 @@ pub enum RunTermination {
 /// use ergo_runtime::runtime::ExecutionContext as RuntimeExecutionContext;
 ///
 /// // Opaque fields cannot be set directly.
-/// let runtime_ctx = RuntimeExecutionContext;
+/// let runtime_ctx = RuntimeExecutionContext::default();
 /// let _ctx = ExecutionContext { inner: runtime_ctx };
 /// ```
 #[derive(Debug, Clone)]
@@ -166,7 +167,7 @@ impl ExternalEvent {
     }
 
     pub fn mechanical_at(event_id: EventId, kind: ExternalEventKind, at: EventTime) -> Self {
-        let context = ExecutionContext::new(RuntimeExecutionContext);
+        let context = ExecutionContext::new(RuntimeExecutionContext::default());
         Self::new(event_id, kind, context, at, EventPayload::default())
     }
 
@@ -180,7 +181,7 @@ impl ExternalEvent {
         at: EventTime,
         payload: EventPayload,
     ) -> Self {
-        let context = ExecutionContext::new(RuntimeExecutionContext);
+        let context = ExecutionContext::new(context_from_payload(&payload));
         Self::new(event_id, kind, context, at, payload)
     }
 
@@ -203,6 +204,63 @@ impl ExternalEvent {
     pub fn payload(&self) -> &EventPayload {
         &self.payload
     }
+}
+
+fn context_from_payload(payload: &EventPayload) -> RuntimeExecutionContext {
+    let values = payload_values(payload);
+    RuntimeExecutionContext::from_values(values)
+}
+
+fn payload_values(payload: &EventPayload) -> HashMap<String, Value> {
+    if payload.data.is_empty() {
+        return HashMap::new();
+    }
+
+    let parsed: serde_json::Value = match serde_json::from_slice(&payload.data) {
+        Ok(value) => value,
+        Err(_) => return HashMap::new(),
+    };
+
+    let Some(object) = parsed.as_object() else {
+        return HashMap::new();
+    };
+
+    let mut values = HashMap::new();
+    for (key, value) in object {
+        if let Some(mapped) = json_to_value(value) {
+            values.insert(key.clone(), mapped);
+        }
+    }
+
+    values
+}
+
+fn json_to_value(value: &serde_json::Value) -> Option<Value> {
+    if let Some(number) = value.as_f64() {
+        return Some(Value::Number(number));
+    }
+
+    if let Some(text) = value.as_str() {
+        return Some(Value::String(text.to_string()));
+    }
+
+    if let Some(flag) = value.as_bool() {
+        return Some(Value::Bool(flag));
+    }
+
+    let Some(items) = value.as_array() else {
+        return None;
+    };
+
+    let mut series = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(number) = item.as_f64() else {
+            return None;
+        };
+        series.push(number);
+    }
+
+    Some(Value::Series(series))
 }
 
 /// RuntimeHandle holds the execution dependencies needed to invoke the runtime.
@@ -348,7 +406,7 @@ mod tests {
     fn fault_runtime_handle_aborts_when_deadline_zero() {
         // FaultRuntimeHandle (the test double) should respect deadline=zero
         let handle = FaultRuntimeHandle::new(RunTermination::Completed);
-        let rt_ctx = ergo_runtime::runtime::ExecutionContext;
+        let rt_ctx = ergo_runtime::runtime::ExecutionContext::default();
         let ctx = ExecutionContext::new(rt_ctx);
         let term = handle.run(
             &GraphId::new("g"),
@@ -368,7 +426,7 @@ mod tests {
             vec![RunTermination::Failed(ErrKind::NetworkTimeout)],
         );
 
-        let rt_ctx = ergo_runtime::runtime::ExecutionContext;
+        let rt_ctx = ergo_runtime::runtime::ExecutionContext::default();
         let ctx = ExecutionContext::new(rt_ctx);
 
         // First call returns scheduled outcome

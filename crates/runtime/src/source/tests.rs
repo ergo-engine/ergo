@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
 use crate::common::Value;
-use crate::source::{BooleanSource, NumberSource, SourcePrimitive, StringSource};
+use crate::runtime::ExecutionContext;
+use crate::source::{
+    BooleanSource, ContextNumberSource, NumberSource, SourcePrimitive, StringSource,
+};
 
 fn expect_panic<F: FnOnce() -> R + std::panic::UnwindSafe, R>(f: F) {
     assert!(std::panic::catch_unwind(f).is_err());
@@ -10,38 +13,50 @@ fn expect_panic<F: FnOnce() -> R + std::panic::UnwindSafe, R>(f: F) {
 #[test]
 fn number_source_requires_parameter() {
     let source = NumberSource::new();
-    let outputs = source.produce(&HashMap::from([(
-        "value".to_string(),
-        crate::source::ParameterValue::Number(3.5),
-    )]));
+    let ctx = ExecutionContext::default();
+    let outputs = source.produce(
+        &HashMap::from([(
+            "value".to_string(),
+            crate::source::ParameterValue::Number(3.5),
+        )]),
+        &ctx,
+    );
     assert_eq!(outputs.get("value"), Some(&Value::Number(3.5)));
 
     expect_panic(|| {
-        source.produce(&HashMap::new());
+        source.produce(&HashMap::new(), &ctx);
     });
 }
 
 #[test]
 fn boolean_source_requires_parameter() {
     let source = BooleanSource::new();
-    let outputs = source.produce(&HashMap::from([(
-        "value".to_string(),
-        crate::source::ParameterValue::Bool(true),
-    )]));
+    let ctx = ExecutionContext::default();
+    let outputs = source.produce(
+        &HashMap::from([(
+            "value".to_string(),
+            crate::source::ParameterValue::Bool(true),
+        )]),
+        &ctx,
+    );
     assert_eq!(outputs.get("value"), Some(&Value::Bool(true)));
 
     expect_panic(|| {
-        source.produce(&HashMap::new());
+        source.produce(&HashMap::new(), &ctx);
     });
 }
 
 #[test]
 fn string_source_emits_configured_value() {
     let source = StringSource::new();
-    let outputs = source.produce(&HashMap::from([(
-        "value".to_string(),
-        crate::source::ParameterValue::String("hello".to_string()),
-    )]));
+    let ctx = ExecutionContext::default();
+    let outputs = source.produce(
+        &HashMap::from([(
+            "value".to_string(),
+            crate::source::ParameterValue::String("hello".to_string()),
+        )]),
+        &ctx,
+    );
     assert_eq!(
         outputs.get("value"),
         Some(&Value::String("hello".to_string()))
@@ -51,6 +66,16 @@ fn string_source_emits_configured_value() {
 #[test]
 fn string_source_defaults_to_empty_string() {
     let source = StringSource::new();
-    let outputs = source.produce(&HashMap::new());
+    let ctx = ExecutionContext::default();
+    let outputs = source.produce(&HashMap::new(), &ctx);
     assert_eq!(outputs.get("value"), Some(&Value::String(String::new())));
+}
+
+#[test]
+fn context_number_source_reads_context_value() {
+    let source = ContextNumberSource::new();
+    let ctx = ExecutionContext::from_values(HashMap::from([("x".to_string(), Value::Number(9.5))]));
+
+    let outputs = source.produce(&HashMap::new(), &ctx);
+    assert_eq!(outputs.get("value"), Some(&Value::Number(9.5)));
 }

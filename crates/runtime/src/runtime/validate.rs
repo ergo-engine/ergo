@@ -4,7 +4,7 @@
 // This module consumes ExpandedGraph.
 // - No ExternalInput is permitted.
 // - All inputs must originate from Source primitives.
-// - ExecutionContext must not supply values.
+// - ExecutionContext must not supply values directly.
 // - Single unified DAG, single execution pass.
 //
 // DO NOT introduce alternative input paths.

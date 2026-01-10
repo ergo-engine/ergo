@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::common::{Value, ValueType};
+use crate::runtime::ExecutionContext;
 
 pub mod implementations;
 pub mod registry;
@@ -136,10 +137,17 @@ pub enum SourceValidationError {
 pub trait SourcePrimitive {
     fn manifest(&self) -> &SourcePrimitiveManifest;
 
-    fn produce(&self, parameters: &HashMap<String, ParameterValue>) -> HashMap<String, Value>;
+    fn produce(
+        &self,
+        parameters: &HashMap<String, ParameterValue>,
+        ctx: &ExecutionContext,
+    ) -> HashMap<String, Value>;
 }
 
-pub use implementations::{boolean, number, string, BooleanSource, NumberSource, StringSource};
+pub use implementations::{
+    boolean, context_number, number, string, BooleanSource, ContextNumberSource, NumberSource,
+    StringSource,
+};
 pub use registry::SourceRegistry;
 
 #[cfg(test)]

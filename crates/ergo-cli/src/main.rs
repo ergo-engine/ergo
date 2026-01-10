@@ -4,7 +4,9 @@ use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use ergo_adapter::{EventId, ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle};
+use ergo_adapter::{
+    EventId, EventPayload, EventTime, ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
+};
 use ergo_runtime::action::ActionOutcome;
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
 use ergo_supervisor::demo::demo_1;
@@ -37,6 +39,8 @@ struct FixtureEvent {
     kind: ExternalEventKind,
     #[serde(default)]
     id: Option<String>,
+    #[serde(default)]
+    payload: Option<serde_json::Value>,
 }
 
 struct NullLog;
@@ -177,6 +181,7 @@ fn run_fixture(path: &Path, output_override: Option<&Path>) -> Result<PathBuf, S
     let mut episodes: Vec<EpisodeInfo> = Vec::new();
     let mut current_episode: Option<usize> = None;
     let mut event_counter = 0usize;
+    let mut context_by_event: HashMap<String, Option<f64>> = HashMap::new();
 
     for (index, line) in reader.lines().enumerate() {
         let line = line.map_err(|err| format!("read fixture line {}: {err}", index + 1))?;
@@ -211,8 +216,22 @@ fn run_fixture(path: &Path, output_override: Option<&Path>) -> Result<PathBuf, S
                 let event_id = event
                     .id
                     .unwrap_or_else(|| format!("fixture_evt_{}", event_counter));
-                let external =
-                    ExternalEvent::mechanical(EventId::new(event_id.clone()), event.kind);
+                let context_value = event.payload.as_ref().and_then(context_value_from_json);
+                let external = match event.payload {
+                    Some(payload) => {
+                        let data = serde_json::to_vec(&payload).map_err(|err| {
+                            format!("fixture payload encode error at line {}: {err}", index + 1)
+                        })?;
+                        ExternalEvent::with_payload(
+                            EventId::new(event_id.clone()),
+                            event.kind,
+                            EventTime::default(),
+                            EventPayload { data },
+                        )
+                    }
+                    None => ExternalEvent::mechanical(EventId::new(event_id.clone()), event.kind),
+                };
+                context_by_event.insert(event_id.clone(), context_value);
                 session.on_event(external);
 
                 let episode_index = current_episode.expect("episode index set");
@@ -234,8 +253,7 @@ fn run_fixture(path: &Path, output_override: Option<&Path>) -> Result<PathBuf, S
     }
 
     let bundle = session.into_bundle();
-    let summary = demo_1::compute_summary(&graph, &catalog, &core_registries);
-    print_fixture_summaries(&episodes, &bundle.decisions, &summary)?;
+    print_fixture_summaries(&episodes, &bundle.decisions, &context_by_event)?;
 
     let artifact_path = output_override
         .map(PathBuf::from)
@@ -248,7 +266,7 @@ fn run_fixture(path: &Path, output_override: Option<&Path>) -> Result<PathBuf, S
 fn print_fixture_summaries(
     episodes: &[EpisodeInfo],
     decisions: &[EpisodeInvocationRecord],
-    summary: &demo_1::Demo1Summary,
+    context_by_event: &HashMap<String, Option<f64>>,
 ) -> Result<(), String> {
     let mut decisions_by_event: HashMap<String, Vec<Decision>> = HashMap::new();
     for record in decisions {
@@ -261,6 +279,7 @@ fn print_fixture_summaries(
     for episode in episodes {
         let mut invoked = false;
         let mut deferred = false;
+        let mut invoked_event: Option<&String> = None;
 
         for event_id in &episode.event_ids {
             let entries = decisions_by_event
@@ -268,6 +287,9 @@ fn print_fixture_summaries(
                 .ok_or_else(|| format!("no decision for event '{event_id}'"))?;
             if entries.iter().any(|decision| *decision == Decision::Invoke) {
                 invoked = true;
+                if invoked_event.is_none() {
+                    invoked_event = Some(event_id);
+                }
             }
             if entries.iter().any(|decision| *decision == Decision::Defer) {
                 deferred = true;
@@ -281,6 +303,11 @@ fn print_fixture_summaries(
         } else {
             "none"
         };
+        let context_value = invoked_event
+            .and_then(|event_id| context_by_event.get(event_id))
+            .copied()
+            .flatten();
+        let summary = demo_1::summary_for_context_value(context_value);
         let action_a_status = action_status(invoked, summary.action_a_outcome.clone());
         let action_b_status = action_status(invoked, summary.action_b_outcome.clone());
         let trigger_a_status = trigger_status(invoked, summary.action_a_outcome.clone());
@@ -324,6 +351,22 @@ fn trigger_status(invoked: bool, outcome: ActionOutcome) -> &'static str {
     }
 }
 
+fn context_value_from_json(payload: &serde_json::Value) -> Option<f64> {
+    payload
+        .as_object()
+        .and_then(|object| object.get(demo_1::CONTEXT_NUMBER_KEY))
+        .and_then(|value| value.as_f64())
+}
+
+fn context_value_from_payload(payload: &EventPayload) -> Option<f64> {
+    if payload.data.is_empty() {
+        return None;
+    }
+
+    let parsed: serde_json::Value = serde_json::from_slice(&payload.data).ok()?;
+    context_value_from_json(&parsed)
+}
+
 fn replay_demo_1(path: &Path) -> Result<(), String> {
     let bundle = load_bundle(path)?;
 
@@ -346,11 +389,40 @@ fn replay_demo_1(path: &Path) -> Result<(), String> {
         Err(_) => false,
     };
 
-    let summary = demo_1::compute_summary(&graph, &catalog, &core_registries);
+    let mut context_by_event: HashMap<String, Option<f64>> = HashMap::new();
+    for record in &bundle.events {
+        context_by_event.insert(
+            record.event_id.as_str().to_string(),
+            context_value_from_payload(&record.payload),
+        );
+    }
+
     for record in &bundle.decisions {
+        let invoked = record.decision == Decision::Invoke;
+        let decision_label = match record.decision {
+            Decision::Invoke => "invoke",
+            Decision::Defer => "defer",
+            Decision::Skip => "skip",
+        };
+        let context_value = context_by_event
+            .get(record.event_id.as_str())
+            .copied()
+            .flatten();
+        let summary = demo_1::summary_for_context_value(context_value);
+        let action_a_status = action_status(invoked, summary.action_a_outcome.clone());
+        let action_b_status = action_status(invoked, summary.action_b_outcome.clone());
+        let trigger_a_status = trigger_status(invoked, summary.action_a_outcome.clone());
+        let trigger_b_status = trigger_status(invoked, summary.action_b_outcome.clone());
+        let label = format!("E{}", record.episode_id.as_u64() + 1);
+
         println!(
-            "{}",
-            demo_1::format_episode_summary(record.episode_id, &record.event_id, &summary)
+            "episode {}: decision={} TriggerA={} TriggerB={} ActionA={} ActionB={}",
+            label,
+            decision_label,
+            trigger_a_status,
+            trigger_b_status,
+            action_a_status,
+            action_b_status
         );
     }
 
