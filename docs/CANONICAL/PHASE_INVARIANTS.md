@@ -132,10 +132,10 @@ Non-finite numeric values (NaN, inf, -inf) are rejected at the execution boundar
 
 **Enforcement:**
 - `ensure_finite()` defined at line 296
-- Number check at line 301
+- Number check at line 302
 - Series check at line 308
-- Guard called after Source outputs (line 142)
-- Guard called after Compute outputs (line 193)
+- Guard called after Source outputs (line 143)
+- Guard called after Compute outputs (line 201)
 - Violation produces `ExecError::NonFiniteOutput { node, port }` (types.rs line 127)
 
 **Rationale:**

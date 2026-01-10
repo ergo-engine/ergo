@@ -379,10 +379,10 @@ Adopted Option C after stress-testing with ChatGPT:
 
 3. **NUM-FINITE-1** — Runtime guard
    - Definition: `execute.rs` line 296
-   - Number check: line 301
+   - Number check: line 302
    - Series check: line 308
-   - Called after Source: line 142
-   - Called after Compute: line 193
+   - Called after Source: line 143
+   - Called after Compute: line 201
    - Error type: `types.rs` line 127
 
 4. **ErrKind::SemanticError** — Non-retryable classification
