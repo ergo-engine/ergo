@@ -48,6 +48,23 @@ pub struct PrimitiveState {
     pub data: HashMap<String, Value>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComputeError {
+    DivisionByZero,
+    NonFiniteResult,
+}
+
+impl std::fmt::Display for ComputeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ComputeError::DivisionByZero => write!(f, "division by zero"),
+            ComputeError::NonFiniteResult => write!(f, "non-finite result"),
+        }
+    }
+}
+
+impl std::error::Error for ComputeError {}
+
 #[derive(Debug, Clone)]
 pub struct ComputePrimitiveManifest {
     pub id: String,
@@ -69,13 +86,13 @@ pub trait ComputePrimitive {
         inputs: &HashMap<String, Value>,
         parameters: &HashMap<String, Value>,
         state: Option<&mut PrimitiveState>,
-    ) -> HashMap<String, Value>;
+    ) -> Result<HashMap<String, Value>, ComputeError>;
 }
 
 pub use implementations::{
-    add, and, const_bool, const_number, divide, eq, gt, lt, multiply, negate, neq, not, or, select,
-    subtract, Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Lt, Multiply, Negate, Neq, Not, Or,
-    Select, Subtract,
+    add, and, const_bool, const_number, divide, eq, gt, lt, multiply, negate, neq, not, or,
+    safe_divide, select, subtract, Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Lt, Multiply,
+    Negate, Neq, Not, Or, SafeDivide, Select, Subtract,
 };
 pub use registry::PrimitiveRegistry;
 

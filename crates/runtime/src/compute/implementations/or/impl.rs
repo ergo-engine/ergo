@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::common::Value;
-use crate::compute::{ComputePrimitive, ComputePrimitiveManifest, PrimitiveState};
+use crate::compute::{ComputeError, ComputePrimitive, ComputePrimitiveManifest, PrimitiveState};
 
 use super::manifest::or_manifest;
 
@@ -33,7 +33,7 @@ impl ComputePrimitive for Or {
         inputs: &HashMap<String, Value>,
         _parameters: &HashMap<String, Value>,
         _state: Option<&mut PrimitiveState>,
-    ) -> HashMap<String, Value> {
+    ) -> Result<HashMap<String, Value>, ComputeError> {
         let a = inputs
             .get("a")
             .and_then(|v| v.as_bool())
@@ -43,6 +43,6 @@ impl ComputePrimitive for Or {
             .and_then(|v| v.as_bool())
             .expect("missing required bool input 'b'");
 
-        HashMap::from([("result".to_string(), Value::Bool(a || b))])
+        Ok(HashMap::from([("result".to_string(), Value::Bool(a || b))]))
     }
 }

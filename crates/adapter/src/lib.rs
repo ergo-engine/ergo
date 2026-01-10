@@ -5,8 +5,9 @@ use std::time::Duration;
 use ergo_runtime::catalog::{CorePrimitiveCatalog, CoreRegistries};
 use ergo_runtime::cluster::ExpandedGraph;
 use ergo_runtime::common::Value;
-use ergo_runtime::runtime::ExecutionContext as RuntimeExecutionContext;
-use ergo_runtime::runtime::Registries;
+use ergo_runtime::runtime::{
+    ExecError, ExecutionContext as RuntimeExecutionContext, Registries, RuntimeError,
+};
 use serde::{Deserialize, Serialize};
 
 pub mod capture;
@@ -46,6 +47,7 @@ pub enum ErrKind {
     AdapterUnavailable,
     ValidationFailed,
     RuntimeError,
+    SemanticError,
     DeadlineExceeded,
     Cancelled,
 }
@@ -311,7 +313,13 @@ impl RuntimeHandle {
         // Call runtime::run, consume ExecutionReport internally (SUP-2)
         match ergo_runtime::runtime::run(&self.graph, &*self.catalog, &registries, ctx.inner()) {
             Ok(_report) => RunTermination::Completed,
-            Err(_) => RunTermination::Failed(ErrKind::RuntimeError),
+            Err(RuntimeError::Execution(exec_err)) => match exec_err {
+                ExecError::ComputeFailed { .. } | ExecError::NonFiniteOutput { .. } => {
+                    RunTermination::Failed(ErrKind::SemanticError)
+                }
+                _ => RunTermination::Failed(ErrKind::RuntimeError),
+            },
+            Err(RuntimeError::Validation(_)) => RunTermination::Failed(ErrKind::RuntimeError),
         }
     }
 }

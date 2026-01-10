@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::action::{ActionRegistry, ActionValidationError};
 use crate::cluster::{InputMetadata, OutputMetadata, PrimitiveKind, ValueType};
 use crate::common::Value;
+use crate::compute::ComputeError;
 use crate::compute::PrimitiveRegistry as ComputeRegistry;
 use crate::source::SourceRegistry;
 use crate::trigger::TriggerRegistry;
@@ -116,6 +117,16 @@ pub enum ExecError {
         node: String,
         parameter: String,
         value: i64,
+    },
+    ComputeFailed {
+        node: String,
+        id: String,
+        version: String,
+        error: ComputeError,
+    },
+    NonFiniteOutput {
+        node: String,
+        port: String,
     },
     ActionExecutionFailed(ActionValidationError),
     MissingOutput {

@@ -3,27 +3,27 @@ use std::collections::HashMap;
 use crate::common::Value;
 use crate::compute::{ComputeError, ComputePrimitive, ComputePrimitiveManifest, PrimitiveState};
 
-use super::manifest::min_manifest;
+use super::manifest::safe_divide_manifest;
 
-pub struct Min {
+pub struct SafeDivide {
     manifest: ComputePrimitiveManifest,
 }
 
-impl Min {
+impl SafeDivide {
     pub fn new() -> Self {
         Self {
-            manifest: min_manifest(),
+            manifest: safe_divide_manifest(),
         }
     }
 }
 
-impl Default for Min {
+impl Default for SafeDivide {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ComputePrimitive for Min {
+impl ComputePrimitive for SafeDivide {
     fn manifest(&self) -> &ComputePrimitiveManifest {
         &self.manifest
     }
@@ -31,7 +31,7 @@ impl ComputePrimitive for Min {
     fn compute(
         &self,
         inputs: &HashMap<String, Value>,
-        _parameters: &HashMap<String, Value>,
+        parameters: &HashMap<String, Value>,
         _state: Option<&mut PrimitiveState>,
     ) -> Result<HashMap<String, Value>, ComputeError> {
         let a = inputs
@@ -42,10 +42,25 @@ impl ComputePrimitive for Min {
             .get("b")
             .and_then(|v| v.as_number())
             .expect("missing required numeric input 'b'");
+        let fallback = parameters
+            .get("fallback")
+            .and_then(|v| v.as_number())
+            .expect("missing required parameter 'fallback'");
+
+        let result = if b == 0.0 {
+            fallback
+        } else {
+            let r = a / b;
+            if r.is_finite() {
+                r
+            } else {
+                fallback
+            }
+        };
 
         Ok(HashMap::from([(
             "result".to_string(),
-            Value::Number(a.min(b)),
+            Value::Number(result),
         )]))
     }
 }

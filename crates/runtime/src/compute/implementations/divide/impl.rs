@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::common::Value;
-use crate::compute::{ComputePrimitive, ComputePrimitiveManifest, PrimitiveState};
+use crate::compute::{ComputeError, ComputePrimitive, ComputePrimitiveManifest, PrimitiveState};
 
 use super::manifest::divide_manifest;
 
@@ -33,7 +33,7 @@ impl ComputePrimitive for Divide {
         inputs: &HashMap<String, Value>,
         _parameters: &HashMap<String, Value>,
         _state: Option<&mut PrimitiveState>,
-    ) -> HashMap<String, Value> {
+    ) -> Result<HashMap<String, Value>, ComputeError> {
         let a = inputs
             .get("a")
             .and_then(|v| v.as_number())
@@ -43,11 +43,19 @@ impl ComputePrimitive for Divide {
             .and_then(|v| v.as_number())
             .expect("missing required numeric input 'b'");
 
-        // TODO(B.2): IEEE 754 divide-by-zero produces inf/-inf/NaN, not an error.
-        // Risks: NaN propagates silently; NaN comparisons are non-deterministic
-        // for replay; downstream branching on NaN may diverge across runs.
-        // Decision deferred to v1: either "structured error on divisor==0"
-        // vs "allow IEEE + canonicalization rules". See issue #7.
-        HashMap::from([("result".to_string(), Value::Number(a / b))])
+        // B.2: Strict divide - error on zero or non-finite result.
+        if b == 0.0 {
+            return Err(ComputeError::DivisionByZero);
+        }
+
+        let result = a / b;
+        if !result.is_finite() {
+            return Err(ComputeError::NonFiniteResult);
+        }
+
+        Ok(HashMap::from([(
+            "result".to_string(),
+            Value::Number(result),
+        )]))
     }
 }
