@@ -79,3 +79,29 @@ fn context_number_source_reads_context_value() {
     let outputs = source.produce(&HashMap::new(), &ctx);
     assert_eq!(outputs.get("value"), Some(&Value::Number(9.5)));
 }
+
+#[test]
+fn context_number_source_missing_key_returns_default() {
+    let source = ContextNumberSource::new();
+    // Context has no "x" key
+    let ctx = ExecutionContext::from_values(HashMap::from([(
+        "other_key".to_string(),
+        Value::Number(99.0),
+    )]));
+
+    let outputs = source.produce(&HashMap::new(), &ctx);
+    assert_eq!(outputs.get("value"), Some(&Value::Number(0.0)));
+}
+
+#[test]
+fn context_number_source_wrong_type_returns_default() {
+    let source = ContextNumberSource::new();
+    // Context has "x" key but wrong type (String instead of Number)
+    let ctx = ExecutionContext::from_values(HashMap::from([(
+        "x".to_string(),
+        Value::String("not a number".to_string()),
+    )]));
+
+    let outputs = source.produce(&HashMap::new(), &ctx);
+    assert_eq!(outputs.get("value"), Some(&Value::Number(0.0)));
+}

@@ -22,9 +22,48 @@ It is NOT:
 Downstream systems depend on this library.
 This library depends on nothing downstream.
 
+## Payload Contract (v0)
+
+### Context Value Access
+
+Sources may read values from `ExecutionContext` via the `value(key)` method. The context is populated from event payloads by the adapter layer.
+
+### Behavior
+
+| Condition | Behavior |
+|-----------|----------|
+| Key exists, correct type | Returns value |
+| Key missing | Returns type-specific default (0.0 for numbers) |
+| Key exists, wrong type | Returns type-specific default (0.0 for numbers) |
+
+### Supported Types
+
+| Type | Default | Access Pattern |
+|------|---------|----------------|
+| Number (f64) | 0.0 | `ctx.value(key).and_then(\|v\| v.as_number())` |
+
+### Payload Hydration Path
+
+```
+ExternalEvent::with_payload()
+    → context_from_payload()
+    → payload_values() [JSON → Value]
+    → RuntimeExecutionContext::from_values()
+    → Source::produce(&params, &ctx)
+```
+
+### Key Naming
+
+Context keys are strings. Current implementations:
+- `context_number_source`: reads key `"x"`
+
+### Determinism
+
+All default behaviors are deterministic. Missing or malformed payload data produces consistent outputs across replay.
+
 ## Core stdlib wiring
 
-- Sources: `number_source`, `boolean_source`
+- Sources: `number_source`, `boolean_source`, `string_source`, `context_number_source`
 - Computes: `const_number`, `const_bool`, `add`, `subtract`, `multiply`, `divide`, `negate`, `gt`, `lt`, `eq`, `neq`, `and`, `or`, `not`, `select`
 - Trigger: `emit_if_true`
 - Actions: `ack_action`, `annotate_action`
