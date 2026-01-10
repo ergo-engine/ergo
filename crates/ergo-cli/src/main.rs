@@ -6,7 +6,9 @@ use ergo_adapter::{EventId, ExternalEvent, ExternalEventKind, GraphId, RuntimeHa
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
 use ergo_supervisor::demo::demo_1;
 use ergo_supervisor::replay::replay_checked;
-use ergo_supervisor::{CaptureBundle, CapturingSession, Constraints, DecisionLog, DecisionLogEntry};
+use ergo_supervisor::{
+    CaptureBundle, CapturingSession, Constraints, DecisionLog, DecisionLogEntry,
+};
 
 const DEMO_GRAPH_ID: &str = "demo_1";
 const DEFAULT_REPLAY_PATH: &str = "target/demo-1-replay.json";
@@ -51,12 +53,7 @@ fn ensure_no_extra_args(args: &mut impl Iterator<Item = String>) -> Result<(), S
 }
 
 fn usage() -> String {
-    [
-        "usage:",
-        "  ergo run demo-1",
-        "  ergo replay <path>",
-    ]
-    .join("\n")
+    ["usage:", "  ergo run demo-1", "  ergo replay <path>"].join("\n")
 }
 
 fn run_demo_1() -> Result<(), String> {
@@ -94,8 +91,7 @@ fn run_demo_1() -> Result<(), String> {
 
     let artifact_path = PathBuf::from(DEFAULT_REPLAY_PATH);
     if let Some(parent) = artifact_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("create replay directory: {err}"))?;
+        fs::create_dir_all(parent).map_err(|err| format!("create replay directory: {err}"))?;
     }
 
     let data = serde_json::to_string_pretty(&bundle)
