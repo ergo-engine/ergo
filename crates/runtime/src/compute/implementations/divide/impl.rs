@@ -28,6 +28,14 @@ impl ComputePrimitive for Divide {
         &self.manifest
     }
 
+    /// B.2: Strict divide - math-true semantics.
+    ///
+    /// Returns `Err(DivisionByZero)` when `b == 0.0`.
+    /// Returns `Err(NonFiniteResult)` when result overflows to inf.
+    ///
+    /// For fallback-on-zero behavior, use `safe_divide`.
+    ///
+    /// See: B.2 in PHASE_INVARIANTS.md
     fn compute(
         &self,
         inputs: &HashMap<String, Value>,

@@ -8,7 +8,7 @@
 
 The v0 kernel includes domain-neutral standard library atoms.
 
-Total stdlib implementations: 29
+Total stdlib implementations: 30
 
 ### Sources (4)
 
@@ -17,14 +17,15 @@ Total stdlib implementations: 29
 - `string_source` — Produces a configured string value (STRING-SOURCE-1)
 - `context_number_source` — Reads number from ExecutionContext (CONTEXT-NUMBER-SOURCE-1)
 
-### Computes (22)
+### Computes (23)
 
 - `const_number` — Outputs a constant number
 - `const_bool` — Outputs a constant boolean
 - `add` — Adds two numbers
 - `subtract` — Subtracts two numbers
 - `multiply` — Multiplies two numbers
-- `divide` — Divides two numbers
+- `divide` — Division (v0.2.0: strict, errors on zero/non-finite per B.2)
+- `safe_divide` — Division with required fallback for zero/non-finite (B.2)
 - `abs` — Absolute value
 - `negate` — Negates a number
 - `gt` — Greater than comparison

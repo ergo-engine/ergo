@@ -28,6 +28,16 @@ impl ComputePrimitive for SafeDivide {
         &self.manifest
     }
 
+    /// Safe divide with explicit fallback.
+    ///
+    /// Returns `fallback` when:
+    /// - `b == 0.0` (would be division by zero)
+    /// - Result is non-finite (overflow)
+    ///
+    /// This implementation never errors for zero/non-finite conditions.
+    /// The author explicitly chooses the fallback value, encoding domain policy.
+    ///
+    /// See: B.2 in PHASE_INVARIANTS.md
     fn compute(
         &self,
         inputs: &HashMap<String, Value>,

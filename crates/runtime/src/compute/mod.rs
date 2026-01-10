@@ -48,9 +48,17 @@ pub struct PrimitiveState {
     pub data: HashMap<String, Value>,
 }
 
+/// Errors that can occur during compute primitive execution.
+///
+/// These represent semantic failures in computation, not infrastructure failures.
+/// They map to `ErrKind::SemanticError` and are non-retryable.
+///
+/// See: B.2 in PHASE_INVARIANTS.md
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComputeError {
+    /// B.2: Division by zero is undefined.
     DivisionByZero,
+    /// B.2: Result overflowed to infinity or produced NaN.
     NonFiniteResult,
 }
 

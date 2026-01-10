@@ -284,7 +284,15 @@ fn execute_action(
         .collect())
 }
 
-/// NUM-FINITE-1: Reject non-finite numeric outputs before they can propagate.
+/// NUM-FINITE-1: Reject non-finite numeric outputs before propagation.
+///
+/// This guard ensures that NaN, inf, and -inf cannot reach triggers or actions,
+/// preventing counterintuitive behavior (e.g., NaN comparisons always return false).
+///
+/// Called after compute and source outputs are produced, before values enter
+/// the node_outputs map.
+///
+/// See: NUM-FINITE-1 in PHASE_INVARIANTS.md
 fn ensure_finite(
     node: &str,
     outputs: &HashMap<String, crate::common::Value>,

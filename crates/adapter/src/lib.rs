@@ -47,6 +47,12 @@ pub enum ErrKind {
     AdapterUnavailable,
     ValidationFailed,
     RuntimeError,
+    /// Deterministic semantic failures that should not be retried.
+    ///
+    /// Examples: DivisionByZero, NonFiniteOutput.
+    /// These will fail identically on retry, so retrying is pathological.
+    ///
+    /// See: B.2 in PHASE_INVARIANTS.md
     SemanticError,
     DeadlineExceeded,
     Cancelled,
