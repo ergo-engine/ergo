@@ -441,7 +441,7 @@ additional capture mechanism is required.
 **Status:** Documented
 **Enforcement:** Convention
 
-The `crates/ui-authoring` crate is a **reference client** demonstrating how to construct and emit `ExpandedGraph` payloads. It is NOT:
+The `crates/reference-client` crate is a **reference client** demonstrating how to construct and emit `ExpandedGraph` payloads. It is NOT:
 
 - A canonical contract implementation
 - An enforcement boundary
@@ -551,5 +551,5 @@ Changes to this document require the same review bar as changes to frozen specs.
 | v0.17 | 2025-01-05 | Claude Code | X.11 added: guard Int→f64 conversion for exact representability (Codex audit finding) |
 | v0.18 | 2025-01-05 | Claude Code | REP-1 strengthened: point-of-use hash verification in supervisor replay path (REP-1b) |
 | v0.19 | 2025-01-05 | Claude Code | Added SUP-TICK-1, RTHANDLE-ID-1 (orchestration); REP-SCOPE, SOURCE-TRUST (replay scope/trust documentation) |
-| v0.20 | 2026-01-05 | Claude Code | Added UI-REF-CLIENT-1: ui-authoring reframed as reference client |
+| v0.20 | 2026-01-05 | Claude Code | Added UI-REF-CLIENT-1: reference-client reframed as reference client |
 | v0.21 | 2026-01-05 | Claude Code | Added X.12 / STRING-SOURCE-1: ValueType surface coverage complete with string_source primitive |

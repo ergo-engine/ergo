@@ -11,7 +11,7 @@
 - **[UI_RUNTIME_CONTRACT.md](../CONTRACTS/UI_RUNTIME_CONTRACT.md)**
 - Defines: ExpandedGraph, ExpandedNode, ExpandedEdge structures
 - The UI emits this structure; runtime validates and executes
-- TypeScript types in ui-authoring are best-effort mirrors, not canonical
+- TypeScript types in reference-client are best-effort mirrors, not canonical
 
 ### Adapter Contract
 
@@ -33,7 +33,7 @@
 
 ## Trust Boundary Notice
 
-`crates/ui-authoring` is a **Reference Client**, not a canonical implementation.
+`crates/reference-client` is a **Reference Client**, not a canonical implementation.
 
 Production clients must:
 

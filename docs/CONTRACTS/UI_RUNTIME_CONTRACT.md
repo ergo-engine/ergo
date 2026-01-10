@@ -16,7 +16,7 @@ This document defines the exact data structure a UI must emit to drive the Primi
 
 ## Trust Boundary Notice
 
-**`crates/ui-authoring` is a Reference Client, not a canonical contract implementation.**
+**`crates/reference-client` is a Reference Client, not a canonical contract implementation.**
 
 - **Authority:** Runtime contract authority is Rust types in `crates/runtime/src/cluster.rs` + this document
 - **TypeScript mirror:** `contractTypes.ts` is a best-effort mirror; not enforcement

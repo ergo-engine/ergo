@@ -290,7 +290,7 @@ PR #20 (feat/string-source)
 
 ### Finding
 
-`crates/ui-authoring` was implicitly treated as a canonical contract implementation. Audit revealed:
+`crates/reference-client` was implicitly treated as a canonical contract implementation. Audit revealed:
 
 - TypeScript types are incomplete (InputPortSpec, RuntimeEvent)
 - No TypeScript type checking (missing tsconfig.json)

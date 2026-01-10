@@ -9,7 +9,7 @@ members = [
 
 # UI is intentionally excluded (non-Rust)
 exclude = [
-    "crates/ui-authoring",
+    "crates/reference-client",
 ]
 
 [workspace.package]

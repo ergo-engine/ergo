@@ -42,7 +42,7 @@ This directory contains external interface specifications.
 
 ## Reference Client Notice
 
-`crates/ui-authoring` is a **reference client**, not a canonical contract implementation.
+`crates/reference-client` is a **reference client**, not a canonical contract implementation.
 
 Production clients must:
 

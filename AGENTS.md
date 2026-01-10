@@ -12,7 +12,7 @@ These protocols define your authority boundaries, escalation rules, and the mult
 
 ## Project Structure & Module Organization
 - `crates/runtime/`, `crates/adapter/`, `crates/supervisor/`: core Rust crates.
-- `crates/ui-authoring/`: Vite/React authoring UI (excluded from Cargo workspace).
+- `crates/reference-client/`: Vite/React authoring UI (excluded from Cargo workspace).
 - `docs/`: authoritative specs and contracts (`docs/INDEX.md`); `target/` is generated.
 
 ## Build, Test, and Development Commands
@@ -22,7 +22,7 @@ Rust (run from repo root):
 - `cargo test -p ergo-runtime` — run a single crate.
 - `cargo fmt` — format with rustfmt.
 
-UI (run from `crates/ui-authoring`):
+UI (run from `crates/reference-client`):
 - `npm install` — install dependencies.
 - `npm run dev` — start Vite dev server.
 - `npm run build` — production build.
@@ -31,7 +31,7 @@ UI (run from `crates/ui-authoring`):
 ## Coding Style & Naming Conventions
 - Rust 2021; follow rustfmt defaults and standard Rust casing (`snake_case` modules/functions, `PascalCase` types).
 - Core layers must stay domain-neutral; exceptions require PR justification (see `docs/CANONICAL/TERMINOLOGY.md`).
-- UI components in `crates/ui-authoring/src/ui` use `PascalCase.tsx`.
+- UI components in `crates/reference-client/src/ui` use `PascalCase.tsx`.
 
 ## Testing Guidelines
 - Unit tests live alongside code with `#[test]`; integration tests are in `crates/supervisor/tests`.

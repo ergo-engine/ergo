@@ -69,7 +69,7 @@ New semantics are allowed, but must be:
 
 ## Reference Clients
 
-`crates/ui-authoring` is a reference client, not a core component:
+`crates/reference-client` is a reference client, not a core component:
 - It must reflect contracts accurately
 - It must not define runtime semantics
 - Any "helpful UI behavior" must be explicit and versioned/documented as UI-only
