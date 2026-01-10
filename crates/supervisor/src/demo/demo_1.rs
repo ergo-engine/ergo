@@ -13,6 +13,12 @@ use ergo_runtime::runtime::{
 
 use crate::EpisodeId;
 
+const LEFT_A: f64 = 4.0;
+const LEFT_B: f64 = 2.0;
+const RIGHT_A: f64 = 1.0;
+const RIGHT_B: f64 = 1.0;
+pub const CONTEXT_NUMBER_KEY: &str = "x";
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Demo1Summary {
     pub sum_left: f64,
@@ -33,7 +39,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
                 impl_id: "number_source".to_string(),
                 version: "0.1.0".to_string(),
             },
-            parameters: HashMap::from([("value".to_string(), ParameterValue::Number(4.0))]),
+            parameters: HashMap::from([("value".to_string(), ParameterValue::Number(LEFT_A))]),
         },
     );
 
@@ -46,7 +52,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
                 impl_id: "number_source".to_string(),
                 version: "0.1.0".to_string(),
             },
-            parameters: HashMap::from([("value".to_string(), ParameterValue::Number(2.0))]),
+            parameters: HashMap::from([("value".to_string(), ParameterValue::Number(LEFT_B))]),
         },
     );
 
@@ -59,7 +65,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
                 impl_id: "number_source".to_string(),
                 version: "0.1.0".to_string(),
             },
-            parameters: HashMap::from([("value".to_string(), ParameterValue::Number(1.0))]),
+            parameters: HashMap::from([("value".to_string(), ParameterValue::Number(RIGHT_A))]),
         },
     );
 
@@ -72,7 +78,20 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
                 impl_id: "number_source".to_string(),
                 version: "0.1.0".to_string(),
             },
-            parameters: HashMap::from([("value".to_string(), ParameterValue::Number(1.0))]),
+            parameters: HashMap::from([("value".to_string(), ParameterValue::Number(RIGHT_B))]),
+        },
+    );
+
+    nodes.insert(
+        "src_ctx_x".to_string(),
+        ExpandedNode {
+            runtime_id: "src_ctx_x".to_string(),
+            authoring_path: vec![],
+            implementation: ImplementationInstance {
+                impl_id: "context_number_source".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
         },
     );
 
@@ -93,6 +112,19 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
         "add_right".to_string(),
         ExpandedNode {
             runtime_id: "add_right".to_string(),
+            authoring_path: vec![],
+            implementation: ImplementationInstance {
+                impl_id: "add".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+
+    nodes.insert(
+        "add_right_ctx".to_string(),
+        ExpandedNode {
+            runtime_id: "add_right_ctx".to_string(),
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "add".to_string(),
@@ -256,6 +288,26 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
         },
         ExpandedEdge {
             from: ExpandedEndpoint::NodePort {
+                node_id: "add_right".to_string(),
+                port_name: "result".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "add_right_ctx".to_string(),
+                port_name: "a".to_string(),
+            },
+        },
+        ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "src_ctx_x".to_string(),
+                port_name: "value".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "add_right_ctx".to_string(),
+                port_name: "b".to_string(),
+            },
+        },
+        ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
                 node_id: "add_left".to_string(),
                 port_name: "result".to_string(),
             },
@@ -266,7 +318,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
         },
         ExpandedEdge {
             from: ExpandedEndpoint::NodePort {
-                node_id: "add_right".to_string(),
+                node_id: "add_right_ctx".to_string(),
                 port_name: "result".to_string(),
             },
             to: ExpandedEndpoint::NodePort {
@@ -276,7 +328,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
         },
         ExpandedEdge {
             from: ExpandedEndpoint::NodePort {
-                node_id: "add_right".to_string(),
+                node_id: "add_right_ctx".to_string(),
                 port_name: "result".to_string(),
             },
             to: ExpandedEndpoint::NodePort {
@@ -396,6 +448,33 @@ pub fn summarize_report(report: &ExecutionReport) -> Demo1Summary {
     }
 }
 
+pub fn summary_for_context_value(context_value: Option<f64>) -> Demo1Summary {
+    let sum_left = LEFT_A + LEFT_B;
+    let sum_right = RIGHT_A + RIGHT_B;
+    let sum_total = sum_left + sum_right;
+    let context = context_value.unwrap_or(0.0);
+    let right_with_context = sum_right + context;
+
+    let action_a_outcome = if sum_left > right_with_context {
+        ActionOutcome::Completed
+    } else {
+        ActionOutcome::Skipped
+    };
+
+    let action_b_outcome = if right_with_context > sum_left {
+        ActionOutcome::Completed
+    } else {
+        ActionOutcome::Skipped
+    };
+
+    Demo1Summary {
+        sum_left,
+        sum_total,
+        action_a_outcome,
+        action_b_outcome,
+    }
+}
+
 pub fn compute_summary(
     graph: &ExpandedGraph,
     catalog: &CorePrimitiveCatalog,
@@ -407,8 +486,13 @@ pub fn compute_summary(
         triggers: &registries.triggers,
         actions: &registries.actions,
     };
-    let report = run(graph, catalog, &runtime_registries, &ExecutionContext)
-        .expect("demo graph should execute");
+    let report = run(
+        graph,
+        catalog,
+        &runtime_registries,
+        &ExecutionContext::default(),
+    )
+    .expect("demo graph should execute");
     summarize_report(&report)
 }
 

@@ -21,8 +21,12 @@ use crate::compute::implementations::{
 };
 use crate::compute::{ComputePrimitiveManifest, PrimitiveRegistry as ComputeRegistry};
 use crate::source::{
-    implementations::{boolean_source_manifest, number_source_manifest, string_source_manifest},
-    BooleanSource, NumberSource, SourceRegistry, SourceValidationError, StringSource,
+    implementations::{
+        boolean_source_manifest, context_number_source_manifest, number_source_manifest,
+        string_source_manifest,
+    },
+    BooleanSource, ContextNumberSource, NumberSource, SourceRegistry, SourceValidationError,
+    StringSource,
 };
 use crate::trigger::{
     implementations::emit_if_true::emit_if_true_manifest, EmitIfTrue, TriggerRegistry,
@@ -64,6 +68,9 @@ pub fn core_registries() -> Result<CoreRegistries, CoreRegistrationError> {
     let mut sources = SourceRegistry::new();
     sources
         .register(Box::new(NumberSource::new()))
+        .map_err(CoreRegistrationError::Source)?;
+    sources
+        .register(Box::new(ContextNumberSource::new()))
         .map_err(CoreRegistrationError::Source)?;
     sources
         .register(Box::new(BooleanSource::new()))
@@ -384,6 +391,7 @@ pub fn build_core_catalog() -> CorePrimitiveCatalog {
 
     // Sources
     catalog.register_source(number_source_manifest());
+    catalog.register_source(context_number_source_manifest());
     catalog.register_source(boolean_source_manifest());
     catalog.register_source(string_source_manifest());
 

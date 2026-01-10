@@ -55,7 +55,7 @@ let expanded = ExpandedGraph { /* nodes + edges per diagram above */ };
 let catalog = build_core_catalog();
 let regs = core_registries().unwrap();
 let registries = Registries { sources: &regs.sources, computes: &regs.computes, triggers: &regs.triggers, actions: &regs.actions };
-let ctx = ExecutionContext;
+let ctx = ExecutionContext::default();
 let report = run(&expanded, &catalog, &registries, &ctx)?;
 ```
 

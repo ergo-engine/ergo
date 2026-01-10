@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::action::{ActionRegistry, ActionValidationError};
 use crate::cluster::{InputMetadata, OutputMetadata, PrimitiveKind, ValueType};
+use crate::common::Value;
 use crate::compute::PrimitiveRegistry as ComputeRegistry;
 use crate::source::SourceRegistry;
 use crate::trigger::TriggerRegistry;
@@ -127,9 +128,21 @@ pub enum ExecError {
 }
 
 /// Execution context for runtime invocation.
-/// Currently a unit struct; future observability metadata (trace_id, run_id) will be added here.
+/// Adapter-provided context values are exposed to context-aware sources.
 #[derive(Debug, Clone, Default)]
-pub struct ExecutionContext;
+pub struct ExecutionContext {
+    values: HashMap<String, Value>,
+}
+
+impl ExecutionContext {
+    pub fn from_values(values: HashMap<String, Value>) -> Self {
+        Self { values }
+    }
+
+    pub fn value(&self, key: &str) -> Option<&Value> {
+        self.values.get(key)
+    }
+}
 
 pub struct Registries<'a> {
     pub sources: &'a SourceRegistry,

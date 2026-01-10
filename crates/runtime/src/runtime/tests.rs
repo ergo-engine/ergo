@@ -114,6 +114,7 @@ impl SourcePrimitive for ConstSource {
     fn produce(
         &self,
         _parameters: &HashMap<String, crate::source::ParameterValue>,
+        _ctx: &ExecutionContext,
     ) -> HashMap<String, crate::common::Value> {
         HashMap::from([("out".to_string(), crate::common::Value::Number(self.value))])
     }
@@ -224,7 +225,7 @@ fn unified_runtime_executes_compute_graph() {
         actions: &crate::action::ActionRegistry::new(),
     };
 
-    let ctx = ExecutionContext;
+    let ctx = ExecutionContext::default();
 
     let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
     assert_eq!(report.outputs.get("sum"), Some(&RuntimeValue::Number(7.0)));
@@ -291,7 +292,7 @@ fn parameters_flow_into_compute_execution() {
         actions: &action::ActionRegistry::new(),
     };
 
-    let ctx = ExecutionContext;
+    let ctx = ExecutionContext::default();
 
     let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
     assert_eq!(report.outputs.get("out"), Some(&RuntimeValue::Number(4.5)));
@@ -435,7 +436,7 @@ fn hello_world_graph_executes_with_core_catalog_and_registries() {
         actions: &registries.actions,
     };
 
-    let ctx = ExecutionContext;
+    let ctx = ExecutionContext::default();
 
     let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
     assert_eq!(
@@ -724,7 +725,7 @@ fn r7_action_skipped_when_trigger_not_emitted() {
         actions: &registries.actions,
     };
 
-    let ctx = ExecutionContext;
+    let ctx = ExecutionContext::default();
 
     let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
 
@@ -849,7 +850,7 @@ fn execute_returns_error_when_topology_references_missing_node() {
         actions: &actions,
     };
 
-    let ctx = ExecutionContext;
+    let ctx = ExecutionContext::default();
 
     let err = crate::runtime::execute(&graph, &registries, &ctx).unwrap_err();
     match err {
@@ -921,7 +922,7 @@ fn int_parameter_within_f64_exact_range_allowed() {
         actions: &action::ActionRegistry::new(),
     };
 
-    let ctx = ExecutionContext;
+    let ctx = ExecutionContext::default();
 
     let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
     // 2^53 converts exactly to f64
@@ -994,7 +995,7 @@ fn int_parameter_out_of_range_rejected() {
         actions: &action::ActionRegistry::new(),
     };
 
-    let ctx = ExecutionContext;
+    let ctx = ExecutionContext::default();
 
     let result = run(&expanded, &catalog, &registries, &ctx);
     assert!(
@@ -1079,7 +1080,7 @@ fn int_parameter_i64_min_rejected() {
         actions: &action::ActionRegistry::new(),
     };
 
-    let ctx = ExecutionContext;
+    let ctx = ExecutionContext::default();
 
     // Must not panic, must return error
     let result = run(&expanded, &catalog, &registries, &ctx);
