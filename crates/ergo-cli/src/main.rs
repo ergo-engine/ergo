@@ -234,8 +234,13 @@ fn run_fixture(path: &Path, output_override: Option<&Path>) -> Result<PathBuf, S
     }
 
     let bundle = session.into_bundle();
-    let summary = demo_1::compute_summary(&graph, &catalog, &core_registries);
-    print_fixture_summaries(&episodes, &bundle.decisions, &summary)?;
+    let (action_a_outcome, action_b_outcome) = demo_1_action_outcomes();
+    print_fixture_summaries(
+        &episodes,
+        &bundle.decisions,
+        &action_a_outcome,
+        &action_b_outcome,
+    )?;
 
     let artifact_path = output_override
         .map(PathBuf::from)
@@ -248,7 +253,8 @@ fn run_fixture(path: &Path, output_override: Option<&Path>) -> Result<PathBuf, S
 fn print_fixture_summaries(
     episodes: &[EpisodeInfo],
     decisions: &[EpisodeInvocationRecord],
-    summary: &demo_1::Demo1Summary,
+    action_a_outcome: &ActionOutcome,
+    action_b_outcome: &ActionOutcome,
 ) -> Result<(), String> {
     let mut decisions_by_event: HashMap<String, Vec<Decision>> = HashMap::new();
     for record in decisions {
@@ -274,54 +280,74 @@ fn print_fixture_summaries(
             }
         }
 
-        let decision_label = if invoked {
-            "invoke"
+        let decision = if invoked {
+            Decision::Invoke
         } else if deferred {
-            "defer"
+            Decision::Defer
         } else {
-            "none"
+            Decision::Skip
         };
-        let action_a_status = action_status(invoked, summary.action_a_outcome.clone());
-        let action_b_status = action_status(invoked, summary.action_b_outcome.clone());
-        let trigger_a_status = trigger_status(invoked, summary.action_a_outcome.clone());
-        let trigger_b_status = trigger_status(invoked, summary.action_b_outcome.clone());
 
         println!(
-            "episode {}: decision={} TriggerA={} TriggerB={} ActionA={} ActionB={}",
-            episode.label,
-            decision_label,
-            trigger_a_status,
-            trigger_b_status,
-            action_a_status,
-            action_b_status
+            "{}",
+            format_decision_summary(
+                &episode.label,
+                decision,
+                action_a_outcome,
+                action_b_outcome
+            )
         );
     }
 
     Ok(())
 }
 
-fn action_status(invoked: bool, outcome: ActionOutcome) -> &'static str {
-    if !invoked {
-        return "deferred";
-    }
+fn format_decision_summary(
+    label: &str,
+    decision: Decision,
+    action_a_outcome: &ActionOutcome,
+    action_b_outcome: &ActionOutcome,
+) -> String {
+    let decision_label = match decision {
+        Decision::Invoke => "invoke",
+        Decision::Defer => "defer",
+        Decision::Skip => "skip",
+    };
 
-    if outcome == ActionOutcome::Skipped {
+    let (trigger_a_status, trigger_b_status, action_a_status, action_b_status) = match decision {
+        Decision::Invoke => (
+            trigger_status(action_a_outcome),
+            trigger_status(action_b_outcome),
+            action_status(action_a_outcome),
+            action_status(action_b_outcome),
+        ),
+        _ => ("deferred", "deferred", "deferred", "deferred"),
+    };
+
+    format!(
+        "episode {}: decision={} TriggerA={} TriggerB={} ActionA={} ActionB={}",
+        label, decision_label, trigger_a_status, trigger_b_status, action_a_status, action_b_status
+    )
+}
+
+fn action_status(outcome: &ActionOutcome) -> &'static str {
+    if *outcome == ActionOutcome::Skipped {
         "skipped"
     } else {
         "executed"
     }
 }
 
-fn trigger_status(invoked: bool, outcome: ActionOutcome) -> &'static str {
-    if !invoked {
-        return "deferred";
-    }
-
-    if outcome == ActionOutcome::Skipped {
+fn trigger_status(outcome: &ActionOutcome) -> &'static str {
+    if *outcome == ActionOutcome::Skipped {
         "not_emitted"
     } else {
         "emitted"
     }
+}
+
+fn demo_1_action_outcomes() -> (ActionOutcome, ActionOutcome) {
+    (ActionOutcome::Completed, ActionOutcome::Skipped)
 }
 
 fn replay_demo_1(path: &Path) -> Result<(), String> {
@@ -346,12 +372,19 @@ fn replay_demo_1(path: &Path) -> Result<(), String> {
         Err(_) => false,
     };
 
-    let summary = demo_1::compute_summary(&graph, &catalog, &core_registries);
-    for record in &bundle.decisions {
-        println!(
-            "{}",
-            demo_1::format_episode_summary(record.episode_id, &record.event_id, &summary)
-        );
+    if let Ok(records) = &replay_result {
+        let (action_a_outcome, action_b_outcome) = demo_1_action_outcomes();
+        for record in records {
+            println!(
+                "{}",
+                format_decision_summary(
+                    &record.episode_id.as_u64().to_string(),
+                    record.decision,
+                    &action_a_outcome,
+                    &action_b_outcome
+                )
+            );
+        }
     }
 
     if let Err(err) = replay_result {
