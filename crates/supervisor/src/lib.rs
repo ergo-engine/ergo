@@ -16,6 +16,9 @@ pub(crate) const CAPTURE_FORMAT_VERSION: &str = "v0";
 mod capture;
 pub mod replay;
 
+#[cfg(any(test, feature = "demo"))]
+pub mod demo;
+
 pub use capture::{CapturingDecisionLog, CapturingSession};
 
 /// SUP-7: DecisionLog is write-only. No read/query surface is ever exposed.

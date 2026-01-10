@@ -1,17 +1,15 @@
 [package]
-name = "ergo-supervisor"
+name = "ergo-cli"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
+[[bin]]
+name = "ergo"
+path = "src/main.rs"
+
 [dependencies]
 ergo-adapter = { path = "../adapter" }
 ergo-runtime = { path = "../runtime" }
-serde = { version = "1.0", features = ["derive"] }
+ergo-supervisor = { path = "../supervisor", features = ["demo"] }
 serde_json = "1.0"
-
-[features]
-demo = []
-
-[dev-dependencies]
-ergo-supervisor = { path = ".", features = ["demo"] }
