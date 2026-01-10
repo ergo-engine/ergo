@@ -1,8 +1,8 @@
 ---
 name: Doctrine Gap
-description: Track gaps between doctrine and implementation (not a task backlog)
-labels: ["audit-finding"]
+about: Track gaps between doctrine and implementation (not a task backlog)
 title: "[GAP] "
+labels: audit-finding
 ---
 
 <!--
@@ -18,7 +18,7 @@ DO create issues for:
 DO NOT create issues for:
 - Work in the current branch scope
 - Questions needing cross-agent consultation
-- Structural forks (escalate per COLLABORATION_PROTOCOLS.md §9 instead)
+- Structural forks (escalate per COLLABORATION_PROTOCOLS.md §10 instead)
 -->
 
 ## Where

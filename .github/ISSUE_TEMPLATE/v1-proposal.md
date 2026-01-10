@@ -1,8 +1,8 @@
 ---
 name: v1 Proposal
-description: Propose new semantics beyond the frozen v0 kernel
-labels: ["v1-proposal", "needs-specification"]
+about: Propose new semantics beyond the frozen v0 kernel
 title: "[v1] "
+labels: v1-proposal
 ---
 
 <!--
