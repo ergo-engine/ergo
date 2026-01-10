@@ -10,6 +10,7 @@ use ergo_runtime::runtime::Registries;
 use serde::{Deserialize, Serialize};
 
 pub mod capture;
+pub mod fixture;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]

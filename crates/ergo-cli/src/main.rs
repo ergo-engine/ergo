@@ -1,47 +1,23 @@
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use ergo_adapter::fixture;
 use ergo_adapter::{
-    EventId, EventPayload, EventTime, ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
+    EventId, EventPayload, ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
 };
 use ergo_runtime::action::ActionOutcome;
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
 use ergo_supervisor::demo::demo_1;
+use ergo_supervisor::fixture_runner;
 use ergo_supervisor::replay::replay_checked;
 use ergo_supervisor::{
     CaptureBundle, CapturingSession, Constraints, Decision, DecisionLog, DecisionLogEntry,
-    EpisodeInvocationRecord,
 };
-use serde::Deserialize;
 
 const DEMO_GRAPH_ID: &str = "demo_1";
 const DEFAULT_REPLAY_PATH: &str = "target/demo-1-replay.json";
-
-#[derive(Debug)]
-struct EpisodeInfo {
-    label: String,
-    event_ids: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum FixtureRecord {
-    EpisodeStart { id: Option<String> },
-    Event { event: FixtureEvent },
-}
-
-#[derive(Debug, Deserialize)]
-struct FixtureEvent {
-    #[serde(rename = "type")]
-    kind: ExternalEventKind,
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    payload: Option<serde_json::Value>,
-}
 
 struct NullLog;
 
@@ -97,6 +73,11 @@ fn usage() -> String {
     .join("\n")
 }
 
+fn load_bundle(path: &Path) -> Result<CaptureBundle, String> {
+    let data = fs::read_to_string(path).map_err(|err| format!("read replay artifact: {err}"))?;
+    serde_json::from_str(&data).map_err(|err| format!("parse replay artifact: {err}"))
+}
+
 fn write_replay_artifact(path: &Path, bundle: &CaptureBundle) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("create replay directory: {err}"))?;
@@ -106,20 +87,6 @@ fn write_replay_artifact(path: &Path, bundle: &CaptureBundle) -> Result<(), Stri
         .map_err(|err| format!("serialize replay bundle: {err}"))?;
     fs::write(path, format!("{data}\n")).map_err(|err| format!("write replay artifact: {err}"))?;
     Ok(())
-}
-
-fn load_bundle(path: &Path) -> Result<CaptureBundle, String> {
-    let data = fs::read_to_string(path).map_err(|err| format!("read replay artifact: {err}"))?;
-    serde_json::from_str(&data).map_err(|err| format!("parse replay artifact: {err}"))
-}
-
-fn fixture_output_path(path: &Path) -> PathBuf {
-    let stem = path
-        .file_stem()
-        .map(|s| s.to_string_lossy())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "fixture".into());
-    PathBuf::from("target").join(format!("{stem}-replay.json"))
 }
 
 fn run_demo_1() -> Result<(), String> {
@@ -168,163 +135,28 @@ fn run_fixture(path: &Path, output_override: Option<&Path>) -> Result<PathBuf, S
     let core_registries =
         Arc::new(core_registries().map_err(|err| format!("core registries: {err:?}"))?);
 
-    let runtime = RuntimeHandle::new(graph.clone(), catalog.clone(), core_registries.clone());
-    let mut session = CapturingSession::new(
-        GraphId::new(DEMO_GRAPH_ID),
-        Constraints::default(),
-        NullLog,
-        runtime,
-    );
-
-    let file = fs::File::open(path).map_err(|err| format!("read fixture: {err}"))?;
-    let reader = io::BufReader::new(file);
-    let mut episodes: Vec<EpisodeInfo> = Vec::new();
-    let mut current_episode: Option<usize> = None;
-    let mut event_counter = 0usize;
-    let mut context_by_event: HashMap<String, Option<f64>> = HashMap::new();
-
-    for (index, line) in reader.lines().enumerate() {
-        let line = line.map_err(|err| format!("read fixture line {}: {err}", index + 1))?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let record: FixtureRecord = serde_json::from_str(trimmed)
-            .map_err(|err| format!("fixture parse error at line {}: {err}", index + 1))?;
-
-        match record {
-            FixtureRecord::EpisodeStart { id } => {
-                let label = id.unwrap_or_else(|| format!("E{}", episodes.len() + 1));
-                episodes.push(EpisodeInfo {
-                    label,
-                    event_ids: Vec::new(),
-                });
-                current_episode = Some(episodes.len() - 1);
-            }
-            FixtureRecord::Event { event } => {
-                if current_episode.is_none() {
-                    let label = format!("E{}", episodes.len() + 1);
-                    episodes.push(EpisodeInfo {
-                        label,
-                        event_ids: Vec::new(),
-                    });
-                    current_episode = Some(episodes.len() - 1);
-                }
-
-                event_counter += 1;
-                let event_id = event
-                    .id
-                    .unwrap_or_else(|| format!("fixture_evt_{}", event_counter));
-                let context_value = event.payload.as_ref().and_then(context_value_from_json);
-                let external = match event.payload {
-                    Some(payload) => {
-                        let data = serde_json::to_vec(&payload).map_err(|err| {
-                            format!("fixture payload encode error at line {}: {err}", index + 1)
-                        })?;
-                        ExternalEvent::with_payload(
-                            EventId::new(event_id.clone()),
-                            event.kind,
-                            EventTime::default(),
-                            EventPayload { data },
-                        )
-                    }
-                    None => ExternalEvent::mechanical(EventId::new(event_id.clone()), event.kind),
-                };
-                context_by_event.insert(event_id.clone(), context_value);
-                session.on_event(external);
-
-                let episode_index = current_episode.expect("episode index set");
-                episodes[episode_index].event_ids.push(event_id);
-            }
-        }
-    }
-
-    if episodes.is_empty() {
-        return Err("fixture contained no episodes".to_string());
-    }
-
-    if episodes.iter().all(|episode| episode.event_ids.is_empty()) {
-        return Err("fixture contained no events".to_string());
-    }
-
-    if let Some(episode) = episodes.iter().find(|episode| episode.event_ids.is_empty()) {
-        return Err(format!("episode '{}' has no events", episode.label));
-    }
-
-    let bundle = session.into_bundle();
-    print_fixture_summaries(&episodes, &bundle.decisions, &context_by_event)?;
-
-    let artifact_path = output_override
+    let items =
+        fixture::parse_fixture(path).map_err(|err| format!("Failed to parse fixture: {err}"))?;
+    let output_path = output_override
         .map(PathBuf::from)
-        .unwrap_or_else(|| fixture_output_path(path));
-    write_replay_artifact(&artifact_path, &bundle)?;
-    println!("replay artifact: {}", artifact_path.display());
-    Ok(artifact_path)
-}
+        .unwrap_or_else(|| fixture::fixture_output_path(path));
+    let result =
+        fixture_runner::run_fixture(items, graph, catalog, core_registries, Some(output_path))?;
 
-fn print_fixture_summaries(
-    episodes: &[EpisodeInfo],
-    decisions: &[EpisodeInvocationRecord],
-    context_by_event: &HashMap<String, Option<f64>>,
-) -> Result<(), String> {
-    let mut decisions_by_event: HashMap<String, Vec<Decision>> = HashMap::new();
-    for record in decisions {
-        decisions_by_event
-            .entry(record.event_id.as_str().to_string())
-            .or_default()
-            .push(record.decision);
-    }
-
-    for episode in episodes {
-        let mut invoked = false;
-        let mut deferred = false;
-        let mut invoked_event: Option<&String> = None;
-
-        for event_id in &episode.event_ids {
-            let entries = decisions_by_event
-                .get(event_id)
-                .ok_or_else(|| format!("no decision for event '{event_id}'"))?;
-            if entries.iter().any(|decision| *decision == Decision::Invoke) {
-                invoked = true;
-                if invoked_event.is_none() {
-                    invoked_event = Some(event_id);
-                }
-            }
-            if entries.iter().any(|decision| *decision == Decision::Defer) {
-                deferred = true;
-            }
-        }
-
-        let decision_label = if invoked {
-            "invoke"
-        } else if deferred {
-            "defer"
-        } else {
-            "none"
-        };
-        let context_value = invoked_event
-            .and_then(|event_id| context_by_event.get(event_id))
-            .copied()
-            .flatten();
-        let summary = demo_1::summary_for_context_value(context_value);
-        let action_a_status = action_status(invoked, summary.action_a_outcome.clone());
-        let action_b_status = action_status(invoked, summary.action_b_outcome.clone());
-        let trigger_a_status = trigger_status(invoked, summary.action_a_outcome.clone());
-        let trigger_b_status = trigger_status(invoked, summary.action_b_outcome.clone());
-
+    for episode in &result.episodes {
         println!(
             "episode {}: decision={} TriggerA={} TriggerB={} ActionA={} ActionB={}",
             episode.label,
-            decision_label,
-            trigger_a_status,
-            trigger_b_status,
-            action_a_status,
-            action_b_status
+            episode.decision,
+            episode.trigger_a,
+            episode.trigger_b,
+            episode.action_a,
+            episode.action_b
         );
     }
 
-    Ok(())
+    println!("replay artifact: {}", result.artifact_path.display());
+    Ok(result.artifact_path)
 }
 
 fn action_status(invoked: bool, outcome: ActionOutcome) -> &'static str {
