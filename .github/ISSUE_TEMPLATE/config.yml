@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Structural Fork / Escalation
+    url: https://github.com/sf19-97/ergo/blob/main/COLLABORATION_PROTOCOLS.md#9-structural-fork-protocol
+    about: For structural forks or cross-agent escalations, follow the protocol in COLLABORATION_PROTOCOLS.md §9 — do not create an issue.
