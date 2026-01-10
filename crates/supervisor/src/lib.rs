@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 pub(crate) const CAPTURE_FORMAT_VERSION: &str = "v0";
 
 mod capture;
+#[cfg(any(test, feature = "demo"))]
+pub mod fixture_runner;
 pub mod replay;
 
 #[cfg(any(test, feature = "demo"))]
