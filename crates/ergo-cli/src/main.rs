@@ -290,12 +290,7 @@ fn print_fixture_summaries(
 
         println!(
             "{}",
-            format_decision_summary(
-                &episode.label,
-                decision,
-                action_a_outcome,
-                action_b_outcome
-            )
+            format_decision_summary(&episode.label, decision, action_a_outcome, action_b_outcome)
         );
     }
 
