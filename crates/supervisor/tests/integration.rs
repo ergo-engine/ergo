@@ -8,11 +8,13 @@ use ergo_adapter::{
     EventId, EventTime, ExternalEvent, ExternalEventKind, FaultRuntimeHandle, GraphId,
     RunTermination, RuntimeHandle,
 };
+use ergo_runtime::action::ActionOutcome;
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
 use ergo_runtime::cluster::{
     ExpandedEdge, ExpandedEndpoint, ExpandedGraph, ExpandedNode, ImplementationInstance,
     OutputPortSpec, OutputRef, ParameterValue,
 };
+use ergo_supervisor::demo::demo_1;
 use ergo_supervisor::replay::replay;
 use ergo_supervisor::{
     CapturingSession, Constraints, Decision, DecisionLog, DecisionLogEntry, Supervisor,
@@ -232,9 +234,9 @@ fn supervisor_with_real_runtime_executes_hello_world() {
 fn capturing_session_enables_round_trip_replay() {
     let graph = Arc::new(build_hello_world_graph());
     let catalog = Arc::new(build_core_catalog());
-    let registries = Arc::new(core_registries().expect("core registries should build"));
+    let core_registries = Arc::new(core_registries().expect("core registries should build"));
 
-    let runtime = RuntimeHandle::new(graph.clone(), catalog.clone(), registries.clone());
+    let runtime = RuntimeHandle::new(graph.clone(), catalog.clone(), core_registries.clone());
 
     let mut session = CapturingSession::new(
         GraphId::new("hello_world_capture"),
@@ -279,6 +281,61 @@ fn capturing_session_enables_round_trip_replay() {
         replay_decisions[0].retry_count, bundle.decisions[0].retry_count,
         "retry_count should round trip through replay"
     );
+}
+
+#[test]
+fn demo_1_complex_graph_executes_and_replays() {
+    let graph = Arc::new(demo_1::build_demo_1_graph());
+    let catalog = Arc::new(build_core_catalog());
+    let core_registries = Arc::new(core_registries().expect("core registries should build"));
+
+    let runtime = RuntimeHandle::new(graph.clone(), catalog.clone(), core_registries.clone());
+    let mut session = CapturingSession::new(
+        GraphId::new("demo_1"),
+        Constraints::default(),
+        CapturingLog::new(),
+        runtime,
+    );
+
+    let event_1 = ExternalEvent::mechanical(EventId::new("demo_evt_1"), ExternalEventKind::Command);
+    let event_2 = ExternalEvent::mechanical(EventId::new("demo_evt_2"), ExternalEventKind::Command);
+    session.on_event(event_1);
+    session.on_event(event_2);
+
+    let bundle = session.into_bundle();
+    assert_eq!(bundle.events.len(), 2, "expected two captured events");
+    assert_eq!(bundle.decisions.len(), 2, "expected two captured decisions");
+    assert!(bundle
+        .decisions
+        .iter()
+        .all(|record| record.decision == Decision::Invoke));
+
+    let summary = demo_1::compute_summary(&graph, &catalog, &core_registries);
+
+    assert_eq!(summary.sum_left, 6.0);
+    assert_eq!(summary.sum_total, 8.0);
+    assert_eq!(
+        summary.action_a_outcome,
+        ActionOutcome::Completed,
+        "TriggerA should emit; ActionA should execute"
+    );
+    assert_eq!(
+        summary.action_b_outcome,
+        ActionOutcome::Skipped,
+        "TriggerB should not emit; ActionB should be skipped"
+    );
+
+    for record in &bundle.decisions {
+        println!(
+            "{}",
+            demo_1::format_episode_summary(record.episode_id, &record.event_id, &summary)
+        );
+    }
+
+    let replay_decisions = replay(&bundle, FaultRuntimeHandle::new(RunTermination::Completed));
+    let replay_matches = replay_decisions == bundle.decisions;
+    println!("{}", demo_1::format_replay_identity(replay_matches));
+    assert!(replay_matches, "replay decisions must match capture");
 }
 
 /// Test that a deferred episode is retried when a Tick event arrives.

@@ -5,6 +5,7 @@ members = [
     "crates/runtime",
     "crates/adapter",
     "crates/supervisor",
+    "crates/ergo-cli",
 ]
 
 # UI is intentionally excluded (non-Rust)
