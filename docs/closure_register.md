@@ -395,6 +395,13 @@ Adopted Option C after stress-testing with ChatGPT:
 - Separating `divide` (strict) from `safe_divide` (explicit fallback) keeps primitives math-true
 - NUM-FINITE-1 provides defense-in-depth against non-finite values from any source
 
+### Implementation Notes
+
+- `ComputeError::DivisionByZero` and `ComputeError::NonFiniteResult` are specific to the `divide` implementation
+- Other computes producing inf/NaN (e.g., multiply overflow) are caught by the NUM-FINITE-1 runtime guard, which raises `ExecError::NonFiniteOutput`
+- `safe_divide` does not validate that `fallback` is finite — if a non-finite fallback is provided, NUM-FINITE-1 will catch it after the compute returns
+- Both error paths result in `ErrKind::SemanticError` (non-retryable)
+
 ### Tests
 - `divide_by_zero_errors`
 - `divide_by_negative_zero_errors`
