@@ -159,11 +159,7 @@ fn run_fixture(path: &Path, output_override: Option<&Path>) -> Result<PathBuf, S
     Ok(result.artifact_path)
 }
 
-fn action_status(invoked: bool, outcome: ActionOutcome) -> &'static str {
-    if !invoked {
-        return "deferred";
-    }
-
+fn action_status(outcome: ActionOutcome) -> &'static str {
     if outcome == ActionOutcome::Skipped {
         "skipped"
     } else {
@@ -171,11 +167,7 @@ fn action_status(invoked: bool, outcome: ActionOutcome) -> &'static str {
     }
 }
 
-fn trigger_status(invoked: bool, outcome: ActionOutcome) -> &'static str {
-    if !invoked {
-        return "deferred";
-    }
-
+fn trigger_status(outcome: ActionOutcome) -> &'static str {
     if outcome == ActionOutcome::Skipped {
         "not_emitted"
     } else {
@@ -236,15 +228,21 @@ fn replay_demo_1(path: &Path) -> Result<(), String> {
             Decision::Defer => "defer",
             Decision::Skip => "skip",
         };
-        let context_value = context_by_event
-            .get(record.event_id.as_str())
-            .copied()
-            .flatten();
-        let summary = demo_1::summary_for_context_value(context_value);
-        let action_a_status = action_status(invoked, summary.action_a_outcome.clone());
-        let action_b_status = action_status(invoked, summary.action_b_outcome.clone());
-        let trigger_a_status = trigger_status(invoked, summary.action_a_outcome.clone());
-        let trigger_b_status = trigger_status(invoked, summary.action_b_outcome.clone());
+        let (trigger_a_status, trigger_b_status, action_a_status, action_b_status) = if invoked {
+            let context_value = context_by_event
+                .get(record.event_id.as_str())
+                .copied()
+                .flatten();
+            let summary = demo_1::summary_for_context_value(context_value);
+            (
+                trigger_status(summary.action_a_outcome.clone()),
+                trigger_status(summary.action_b_outcome.clone()),
+                action_status(summary.action_a_outcome.clone()),
+                action_status(summary.action_b_outcome),
+            )
+        } else {
+            ("deferred", "deferred", "deferred", "deferred")
+        };
         let label = format!("E{}", record.episode_id.as_u64() + 1);
 
         println!(
