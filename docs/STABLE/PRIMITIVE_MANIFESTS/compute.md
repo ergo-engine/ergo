@@ -1,7 +1,7 @@
 ---
 Authority: STABLE
 Version: v0
-Last Updated: 2025-12-22
+Last Updated: 2026-01-11
 ---
 
 # Compute Primitive Manifest — v0
@@ -100,12 +100,15 @@ Rules:
 execution:
   cadence: continuous | event
   deterministic: true
+  may_error: true
 ```
 
 Rules:
+
 - `continuous` = evaluated every bar / tick
 - `event` = evaluated only on upstream event emission
 - Determinism is required
+- Errors are permitted for domain-specific edge cases (see §2.8)
 
 ---
 
@@ -134,15 +137,44 @@ side_effects: false
 ```
 
 Hard rule:
+
 - Compute primitives may not perform I/O
 - May not access network, filesystem, or external state
 - If it touches the world, it is not compute
 
 ---
 
+### 2.8 Error Semantics
+
+```yaml
+errors:
+  allowed: true
+  deterministic: true
+```
+
+Rules:
+
+- Compute primitives may produce errors for domain-specific edge cases
+- Errors must be deterministic (same inputs → same error)
+- When execution succeeds, all declared outputs must be produced
+- When execution fails, no outputs are produced
+- Errors surface as `ExecError::ComputeFailed` at runtime
+
+Error types (B.2):
+
+- `DivisionByZero` — Division by zero attempted
+- `NonFiniteResult` — Result overflowed to infinity or NaN
+
+Errors are semantic failures, not infrastructure failures. They are non-retryable.
+
+See: PHASE_INVARIANTS.md B.2, NUM-FINITE-1
+
+---
+
 ## 3. Prohibited Behavior
 
 A compute primitive may not:
+
 - Read or write files
 - Access network resources
 - Inspect execution mode
@@ -152,6 +184,7 @@ A compute primitive may not:
 - Branch on execution mode
 - Accept undeclared inputs or parameters
 - Emit undeclared outputs
+- Emit non-deterministic errors
 
 Violation invalidates the primitive.
 

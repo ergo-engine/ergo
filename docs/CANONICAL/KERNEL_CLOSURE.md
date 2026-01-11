@@ -1,10 +1,10 @@
 ---
 Authority: CANONICAL
-Version: v0
-Last Updated: 2026-01-06
+Version: v1
+Last Updated: 2026-01-11
 Owner: Claude (Structural Auditor)
 Scope: v0 baseline declaration, v1 workstream rules
-Verified Against Tag: v0.28-kernel-closed
+Verified Against Tag: v1.0.0-alpha.1
 Change Rule: Operational log
 ---
 
@@ -83,6 +83,16 @@ Every kernel-changing merge must correspond to:
 - A tag that anchors the reference point when appropriate
 
 If a change would confuse a new contributor reading the docs, it needs a doctrine update or a separate PR.
+
+---
+
+## v1 Workstream Log
+
+Tracks semantic changes that exceed v0 scope.
+
+| Item | PR  | Tag            | Description                                                                                                                  |
+|------|-----|----------------|------------------------------------------------------------------------------------------------------------------------------|
+| B.2  | #35 | v1.0.0-alpha.1 | Divide-by-zero semantics: strict divide errors, safe_divide with fallback, NUM-FINITE-1 guard, SemanticError classification |
 
 ---
 

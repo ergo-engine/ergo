@@ -94,7 +94,7 @@ If you find duplicate content, the FROZEN/STABLE/CANONICAL/CONTRACTS version is 
 
 ### Verified Against
 
-All documents verified against tag: `v0.28-kernel-closed`
+All documents verified against tag: `v1.0.0-alpha.1`
 
 ---
 

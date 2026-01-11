@@ -4,7 +4,7 @@ Version: v0
 Last Updated: 2025-12-22
 Owner: Claude (Structural Auditor)
 Scope: Canonical terms - primitive, implementation, cluster
-Verified Against Tag: v0.28-kernel-closed
+Verified Against Tag: v1.0.0-alpha.1
 Change Rule: Operational log
 ---
 

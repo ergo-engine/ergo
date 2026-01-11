@@ -4,7 +4,7 @@ Version: v0.21
 Owner: Claude (Structural Auditor)
 Last Updated: 2026-01-05
 Scope: Phase boundaries, enforcement loci, gap tracking
-Verified Against Tag: v0.28-kernel-closed
+Verified Against Tag: v1.0.0-alpha.1
 Change Rule: Operational log
 ---
 
