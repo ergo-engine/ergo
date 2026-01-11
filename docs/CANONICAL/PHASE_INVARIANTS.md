@@ -131,6 +131,7 @@ These invariants hold across all phases. Violation at any point is a system-leve
 Non-finite numeric values (NaN, inf, -inf) are rejected at the execution boundary before they can propagate to downstream nodes.
 
 **Enforcement:**
+**Scope:** Guards Source and Compute outputs only. Action outputs are not guarded because actions are terminal (F.2) and cannot feed downstream nodes. If future actions emit numeric boundary outputs, this scope may need revisiting.
 - `ensure_finite()` defined at line 296
 - Number check at line 302
 - Series check at line 308

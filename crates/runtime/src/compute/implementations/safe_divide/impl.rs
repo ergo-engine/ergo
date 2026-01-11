@@ -37,6 +37,10 @@ impl ComputePrimitive for SafeDivide {
     /// This implementation never errors for zero/non-finite conditions.
     /// The author explicitly chooses the fallback value, encoding domain policy.
     ///
+    /// **Note:** `fallback` must be a finite number. If `fallback` is NaN or
+    /// infinity, safe_divide will return it, and the NUM-FINITE-1 runtime guard
+    /// will raise `ExecError::NonFiniteOutput`.
+    ///
     /// See: B.2 in PHASE_INVARIANTS.md
     fn compute(
         &self,
