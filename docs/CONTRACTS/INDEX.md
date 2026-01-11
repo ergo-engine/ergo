@@ -3,7 +3,7 @@ Authority: CONTRACTS
 Version: v0
 Last Updated: 2026-01-06
 Scope: Index of all external interface contracts
-Verified Against Tag: v0.28-kernel-closed
+Verified Against Tag: v1.0.0-alpha.1
 Change Rule: Review required
 ---
 

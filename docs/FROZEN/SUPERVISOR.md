@@ -3,7 +3,7 @@ Authority: FROZEN
 Version: v0
 Last Amended: 2025-12-27
 Scope: Orchestration layer, episode semantics, replay
-Verified Against Tag: v0.28-kernel-closed
+Verified Against Tag: v1.0.0-alpha.1
 Change Rule: v1 only
 ---
 

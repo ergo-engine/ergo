@@ -61,10 +61,10 @@ Context keys are strings. Current implementations:
 
 All default behaviors are deterministic. Missing or malformed payload data produces consistent outputs across replay.
 
-## Core stdlib wiring (29 implementations)
+## Core stdlib wiring (30 implementations)
 
 - **Sources (4):** `number_source`, `boolean_source`, `string_source`, `context_number_source`
-- **Computes (22):** `const_number`, `const_bool`, `add`, `subtract`, `multiply`, `divide`, `abs`, `negate`, `gt`, `gte`, `lt`, `lte`, `eq`, `neq`, `min`, `max`, `and`, `or`, `not`, `select`, `select_bool`
+- **Computes (23):** `const_number`, `const_bool`, `add`, `subtract`, `multiply`, `divide`, `safe_divide`, `abs`, `negate`, `gt`, `gte`, `lt`, `lte`, `eq`, `neq`, `min`, `max`, `and`, `or`, `not`, `select`, `select_bool`
 - **Trigger (1):** `emit_if_true`
 - **Actions (2):** `ack_action`, `annotate_action`
 
