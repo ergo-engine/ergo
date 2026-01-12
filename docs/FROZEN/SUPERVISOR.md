@@ -1,7 +1,7 @@
 ---
 Authority: FROZEN
 Version: v0
-Last Amended: 2025-12-27
+Last Amended: 2026-01-11
 Scope: Orchestration layer, episode semantics, replay
 Verified Against Tag: v1.0.0-alpha.1
 Change Rule: v1 only
@@ -88,6 +88,12 @@ ExecutionContext does not contain:
 - Results of prior episodes
 - Accumulated history
 - Domain-specific signals
+
+> **Provenance rule:** The prohibition on "results of prior episodes" applies to
+> Supervisor-observed outcomes (RunTermination, decision records, ActionOutcomes)
+> being injected into context. Environment state that was modified by prior Actions
+> and obtained via adapter environment reads is permitted—that is the intended
+> cross-episode causality path described below.
 
 If information from Episode N must influence Episode N+1, it must:
 
@@ -445,6 +451,7 @@ Changes require joint escalation per AGENT_CONTRACT.md v1.1.
 | v0.2 | 2025-12-27 | Claude (Structural Auditor) | Added SUP-7 (DecisionLog write-only); ChatGPT polish edits |
 | v0.3 | 2025-12-27 | Claude Code | Freeze finalization; Sebastian approval |
 | v0.4 | 2025-12-27 | Claude Prime | Added lifecycle scope note (§2.1) — state is episode-scoped by construction |
+| v0.5 | 2026-01-11 | Claude (Structural Auditor) | Added provenance rule clarification (§2.2) — pins interpretation that "results of prior episodes" refers to Supervisor-injected outcomes, not adapter-provided environment state modified by prior Actions. Sebastian override authorization. |
 
 ---
 

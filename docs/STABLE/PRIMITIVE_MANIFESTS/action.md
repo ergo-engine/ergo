@@ -2,6 +2,7 @@
 Authority: STABLE
 Version: v0
 Last Updated: 2025-12-22
+Last Amended: 2026-01-11
 ---
 
 # Action Primitive Manifest — v0
@@ -157,10 +158,19 @@ An outcome event is:
 
 Rules:
 - Outcome events do not carry payloads in v0
-- Outcome events may be consumed by:
-  - triggers
-  - downstream orchestration logic
+- Outcome events are **non-wireable** in v0:
+  - They do not participate in graph causality
+  - No downstream node may consume an Action outcome (Action → * is forbidden)
+- Outcome events may be consumed only by **external sinks** (orchestrator logging/audit/replay), outside the graph
 - Outcome events must always be emitted, even on failure
+
+#### Amendment Record
+
+> **Amended 2026-01-11** by Sebastian (Freeze Authority)
+>
+> Removed incorrect claim that Action outcome events are consumable by Triggers. Clarified that
+> Action outcomes are non-wireable and exist only for external sinks (logging/audit/replay).
+> This is a documentation alignment with the FROZEN wiring matrix and validator behavior.
 
 ---
 
@@ -182,18 +192,18 @@ Violation invalidates the primitive.
 
 ## 5. Composition Rule
 
-Actions terminate intent.
+Actions terminate causality within the graph.
 
 - Compute produces values
 - Trigger produces events
-- Action attempts execution
+- Action attempts execution (external effect)
 
-Actions may not:
-- feed directly into compute
-- generate new signals
-- trigger other actions directly
+Wiring rule (v0):
+- **Action → * is forbidden** (terminal)
 
-Any further behavior must be mediated by triggers.
+Action outcomes do not feed into Compute/Trigger/Action. Any follow-on behavior must occur
+via subsequent episodes: Actions write externally; Sources observe externally; Triggers gate
+Actions based on those observations.
 
 ---
 

@@ -1,7 +1,7 @@
 ---
 Authority: FROZEN
 Version: v0
-Last Amended: 2025-12-28
+Last Amended: 2026-01-11
 Scope: Four primitives, wiring matrix, causal roles
 Verified Against Tag: v1.0.0-alpha.1
 Change Rule: v1 only
@@ -113,11 +113,25 @@ Characteristics:
 - Causes side effects
 - Deterministic command emission
 - No internal state
-- Emits exactly one acknowledgment record per attempt (non-causal, for logging/audit)
+- Emits non-causal outputs (see below)
 
-Action acknowledgment records are emitted to the orchestrator, which is responsible for persistence, logging, and audit. Acknowledgments do not participate in graph causality.
+Action outputs are non-causal and take two forms:
+- **Acknowledgment records** — emitted to orchestrator for logging/audit (exactly one per attempt)
+- **Effect descriptions** — emitted to adapter for external application (zero or more per attempt)
+
+Neither participates in graph causality. Acknowledgment records are metadata for accountability. Effect descriptions are operational instructions that the adapter applies to external stores after episode completion.
 
 Action establishes agency, not logic or policy.
+
+#### Amendment Record
+
+> **Amended 2026-01-11** by Claude (Structural Auditor)
+>
+> Prior language mentioned only "acknowledgment records" without distinguishing them from
+> effect descriptions. This amendment clarifies that Actions emit two types of non-causal
+> outputs: acknowledgments (to orchestrator) and effects (to adapter). Both are non-causal;
+> effects enable the cross-episode state pattern described in execution_model.md §5.4.
+> Sebastian override authorization.
 
 ---
 

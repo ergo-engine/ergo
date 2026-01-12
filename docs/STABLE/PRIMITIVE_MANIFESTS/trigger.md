@@ -1,7 +1,7 @@
 ---
 Authority: STABLE
 Version: v0
-Last Amended: 2025-12-28
+Last Amended: 2026-01-11
 ---
 
 # Trigger Primitive Manifest — v0
@@ -49,7 +49,7 @@ Rules:
 ```yaml
 inputs:
   - name: string
-    type: series | number | bool
+    type: series | number | bool | event
     required: true
     cardinality: single | multiple
 ```
@@ -58,7 +58,7 @@ Rules:
 - Inputs are explicit, named, and typed
 - No implicit inputs (time, identifier, state must be upstream)
 - Triggers do not read execution context
-- Inputs may be continuous values or booleans
+- Inputs may be continuous values, booleans, or upstream events (Trigger → Trigger chaining)
 
 ---
 
@@ -158,6 +158,11 @@ Examples of temporal patterns (implemented as clusters, not triggers):
 > Prior language allowing `state.allowed: true` was a semantic error. Triggers are
 > ontologically stateless. This field must always be `false`.
 
+> **Amended 2026-01-11** by Sebastian (Freeze Authority)
+>
+> Updated §2.2 input type list to include `event`, aligning the manifest schema text with the
+> already-supported TriggerValueType and the "upstream events" language elsewhere in this doc.
+
 ---
 
 ### 2.7 Side Effects
@@ -243,10 +248,17 @@ The orchestrator does not:
 
 ---
 
-## 7. Canonical Examples
+## 7. Canonical Primitive Trigger Examples
 
-> **Note:** Examples marked with temporal requirements must be
-> implemented as clusters, not primitive triggers. See §2.6 for temporal pattern guidance.
+The following are valid primitive trigger implementations under v0 constraints.
+All are stateless and evaluate purely on current-evaluation inputs.
+
+**emit_if_true**
+- inputs: `input:bool`
+- outputs: `event`
+- state: `false`
+- cadence: `continuous`
+- emits event when `input == true` at evaluation point
 
 **gt (greater-than)**
 - inputs: `a:number`, `b:number`
@@ -255,21 +267,29 @@ The orchestrator does not:
 - cadence: `continuous`
 - emits event when `a > b` at evaluation point
 
-**crossover**
-- inputs: `fast:series`, `slow:series`
-- outputs: `event`
-- state: `false`
-- cadence: `continuous`
-- emits event on crossing boundary
-- *(Stateful crossover detection requires cluster implementation; see §2.6 Temporal Patterns)*
-
-**once**
-- inputs: `event`
+**pass_through**
+- inputs: `upstream:event`
 - outputs: `event`
 - state: `false`
 - cadence: `event`
-- emits only first occurrence
-- *(Once-only emission requires cluster implementation; see §2.6 Temporal Patterns)*
+- re-emits upstream event (identity trigger for Trigger → Trigger chaining)
+
+---
+
+### 7.1 Behaviors That Are NOT Primitive Triggers
+
+The following require cross-evaluation memory and must be implemented as clusters
+(see §2.6 Temporal Patterns):
+
+| Behavior | Why It's Not a Primitive |
+|----------|--------------------------|
+| **crossover** | Detecting "fast crossed slow" requires comparing current vs. previous evaluation |
+| **once** | Emitting only on first occurrence requires remembering prior emissions |
+| **debounce** | Cooldown gating requires tracking time since last emission |
+| **latch** | Set/reset state machine requires persistent state |
+| **count** | Counting events requires accumulating across evaluations |
+
+These are compositional patterns built from Source + Compute + Trigger + Action, not atomic triggers
 
 ---
 

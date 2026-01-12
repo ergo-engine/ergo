@@ -2,9 +2,28 @@
 Authority: STABLE
 Version: v0
 Last Updated: 2026-01-11
+Last Amended: 2026-01-11
 ---
 
 # Compute Primitive Manifest — v0
+
+## Amendment Record
+
+> **Amended 2026-01-11** by Claude (Structural Auditor)
+>
+> Aligned spec with code reality:
+> - §2.2 Inputs: Removed `event` (Trigger → Compute forbidden by FROZEN wiring matrix)
+>   and `string` (map_to_compute_value rejects String). Valid: `series | number | bool`
+> - §2.3 Outputs: Removed `event`, kept `string` (compute can return Value::String).
+>   Valid: `series | number | bool | string`
+> - §2.4 Parameters: Removed `string | enum` (runtime only maps int/number/bool).
+>   Valid: `int | number | bool`
+> - §2.5 Cadence: Removed `event` (unsatisfiable in v0 — no upstream events can reach Compute)
+>
+> Origin: Initial commit 66f6576 shipped with these inconsistencies. Code was correct;
+> spec was wrong from day one.
+>
+> Authority: FROZEN > STABLE. Code is ground truth for runtime behavior.
 
 ## 1. Definition
 
@@ -46,7 +65,7 @@ kind: compute
 ```yaml
 inputs:
   - name: string
-    type: series | number | bool | event
+    type: series | number | bool
     required: true
     cardinality: single | multiple
 ```
@@ -65,7 +84,7 @@ Rules:
 ```yaml
 outputs:
   - name: string
-    type: series | number | bool | event
+    type: series | number | bool | string
 ```
 
 Rules:
@@ -81,7 +100,7 @@ Rules:
 ```yaml
 parameters:
   - name: string
-    type: int | number | bool | string | enum
+    type: int | number | bool
     default: any
     bounds: optional
 ```
@@ -98,7 +117,7 @@ Rules:
 
 ```yaml
 execution:
-  cadence: continuous | event
+  cadence: continuous
   deterministic: true
   may_error: true
 ```
@@ -106,9 +125,11 @@ execution:
 Rules:
 
 - `continuous` = evaluated every bar / tick
-- `event` = evaluated only on upstream event emission
 - Determinism is required
 - Errors are permitted for domain-specific edge cases (see §2.8)
+
+Note: `event` cadence (evaluated only on upstream event emission) is not implemented
+in v0. Trigger → Compute wiring is forbidden, so event-gated compute is unsatisfiable.
 
 ---
 
