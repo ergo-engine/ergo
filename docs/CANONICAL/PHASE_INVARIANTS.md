@@ -10,7 +10,7 @@ Change Rule: Operational log
 
 # Phase Invariants — v0
 
-**Tracked invariants:** 77
+**Tracked invariants:** 78
 
 This document defines the invariants that must hold at each phase boundary in the system. It is the authoritative reference for what is true, where that truth is enforced, and what happens if it is violated.
 
