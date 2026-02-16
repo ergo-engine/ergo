@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ergo Adapter Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "id",
+    "version",
+    "runtime_compatibility",
+    "context_keys",
+    "event_kinds",
+    "capture"
+  ],
+  "properties": {
+    "kind": {
+      "const": "adapter"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "version": {
+      "$ref": "#/$defs/semver"
+    },
+    "runtime_compatibility": {
+      "$ref": "#/$defs/semver"
+    },
+    "context_keys": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/context_key"
+      }
+    },
+    "event_kinds": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/event_kind"
+      }
+    },
+    "accepts": {
+      "$ref": "#/$defs/accepts"
+    },
+    "capture": {
+      "$ref": "#/$defs/capture"
+    }
+  },
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "context_key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "required", "writable"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["Number", "Bool", "String", "Series"]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "writable": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "event_kind": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "payload_schema"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "payload_schema": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "effect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "payload_schema"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "payload_schema": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "accepts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["effects"],
+      "properties": {
+        "effects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/effect"
+          }
+        }
+      }
+    },
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format_version", "fields"],
+      "properties": {
+        "format_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

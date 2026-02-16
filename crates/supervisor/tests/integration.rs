@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ergo_adapter::{
-    EventId, EventTime, ExternalEvent, ExternalEventKind, FaultRuntimeHandle, GraphId,
-    RunTermination, RuntimeHandle,
+    AdapterProvides, EventId, EventTime, ExternalEvent, ExternalEventKind, FaultRuntimeHandle,
+    GraphId, RunTermination, RuntimeHandle,
 };
 use ergo_runtime::action::ActionOutcome;
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
@@ -236,7 +236,12 @@ fn capturing_session_enables_round_trip_replay() {
     let catalog = Arc::new(build_core_catalog());
     let core_registries = Arc::new(core_registries().expect("core registries should build"));
 
-    let runtime = RuntimeHandle::new(graph.clone(), catalog.clone(), core_registries.clone());
+    let runtime = RuntimeHandle::new(
+        graph.clone(),
+        catalog.clone(),
+        core_registries.clone(),
+        AdapterProvides::default(),
+    );
 
     let mut session = CapturingSession::new(
         GraphId::new("hello_world_capture"),
@@ -289,7 +294,12 @@ fn demo_1_complex_graph_executes_and_replays() {
     let catalog = Arc::new(build_core_catalog());
     let core_registries = Arc::new(core_registries().expect("core registries should build"));
 
-    let runtime = RuntimeHandle::new(graph.clone(), catalog.clone(), core_registries.clone());
+    let runtime = RuntimeHandle::new(
+        graph.clone(),
+        catalog.clone(),
+        core_registries.clone(),
+        AdapterProvides::default(),
+    );
     let mut session = CapturingSession::new(
         GraphId::new("demo_1"),
         Constraints::default(),

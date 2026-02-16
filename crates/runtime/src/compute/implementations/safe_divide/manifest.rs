@@ -1,7 +1,7 @@
 use crate::common::{PrimitiveKind, ValueType};
 use crate::compute::{
-    Cadence, ComputePrimitiveManifest, ExecutionSpec, InputSpec, OutputSpec, ParameterSpec,
-    StateSpec,
+    Cadence, Cardinality, ComputePrimitiveManifest, ErrorSpec, ExecutionSpec, InputSpec,
+    OutputSpec, ParameterSpec, StateSpec,
 };
 
 pub fn safe_divide_manifest() -> ComputePrimitiveManifest {
@@ -14,11 +14,13 @@ pub fn safe_divide_manifest() -> ComputePrimitiveManifest {
                 name: "a".to_string(),
                 value_type: ValueType::Number,
                 required: true,
+                cardinality: Cardinality::Single,
             },
             InputSpec {
                 name: "b".to_string(),
                 value_type: ValueType::Number,
                 required: true,
+                cardinality: Cardinality::Single,
             },
         ],
         outputs: vec![OutputSpec {
@@ -29,14 +31,23 @@ pub fn safe_divide_manifest() -> ComputePrimitiveManifest {
             name: "fallback".to_string(),
             value_type: ValueType::Number,
             default: None,
+            required: true,
+            bounds: None,
         }],
         execution: ExecutionSpec {
             deterministic: true,
             cadence: Cadence::Continuous,
+            may_error: false,
+        },
+        errors: ErrorSpec {
+            allowed: false,
+            types: vec![],
+            deterministic: true,
         },
         state: StateSpec {
-            stateful: false,
-            rolling_window: None,
+            allowed: false,
+            resettable: false,
+            description: None,
         },
         side_effects: false,
     }

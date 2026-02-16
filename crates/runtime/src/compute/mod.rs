@@ -11,11 +11,18 @@ pub enum Cadence {
     Event,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Cardinality {
+    Single,
+    Multiple,
+}
+
 #[derive(Debug, Clone)]
 pub struct InputSpec {
     pub name: String,
     pub value_type: ValueType,
     pub required: bool,
+    pub cardinality: Cardinality,
 }
 
 #[derive(Debug, Clone)]
@@ -29,18 +36,35 @@ pub struct ParameterSpec {
     pub name: String,
     pub value_type: ValueType,
     pub default: Option<Value>,
+    pub required: bool,
+    pub bounds: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ExecutionSpec {
     pub deterministic: bool,
     pub cadence: Cadence,
+    pub may_error: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ErrorSpec {
+    pub allowed: bool,
+    pub types: Vec<ErrorType>,
+    pub deterministic: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErrorType {
+    DivisionByZero,
+    NonFiniteResult,
 }
 
 #[derive(Debug, Clone)]
 pub struct StateSpec {
-    pub stateful: bool,
-    pub rolling_window: Option<usize>,
+    pub allowed: bool,
+    pub resettable: bool,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -82,6 +106,7 @@ pub struct ComputePrimitiveManifest {
     pub outputs: Vec<OutputSpec>,
     pub parameters: Vec<ParameterSpec>,
     pub execution: ExecutionSpec,
+    pub errors: ErrorSpec,
     pub state: StateSpec,
     pub side_effects: bool,
 }

@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use ergo_adapter::fixture::FixtureItem;
 use ergo_adapter::{
-    EventId, EventPayload, EventTime, ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
+    ensure_demo_sources_have_no_required_context, AdapterProvides, EventId, EventPayload,
+    EventTime, ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
 };
 use ergo_runtime::action::ActionOutcome;
 use ergo_runtime::catalog::{CorePrimitiveCatalog, CoreRegistries};
@@ -54,7 +55,8 @@ pub fn run_fixture(
     registries: Arc<CoreRegistries>,
     output_path: Option<PathBuf>,
 ) -> Result<FixtureRunResult, String> {
-    let runtime = RuntimeHandle::new(graph, catalog, registries);
+    ensure_demo_sources_have_no_required_context(&graph, &catalog, &registries)?;
+    let runtime = RuntimeHandle::new(graph, catalog, registries, AdapterProvides::default());
     let mut session = CapturingSession::new(
         GraphId::new(DEFAULT_GRAPH_ID),
         Constraints::default(),

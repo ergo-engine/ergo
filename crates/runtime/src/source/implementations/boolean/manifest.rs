@@ -1,7 +1,7 @@
 use crate::common::ValueType;
 use crate::source::{
     Cadence, ExecutionSpec, OutputSpec, ParameterSpec, ParameterValue, SourceKind,
-    SourcePrimitiveManifest, StateSpec,
+    SourcePrimitiveManifest, SourceRequires, StateSpec,
 };
 
 pub fn boolean_source_manifest() -> SourcePrimitiveManifest {
@@ -20,6 +20,7 @@ pub fn boolean_source_manifest() -> SourcePrimitiveManifest {
             default: Some(ParameterValue::Bool(false)),
             bounds: None,
         }],
+        requires: SourceRequires { context: vec![] },
         execution: ExecutionSpec {
             deterministic: true,
             cadence: Cadence::Continuous,

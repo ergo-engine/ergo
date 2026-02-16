@@ -1,6 +1,7 @@
 use crate::common::{PrimitiveKind, ValueType};
 use crate::compute::{
-    Cadence, ComputePrimitiveManifest, ExecutionSpec, InputSpec, OutputSpec, StateSpec,
+    Cadence, Cardinality, ComputePrimitiveManifest, ErrorSpec, ExecutionSpec, InputSpec,
+    OutputSpec, StateSpec,
 };
 
 pub fn add_manifest() -> ComputePrimitiveManifest {
@@ -13,11 +14,13 @@ pub fn add_manifest() -> ComputePrimitiveManifest {
                 name: "a".to_string(),
                 value_type: ValueType::Number,
                 required: true,
+                cardinality: Cardinality::Single,
             },
             InputSpec {
                 name: "b".to_string(),
                 value_type: ValueType::Number,
                 required: true,
+                cardinality: Cardinality::Single,
             },
         ],
         outputs: vec![OutputSpec {
@@ -28,10 +31,17 @@ pub fn add_manifest() -> ComputePrimitiveManifest {
         execution: ExecutionSpec {
             deterministic: true,
             cadence: Cadence::Continuous,
+            may_error: false,
+        },
+        errors: ErrorSpec {
+            allowed: false,
+            types: vec![],
+            deterministic: true,
         },
         state: StateSpec {
-            stateful: false,
-            rolling_window: None,
+            allowed: false,
+            resettable: false,
+            description: None,
         },
         side_effects: false,
     }

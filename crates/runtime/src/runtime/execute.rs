@@ -128,6 +128,31 @@ fn execute_source(
                 version: node.version.clone(),
             })?;
 
+    let manifest = primitive.manifest();
+    for req in &manifest.requires.context {
+        if !req.required {
+            continue;
+        }
+        match ctx.value(&req.name) {
+            None => {
+                return Err(ExecError::MissingRequiredContextKey {
+                    node: node.runtime_id.clone(),
+                    key: req.name.clone(),
+                });
+            }
+            Some(val) => {
+                if val.value_type() != req.ty {
+                    return Err(ExecError::ContextKeyTypeMismatch {
+                        node: node.runtime_id.clone(),
+                        key: req.name.clone(),
+                        expected: req.ty.clone(),
+                        got: val.value_type(),
+                    });
+                }
+            }
+        }
+    }
+
     let mut mapped_parameters: HashMap<String, crate::source::ParameterValue> = HashMap::new();
     for (name, val) in &node.parameters {
         let mapped = map_to_source_parameter_value(val).ok_or_else(|| {
@@ -198,6 +223,14 @@ fn execute_compute(
             version: node.version.clone(),
             error,
         })?;
+    for output_name in node.outputs.keys() {
+        if !outputs.contains_key(output_name) {
+            return Err(ExecError::MissingOutput {
+                node: node.runtime_id.clone(),
+                output: output_name.clone(),
+            });
+        }
+    }
     ensure_finite(&node.runtime_id, &outputs)?;
     Ok(outputs
         .into_iter()

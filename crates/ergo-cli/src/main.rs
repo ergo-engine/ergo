@@ -3,9 +3,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod gen_docs;
+mod graph_yaml;
+mod validate;
+
 use ergo_adapter::fixture;
 use ergo_adapter::{
-    EventId, EventPayload, ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
+    ensure_demo_sources_have_no_required_context, AdapterProvides, EventId, EventPayload,
+    ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
 };
 use ergo_runtime::action::ActionOutcome;
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
@@ -35,18 +40,42 @@ fn main() {
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
-        Some("run") => match args.next().as_deref() {
-            Some("demo-1") => {
-                ensure_no_extra_args(&mut args)?;
-                run_demo_1()
+        Some("gen-docs") => {
+            let rest: Vec<String> = args.collect();
+            let out = gen_docs::gen_docs_command(&rest)?;
+            print!("{out}");
+            Ok(())
+        }
+        Some("validate") => {
+            let rest: Vec<String> = args.collect();
+            let out = validate::validate_command(&rest)?;
+            print!("{out}");
+            Ok(())
+        }
+        Some("check-compose") => {
+            let rest: Vec<String> = args.collect();
+            let out = validate::check_compose_command(&rest)?;
+            print!("{out}");
+            Ok(())
+        }
+        Some("run") => {
+            let target = args.next().ok_or_else(usage)?;
+            match target.as_str() {
+                "demo-1" => {
+                    ensure_no_extra_args(&mut args)?;
+                    run_demo_1()
+                }
+                "fixture" => {
+                    let path = args.next().ok_or_else(usage)?;
+                    ensure_no_extra_args(&mut args)?;
+                    run_fixture(Path::new(&path), None).map(|_| ())
+                }
+                _ => {
+                    let rest: Vec<String> = args.collect();
+                    graph_yaml::run_graph_command(Path::new(&target), &rest)
+                }
             }
-            Some("fixture") => {
-                let path = args.next().ok_or_else(usage)?;
-                ensure_no_extra_args(&mut args)?;
-                run_fixture(Path::new(&path), None).map(|_| ())
-            }
-            _ => Err(usage()),
-        },
+        }
         Some("replay") => {
             let path = args.next().ok_or_else(usage)?;
             ensure_no_extra_args(&mut args)?;
@@ -66,8 +95,12 @@ fn ensure_no_extra_args(args: &mut impl Iterator<Item = String>) -> Result<(), S
 fn usage() -> String {
     [
         "usage:",
+        "  ergo gen-docs [--check]",
+        "  ergo validate <manifest.yaml> [--format json]",
+        "  ergo check-compose <adapter.yaml> <source|action>.yaml [--format json]",
         "  ergo run demo-1",
         "  ergo run fixture <path>",
+        "  ergo run <graph.yaml> [--adapter <adapter.yaml>] [--cluster-path <path> ...]",
         "  ergo replay <path>",
     ]
     .join("\n")
@@ -95,7 +128,14 @@ fn run_demo_1() -> Result<(), String> {
     let core_registries =
         Arc::new(core_registries().map_err(|err| format!("core registries: {err:?}"))?);
 
-    let runtime = RuntimeHandle::new(graph.clone(), catalog.clone(), core_registries.clone());
+    ensure_demo_sources_have_no_required_context(&graph, &catalog, &core_registries)?;
+
+    let runtime = RuntimeHandle::new(
+        graph.clone(),
+        catalog.clone(),
+        core_registries.clone(),
+        AdapterProvides::default(),
+    );
     let mut session = CapturingSession::new(
         GraphId::new(DEMO_GRAPH_ID),
         Constraints::default(),
@@ -206,7 +246,12 @@ fn replay_demo_1(path: &Path) -> Result<(), String> {
     let core_registries =
         Arc::new(core_registries().map_err(|err| format!("core registries: {err:?}"))?);
 
-    let runtime = RuntimeHandle::new(graph.clone(), catalog.clone(), core_registries.clone());
+    let runtime = RuntimeHandle::new(
+        graph.clone(),
+        catalog.clone(),
+        core_registries.clone(),
+        AdapterProvides::default(),
+    );
     let replay_result = replay_checked(&bundle, runtime);
     let replay_matches = match &replay_result {
         Ok(records) => records == &bundle.decisions,

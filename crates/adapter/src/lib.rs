@@ -3,15 +3,78 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ergo_runtime::catalog::{CorePrimitiveCatalog, CoreRegistries};
-use ergo_runtime::cluster::ExpandedGraph;
+use ergo_runtime::cluster::{ExpandedGraph, PrimitiveCatalog, PrimitiveKind};
 use ergo_runtime::common::Value;
 use ergo_runtime::runtime::{
-    ExecError, ExecutionContext as RuntimeExecutionContext, Registries, RuntimeError,
+    execute, validate as runtime_validate, ExecError, ExecutionContext as RuntimeExecutionContext,
+    Registries,
 };
 use serde::{Deserialize, Serialize};
 
 pub mod capture;
+pub mod composition;
+pub mod errors;
 pub mod fixture;
+pub mod manifest;
+pub mod provides;
+pub mod registry;
+pub mod validate;
+
+pub use composition::{
+    validate_action_adapter_composition, validate_capture_format,
+    validate_source_adapter_composition, CompositionError, ContextRequirement, SourceRequires,
+};
+pub use errors::InvalidAdapter;
+pub use manifest::{
+    AcceptsSpec, AdapterManifest, CaptureSpec, ContextKeySpec, EffectSpec, EventKindSpec,
+};
+pub use provides::{AdapterProvides, ContextKeyProvision};
+pub use registry::register;
+pub use validate::validate_adapter;
+
+/// Validates that no source in the graph requires context keys when adapter provides are empty.
+/// Used by demo/fixture runners that don't have a real adapter.
+pub fn ensure_demo_sources_have_no_required_context(
+    graph: &ExpandedGraph,
+    catalog: &CorePrimitiveCatalog,
+    registries: &CoreRegistries,
+) -> Result<(), String> {
+    for node in graph.nodes.values() {
+        let meta = catalog
+            .get(&node.implementation.impl_id, &node.implementation.version)
+            .ok_or_else(|| {
+                format!(
+                    "missing catalog metadata for primitive '{}'",
+                    node.implementation.impl_id
+                )
+            })?;
+        if meta.kind != PrimitiveKind::Source {
+            continue;
+        }
+
+        let Some(primitive) = registries.sources.get(&node.implementation.impl_id) else {
+            return Err(format!(
+                "missing source primitive '{}' in registry",
+                node.implementation.impl_id
+            ));
+        };
+
+        if let Some(req) = primitive
+            .manifest()
+            .requires
+            .context
+            .iter()
+            .find(|req| req.required)
+        {
+            return Err(format!(
+                "source '{}' requires context key '{}' but adapter provides are empty",
+                node.implementation.impl_id, req.name
+            ));
+        }
+    }
+
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -273,12 +336,13 @@ fn json_to_value(value: &serde_json::Value) -> Option<Value> {
 }
 
 /// RuntimeHandle holds the execution dependencies needed to invoke the runtime.
-/// It is constructed with an expanded graph, primitive catalog, and registries.
+/// It is constructed with an expanded graph, primitive catalog, registries, and adapter provides.
 #[derive(Clone)]
 pub struct RuntimeHandle {
     graph: Arc<ExpandedGraph>,
     catalog: Arc<CorePrimitiveCatalog>,
     registries: Arc<CoreRegistries>,
+    adapter_provides: AdapterProvides,
 }
 
 impl RuntimeHandle {
@@ -286,11 +350,13 @@ impl RuntimeHandle {
         graph: Arc<ExpandedGraph>,
         catalog: Arc<CorePrimitiveCatalog>,
         registries: Arc<CoreRegistries>,
+        adapter_provides: AdapterProvides,
     ) -> Self {
         Self {
             graph,
             catalog,
             registries,
+            adapter_provides,
         }
     }
 
@@ -308,6 +374,15 @@ impl RuntimeHandle {
             return RunTermination::Aborted;
         }
 
+        let validated = match runtime_validate(&self.graph, &*self.catalog) {
+            Ok(graph) => graph,
+            Err(_) => return RunTermination::Failed(ErrKind::ValidationFailed),
+        };
+
+        if self.validate_composition(&validated).is_err() {
+            return RunTermination::Failed(ErrKind::ValidationFailed);
+        }
+
         // Create temporary Registries reference from owned CoreRegistries
         let registries = Registries {
             sources: &self.registries.sources,
@@ -316,17 +391,52 @@ impl RuntimeHandle {
             actions: &self.registries.actions,
         };
 
-        // Call runtime::run, consume ExecutionReport internally (SUP-2)
-        match ergo_runtime::runtime::run(&self.graph, &*self.catalog, &registries, ctx.inner()) {
+        // Call runtime::execute, consume ExecutionReport internally (SUP-2)
+        match execute(&validated, &registries, ctx.inner()) {
             Ok(_report) => RunTermination::Completed,
-            Err(RuntimeError::Execution(exec_err)) => match exec_err {
-                ExecError::ComputeFailed { .. } | ExecError::NonFiniteOutput { .. } => {
+            Err(exec_err) => match exec_err {
+                ExecError::ComputeFailed { .. }
+                | ExecError::NonFiniteOutput { .. }
+                | ExecError::MissingRequiredContextKey { .. }
+                | ExecError::ContextKeyTypeMismatch { .. } => {
                     RunTermination::Failed(ErrKind::SemanticError)
                 }
                 _ => RunTermination::Failed(ErrKind::RuntimeError),
             },
-            Err(RuntimeError::Validation(_)) => RunTermination::Failed(ErrKind::RuntimeError),
         }
+    }
+
+    fn validate_composition(
+        &self,
+        graph: &ergo_runtime::runtime::ValidatedGraph,
+    ) -> Result<(), CompositionError> {
+        for node in graph.nodes.values() {
+            if node.kind != PrimitiveKind::Source {
+                continue;
+            }
+
+            let Some(primitive) = self.registries.sources.get(&node.impl_id) else {
+                continue;
+            };
+
+            let manifest = primitive.manifest();
+            validate_source_adapter_composition(&manifest.requires, &self.adapter_provides)?;
+        }
+
+        for node in graph.nodes.values() {
+            if node.kind != PrimitiveKind::Action {
+                continue;
+            }
+
+            let Some(primitive) = self.registries.actions.get(&node.impl_id) else {
+                continue;
+            };
+
+            let manifest = primitive.manifest();
+            validate_action_adapter_composition(&manifest.effects, &self.adapter_provides)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -416,6 +526,19 @@ impl RuntimeInvoker for FaultRuntimeHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
+
+    use ergo_runtime::action::ActionRegistry;
+    use ergo_runtime::catalog::{build_core_catalog, CoreRegistries};
+    use ergo_runtime::cluster::{ExpandedGraph, ExpandedNode, ImplementationInstance};
+    use ergo_runtime::compute::PrimitiveRegistry as ComputeRegistry;
+    use ergo_runtime::runtime::ExecutionContext as RuntimeExecutionContext;
+    use ergo_runtime::source::{
+        Cadence, ContextRequirement, ExecutionSpec, OutputSpec, SourceKind, SourcePrimitive,
+        SourcePrimitiveManifest, SourceRegistry, SourceRequires, StateSpec,
+    };
+    use ergo_runtime::trigger::TriggerRegistry;
 
     #[test]
     fn fault_runtime_handle_aborts_when_deadline_zero() {
@@ -469,5 +592,103 @@ mod tests {
         let from_tick: ExternalEventKind = serde_json::from_str("\"Tick\"").unwrap();
         assert_eq!(from_pump, ExternalEventKind::Pump);
         assert_eq!(from_tick, ExternalEventKind::Pump);
+    }
+
+    #[test]
+    fn runtime_handle_rejects_required_context_when_provides_empty() {
+        #[derive(Clone)]
+        struct RequiredContextSource {
+            manifest: SourcePrimitiveManifest,
+        }
+
+        impl SourcePrimitive for RequiredContextSource {
+            fn manifest(&self) -> &SourcePrimitiveManifest {
+                &self.manifest
+            }
+
+            fn produce(
+                &self,
+                _parameters: &HashMap<String, ergo_runtime::source::ParameterValue>,
+                _ctx: &RuntimeExecutionContext,
+            ) -> HashMap<String, Value> {
+                HashMap::from([("out".to_string(), Value::Number(0.0))])
+            }
+        }
+
+        let manifest = SourcePrimitiveManifest {
+            id: "context_number_source".to_string(),
+            version: "0.1.0".to_string(),
+            kind: SourceKind::Source,
+            inputs: vec![],
+            outputs: vec![OutputSpec {
+                name: "out".to_string(),
+                value_type: ergo_runtime::common::ValueType::Number,
+            }],
+            parameters: vec![],
+            requires: SourceRequires {
+                context: vec![ContextRequirement {
+                    name: "x".to_string(),
+                    ty: ergo_runtime::common::ValueType::Number,
+                    required: true,
+                }],
+            },
+            execution: ExecutionSpec {
+                deterministic: true,
+                cadence: Cadence::Continuous,
+            },
+            state: StateSpec { allowed: false },
+            side_effects: false,
+        };
+
+        let mut sources = SourceRegistry::new();
+        sources
+            .register(Box::new(RequiredContextSource {
+                manifest: manifest.clone(),
+            }))
+            .expect("source registration should succeed");
+
+        let registries = CoreRegistries::new(
+            sources,
+            ComputeRegistry::new(),
+            TriggerRegistry::new(),
+            ActionRegistry::new(),
+        );
+
+        let catalog = build_core_catalog();
+
+        let graph = ExpandedGraph {
+            nodes: HashMap::from([(
+                "src".to_string(),
+                ExpandedNode {
+                    runtime_id: "src".to_string(),
+                    authoring_path: vec![],
+                    implementation: ImplementationInstance {
+                        impl_id: manifest.id.clone(),
+                        version: manifest.version.clone(),
+                    },
+                    parameters: HashMap::new(),
+                },
+            )]),
+            edges: vec![],
+            boundary_inputs: vec![],
+            boundary_outputs: vec![],
+        };
+
+        let runtime = RuntimeHandle::new(
+            Arc::new(graph),
+            Arc::new(catalog),
+            Arc::new(registries),
+            AdapterProvides {
+                context: HashMap::new(),
+                events: HashSet::new(),
+                effects: HashSet::new(),
+            },
+        );
+
+        let rt_ctx = RuntimeExecutionContext::default();
+        let ctx = ExecutionContext::new(rt_ctx);
+        let term = runtime.run(&GraphId::new("g"), &EventId::new("e"), &ctx, None);
+
+        assert_eq!(term, RunTermination::Failed(ErrKind::ValidationFailed));
     }
 }

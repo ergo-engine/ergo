@@ -1,0 +1,308 @@
+use std::borrow::Cow;
+use std::fmt;
+
+use ergo_runtime::action::ActionEffects;
+use ergo_runtime::common::{ErrorInfo, Phase, ValueType};
+pub use ergo_runtime::source::{ContextRequirement, SourceRequires};
+
+use crate::provides::AdapterProvides;
+
+#[derive(Debug)]
+pub enum CompositionError {
+    MissingContextKey {
+        key: String,
+        index: usize,
+    },
+    ContextTypeMismatch {
+        key: String,
+        expected: String,
+        got: String,
+        index: usize,
+    },
+    UnsupportedCaptureFormat {
+        version: String,
+    },
+    WriteTargetNotProvided {
+        key: String,
+        index: usize,
+    },
+    WriteTargetNotWritable {
+        key: String,
+        index: usize,
+    },
+    WriteTypeMismatch {
+        key: String,
+        expected: String,
+        got: String,
+        index: usize,
+    },
+    MissingSetContextEffect,
+}
+
+impl ErrorInfo for CompositionError {
+    fn rule_id(&self) -> &'static str {
+        match self {
+            Self::MissingContextKey { .. } => "COMP-1",
+            Self::ContextTypeMismatch { .. } => "COMP-2",
+            Self::UnsupportedCaptureFormat { .. } => "COMP-3",
+            Self::WriteTargetNotProvided { .. } => "COMP-11",
+            Self::WriteTargetNotWritable { .. } => "COMP-12",
+            Self::WriteTypeMismatch { .. } => "COMP-13",
+            Self::MissingSetContextEffect => "COMP-14",
+        }
+    }
+
+    fn phase(&self) -> Phase {
+        Phase::Composition
+    }
+
+    fn doc_anchor(&self) -> &'static str {
+        match self {
+            Self::MissingContextKey { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#COMP-1",
+            Self::ContextTypeMismatch { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#COMP-2",
+            Self::UnsupportedCaptureFormat { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#COMP-3",
+            Self::WriteTargetNotProvided { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-11",
+            Self::WriteTargetNotWritable { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-12",
+            Self::WriteTypeMismatch { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-13",
+            Self::MissingSetContextEffect => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-14",
+        }
+    }
+
+    fn summary(&self) -> Cow<'static, str> {
+        match self {
+            Self::MissingContextKey { key, .. } => Cow::Owned(format!(
+                "Required context key '{}' not provided by adapter",
+                key
+            )),
+            Self::ContextTypeMismatch {
+                key, expected, got, ..
+            } => Cow::Owned(format!(
+                "Context key '{}' type mismatch: expected '{}', got '{}'",
+                key, expected, got
+            )),
+            Self::UnsupportedCaptureFormat { version } => {
+                Cow::Owned(format!("Unsupported capture format version: '{}'", version))
+            }
+            Self::WriteTargetNotProvided { key, .. } => Cow::Owned(format!(
+                "Action write target '{}' not provided by adapter",
+                key
+            )),
+            Self::WriteTargetNotWritable { key, .. } => Cow::Owned(format!(
+                "Action write target '{}' is not writable in adapter",
+                key
+            )),
+            Self::WriteTypeMismatch {
+                key, expected, got, ..
+            } => Cow::Owned(format!(
+                "Action write target '{}' type mismatch: expected '{}', got '{}'",
+                key, expected, got
+            )),
+            Self::MissingSetContextEffect => {
+                Cow::Borrowed("Adapter does not accept set_context effect required for writes")
+            }
+        }
+    }
+
+    fn path(&self) -> Option<Cow<'static, str>> {
+        match self {
+            Self::MissingContextKey { index, .. } => {
+                Some(Cow::Owned(format!("$.requires.context[{}].name", index)))
+            }
+            Self::ContextTypeMismatch { index, .. } => {
+                Some(Cow::Owned(format!("$.requires.context[{}].type", index)))
+            }
+            Self::UnsupportedCaptureFormat { .. } => {
+                Some(Cow::Borrowed("$.capture.format_version"))
+            }
+            Self::WriteTargetNotProvided { index, .. } => {
+                Some(Cow::Owned(format!("$.effects.writes[{}].name", index)))
+            }
+            Self::WriteTargetNotWritable { index, .. } => {
+                Some(Cow::Owned(format!("$.effects.writes[{}].name", index)))
+            }
+            Self::WriteTypeMismatch { index, .. } => {
+                Some(Cow::Owned(format!("$.effects.writes[{}].type", index)))
+            }
+            Self::MissingSetContextEffect => Some(Cow::Borrowed("$.effects.writes")),
+        }
+    }
+
+    fn fix(&self) -> Option<Cow<'static, str>> {
+        match self {
+            Self::MissingContextKey { key, .. } => Some(Cow::Owned(format!(
+                "Add context key '{}' to the adapter's context_keys",
+                key
+            ))),
+            Self::ContextTypeMismatch { key, expected, .. } => Some(Cow::Owned(format!(
+                "Change type of '{}' in adapter's context_keys to '{}'",
+                key, expected
+            ))),
+            Self::UnsupportedCaptureFormat { .. } => {
+                Some(Cow::Borrowed("Use a supported capture format version: 1"))
+            }
+            Self::WriteTargetNotProvided { key, .. } => Some(Cow::Owned(format!(
+                "Add context key '{}' to the adapter's context_keys",
+                key
+            ))),
+            Self::WriteTargetNotWritable { key, .. } => Some(Cow::Owned(format!(
+                "Mark context key '{}' as writable in the adapter manifest",
+                key
+            ))),
+            Self::WriteTypeMismatch { key, expected, .. } => Some(Cow::Owned(format!(
+                "Change type of '{}' in adapter's context_keys to '{}'",
+                key, expected
+            ))),
+            Self::MissingSetContextEffect => Some(Cow::Borrowed(
+                "Add 'set_context' to adapter accepts.effects",
+            )),
+        }
+    }
+}
+
+impl fmt::Display for CompositionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[{}] {}", self.rule_id(), self.summary())
+    }
+}
+
+impl std::error::Error for CompositionError {}
+
+/// Supported capture format versions.
+const SUPPORTED_CAPTURE_VERSIONS: &[&str] = &["1"];
+
+/// Validate that an adapter provides what a source requires.
+/// COMP-1: Required context keys must exist in adapter.
+/// COMP-2: Context key types must match.
+pub fn validate_source_adapter_composition(
+    source: &SourceRequires,
+    adapter: &AdapterProvides,
+) -> Result<(), CompositionError> {
+    for (index, req) in source.context.iter().enumerate() {
+        if !req.required {
+            continue;
+        }
+
+        // COMP-1: Check key exists
+        let provided = match adapter.context.get(&req.name) {
+            Some(p) => p,
+            None => {
+                return Err(CompositionError::MissingContextKey {
+                    key: req.name.clone(),
+                    index,
+                });
+            }
+        };
+
+        // COMP-2: Check types match
+        let provided_ty = match parse_value_type(&provided.ty) {
+            Some(ty) => ty,
+            None => {
+                return Err(CompositionError::ContextTypeMismatch {
+                    key: req.name.clone(),
+                    expected: value_type_name(&req.ty).to_string(),
+                    got: provided.ty.clone(),
+                    index,
+                });
+            }
+        };
+
+        if req.ty != provided_ty {
+            return Err(CompositionError::ContextTypeMismatch {
+                key: req.name.clone(),
+                expected: value_type_name(&req.ty).to_string(),
+                got: provided.ty.clone(),
+                index,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// COMP-3: Validate capture format version is supported.
+pub fn validate_capture_format(version: &str) -> Result<(), CompositionError> {
+    if !SUPPORTED_CAPTURE_VERSIONS.contains(&version) {
+        return Err(CompositionError::UnsupportedCaptureFormat {
+            version: version.to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Validate that an adapter satisfies action write requirements.
+/// COMP-11: Write targets exist in adapter context.
+/// COMP-12: Write targets are writable.
+/// COMP-13: Write target types match.
+/// COMP-14: Writes require set_context effect acceptance.
+pub fn validate_action_adapter_composition(
+    effects: &ActionEffects,
+    adapter: &AdapterProvides,
+) -> Result<(), CompositionError> {
+    if effects.writes.is_empty() {
+        return Ok(());
+    }
+
+    for (index, write) in effects.writes.iter().enumerate() {
+        let provided = match adapter.context.get(&write.name) {
+            Some(p) => p,
+            None => {
+                return Err(CompositionError::WriteTargetNotProvided {
+                    key: write.name.clone(),
+                    index,
+                });
+            }
+        };
+
+        if !provided.writable {
+            return Err(CompositionError::WriteTargetNotWritable {
+                key: write.name.clone(),
+                index,
+            });
+        }
+
+        let provided_ty = match parse_value_type(&provided.ty) {
+            Some(ty) => ty,
+            None => {
+                return Err(CompositionError::WriteTypeMismatch {
+                    key: write.name.clone(),
+                    expected: value_type_name(&write.value_type).to_string(),
+                    got: provided.ty.clone(),
+                    index,
+                });
+            }
+        };
+
+        if provided_ty != write.value_type {
+            return Err(CompositionError::WriteTypeMismatch {
+                key: write.name.clone(),
+                expected: value_type_name(&write.value_type).to_string(),
+                got: provided.ty.clone(),
+                index,
+            });
+        }
+    }
+
+    if !adapter.effects.contains("set_context") {
+        return Err(CompositionError::MissingSetContextEffect);
+    }
+
+    Ok(())
+}
+
+fn parse_value_type(value: &str) -> Option<ValueType> {
+    match value {
+        "Number" => Some(ValueType::Number),
+        "Series" => Some(ValueType::Series),
+        "Bool" => Some(ValueType::Bool),
+        "String" => Some(ValueType::String),
+        _ => None,
+    }
+}
+
+fn value_type_name(value: &ValueType) -> &'static str {
+    match value {
+        ValueType::Number => "Number",
+        ValueType::Series => "Series",
+        ValueType::Bool => "Bool",
+        ValueType::String => "String",
+    }
+}

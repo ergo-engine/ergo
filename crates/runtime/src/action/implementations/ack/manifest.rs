@@ -1,6 +1,6 @@
 use crate::action::{
-    ActionKind, ActionPrimitiveManifest, ActionValueType, ExecutionSpec, InputSpec, OutputSpec,
-    ParameterSpec, ParameterValue, StateSpec,
+    ActionEffects, ActionKind, ActionPrimitiveManifest, ActionValueType, ExecutionSpec, InputSpec,
+    OutputSpec, ParameterSpec, ParameterValue, StateSpec,
 };
 
 pub fn ack_action_manifest() -> ActionPrimitiveManifest {
@@ -22,8 +22,10 @@ pub fn ack_action_manifest() -> ActionPrimitiveManifest {
             name: "accept".to_string(),
             value_type: ParameterValue::Bool(true).value_type(),
             default: Some(ParameterValue::Bool(true)),
+            required: false,
             bounds: None,
         }],
+        effects: ActionEffects { writes: vec![] },
         execution: ExecutionSpec {
             deterministic: true,
             retryable: false,

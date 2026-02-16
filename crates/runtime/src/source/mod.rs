@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crate::common::{Value, ValueType};
+use std::borrow::Cow;
+
+use crate::common::{ErrorInfo, Phase, Value, ValueType};
 use crate::runtime::ExecutionContext;
 
 pub mod implementations;
@@ -68,6 +70,18 @@ pub struct ParameterSpec {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct SourceRequires {
+    pub context: Vec<ContextRequirement>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContextRequirement {
+    pub name: String,
+    pub ty: ValueType,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExecutionSpec {
     pub deterministic: bool,
     pub cadence: Cadence,
@@ -86,6 +100,7 @@ pub struct SourcePrimitiveManifest {
     pub inputs: Vec<InputSpec>,
     pub outputs: Vec<OutputSpec>,
     pub parameters: Vec<ParameterSpec>,
+    pub requires: SourceRequires,
     pub execution: ExecutionSpec,
     pub state: StateSpec,
     pub side_effects: bool,
@@ -93,11 +108,22 @@ pub struct SourcePrimitiveManifest {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SourceValidationError {
+    InvalidId {
+        id: String,
+    },
+    InvalidVersion {
+        version: String,
+    },
     WrongKind {
         expected: SourceKind,
         got: SourceKind,
     },
     InputsNotAllowed,
+    DuplicateOutput {
+        name: String,
+        first_index: usize,
+        second_index: usize,
+    },
     SideEffectsNotAllowed,
     NonDeterministicExecution,
     InvalidCadence,
@@ -108,30 +134,147 @@ pub enum SourceValidationError {
         expected: ParameterType,
         got: ParameterType,
     },
-    UndeclaredParameter {
-        node: String,
-        parameter: String,
-    },
-    UndeclaredOutput {
-        primitive: String,
-        output: String,
-    },
-    MissingDeclaredOutput {
-        primitive: String,
-        output: String,
-    },
     InvalidOutputType {
         output: String,
         expected: ValueType,
         got: ValueType,
     },
-    UnknownPrimitive(String),
-    MissingNode(String),
-    MissingOutput {
-        node: String,
-        output: String,
-    },
     OutputsRequired,
+}
+
+impl ErrorInfo for SourceValidationError {
+    fn rule_id(&self) -> &'static str {
+        match self {
+            Self::InvalidId { .. } => "SRC-1",
+            Self::InvalidVersion { .. } => "SRC-2",
+            Self::WrongKind { .. } => "SRC-3",
+            Self::InputsNotAllowed => "SRC-4",
+            Self::OutputsRequired => "SRC-5",
+            Self::DuplicateOutput { .. } => "SRC-6",
+            Self::InvalidOutputType { .. } => "SRC-7",
+            Self::StateNotAllowed => "SRC-8",
+            Self::SideEffectsNotAllowed => "SRC-9",
+            Self::NonDeterministicExecution => "SRC-12",
+            Self::InvalidCadence => "SRC-13",
+            Self::DuplicateId(_) => "SRC-14",
+            Self::InvalidParameterType { .. } => "SRC-15",
+        }
+    }
+
+    fn phase(&self) -> Phase {
+        Phase::Registration
+    }
+
+    fn doc_anchor(&self) -> &'static str {
+        match self.rule_id() {
+            "SRC-1" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-1",
+            "SRC-2" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-2",
+            "SRC-3" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-3",
+            "SRC-4" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-4",
+            "SRC-5" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-5",
+            "SRC-6" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-6",
+            "SRC-7" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-7",
+            "SRC-8" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-8",
+            "SRC-9" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-9",
+            "SRC-12" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-12",
+            "SRC-13" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-13",
+            "SRC-14" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-14",
+            "SRC-15" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-15",
+            _ => "CANONICAL/PHASE_INVARIANTS.md",
+        }
+    }
+
+    fn summary(&self) -> Cow<'static, str> {
+        match self {
+            Self::InvalidId { id } => Cow::Owned(format!("Invalid source ID: '{}'", id)),
+            Self::InvalidVersion { version } => {
+                Cow::Owned(format!("Invalid version: '{}'", version))
+            }
+            Self::WrongKind { expected, got } => Cow::Owned(format!(
+                "Wrong kind: expected {:?}, got {:?}",
+                expected, got
+            )),
+            Self::InputsNotAllowed => Cow::Borrowed("Sources cannot declare inputs"),
+            Self::OutputsRequired => Cow::Borrowed("Source must declare at least one output"),
+            Self::DuplicateOutput { name, .. } => {
+                Cow::Owned(format!("Duplicate output name: '{}'", name))
+            }
+            Self::InvalidOutputType {
+                output,
+                expected,
+                got,
+            } => Cow::Owned(format!(
+                "Output '{}' has invalid type: expected {:?}, got {:?}",
+                output, expected, got
+            )),
+            Self::StateNotAllowed => Cow::Borrowed("Source state is not allowed"),
+            Self::SideEffectsNotAllowed => Cow::Borrowed("Source side effects are not allowed"),
+            Self::NonDeterministicExecution => {
+                Cow::Borrowed("Source execution must be deterministic")
+            }
+            Self::InvalidCadence => Cow::Borrowed("Source cadence must be continuous"),
+            Self::DuplicateId(_) => Cow::Borrowed("Duplicate source ID: already registered"),
+            Self::InvalidParameterType {
+                parameter,
+                expected,
+                got,
+            } => Cow::Owned(format!(
+                "Parameter '{}' has invalid type: expected {:?}, got {:?}",
+                parameter, expected, got
+            )),
+        }
+    }
+
+    fn path(&self) -> Option<Cow<'static, str>> {
+        match self {
+            Self::InvalidId { .. } => Some(Cow::Borrowed("$.id")),
+            Self::InvalidVersion { .. } => Some(Cow::Borrowed("$.version")),
+            Self::WrongKind { .. } => Some(Cow::Borrowed("$.kind")),
+            Self::InputsNotAllowed => Some(Cow::Borrowed("$.inputs")),
+            Self::OutputsRequired => Some(Cow::Borrowed("$.outputs")),
+            Self::DuplicateOutput { second_index, .. } => {
+                Some(Cow::Owned(format!("$.outputs[{}].name", second_index)))
+            }
+            Self::InvalidOutputType { .. } => Some(Cow::Borrowed("$.outputs[].type")),
+            Self::StateNotAllowed => Some(Cow::Borrowed("$.state.allowed")),
+            Self::SideEffectsNotAllowed => Some(Cow::Borrowed("$.side_effects")),
+            Self::NonDeterministicExecution => Some(Cow::Borrowed("$.execution.deterministic")),
+            Self::InvalidCadence => Some(Cow::Borrowed("$.execution.cadence")),
+            Self::DuplicateId(_) => Some(Cow::Borrowed("$.id")),
+            Self::InvalidParameterType { .. } => Some(Cow::Borrowed("$.parameters[].default")),
+        }
+    }
+
+    fn fix(&self) -> Option<Cow<'static, str>> {
+        match self {
+            Self::InvalidId { .. } => Some(Cow::Borrowed(
+                "ID must start with lowercase letter and contain only lowercase letters, digits, and underscores",
+            )),
+            Self::DuplicateId(_) => Some(Cow::Borrowed("Choose a unique ID not already registered")),
+            Self::InvalidVersion { .. } => Some(Cow::Borrowed(
+                "Version must be valid semver (e.g., '1.0.0')",
+            )),
+            Self::WrongKind { .. } => Some(Cow::Borrowed("Set kind: source")),
+            Self::InputsNotAllowed => Some(Cow::Borrowed("Remove inputs from source manifest")),
+            Self::OutputsRequired => Some(Cow::Borrowed("Add at least one output")),
+            Self::DuplicateOutput { name, .. } => Some(Cow::Owned(format!(
+                "Rename output '{}' to a unique value",
+                name
+            ))),
+            Self::InvalidOutputType { .. } => Some(Cow::Borrowed(
+                "Use a valid output type: number, bool, string, or series",
+            )),
+            Self::StateNotAllowed => Some(Cow::Borrowed("Set state.allowed: false")),
+            Self::SideEffectsNotAllowed => Some(Cow::Borrowed("Set side_effects: false")),
+            Self::NonDeterministicExecution => {
+                Some(Cow::Borrowed("Set execution.deterministic: true"))
+            }
+            Self::InvalidCadence => Some(Cow::Borrowed("Set cadence: continuous")),
+            Self::InvalidParameterType { .. } => Some(Cow::Borrowed(
+                "Change parameter default value to match the declared parameter type",
+            )),
+        }
+    }
 }
 
 pub trait SourcePrimitive {

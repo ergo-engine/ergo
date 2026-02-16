@@ -1,4 +1,7 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+
+use crate::common::{ErrorInfo, Phase};
 
 pub type Version = String;
 pub type NodeId = String;
@@ -279,6 +282,11 @@ pub enum ExpandError {
         parameter: String,
         referenced: String,
     },
+    /// I.7: Binding references a parameter not declared in the target's manifest
+    UndeclaredParameter {
+        node_id: String,
+        parameter: String,
+    },
     /// A.2: Boundary output references unmapped node_id
     UnmappedBoundaryOutput {
         port_name: String,
@@ -312,6 +320,302 @@ pub enum ClusterValidationError {
     WireabilityExceedsInferred { port_name: String },
 }
 
+impl ErrorInfo for SignatureInferenceError {
+    fn rule_id(&self) -> &'static str {
+        "D.4"
+    }
+
+    fn phase(&self) -> Phase {
+        Phase::Composition
+    }
+
+    fn doc_anchor(&self) -> &'static str {
+        "STABLE/CLUSTER_SPEC.md#D.4"
+    }
+
+    fn summary(&self) -> Cow<'static, str> {
+        match self {
+            Self::MissingPrimitive { id, version } => {
+                Cow::Owned(format!("Missing primitive '{}@{}'", id, version))
+            }
+            Self::MissingNode(node) => Cow::Owned(format!("Missing node '{}'", node)),
+            Self::MissingOutput {
+                impl_id,
+                version,
+                output,
+            } => Cow::Owned(format!(
+                "Missing output '{}' on primitive '{}@{}'",
+                output, impl_id, version
+            )),
+        }
+    }
+
+    fn path(&self) -> Option<Cow<'static, str>> {
+        Some(Cow::Borrowed("$.output_ports"))
+    }
+
+    fn fix(&self) -> Option<Cow<'static, str>> {
+        Some(Cow::Borrowed(
+            "Ensure all output ports map to existing node outputs",
+        ))
+    }
+}
+
+impl ErrorInfo for ClusterValidationError {
+    fn rule_id(&self) -> &'static str {
+        match self {
+            Self::WireabilityExceedsInferred { .. } => "D.11",
+        }
+    }
+
+    fn phase(&self) -> Phase {
+        Phase::Composition
+    }
+
+    fn doc_anchor(&self) -> &'static str {
+        "STABLE/CLUSTER_SPEC.md#D.11"
+    }
+
+    fn summary(&self) -> Cow<'static, str> {
+        match self {
+            Self::WireabilityExceedsInferred { port_name } => Cow::Owned(format!(
+                "Declared wireability exceeds inferred for port '{}'",
+                port_name
+            )),
+        }
+    }
+
+    fn path(&self) -> Option<Cow<'static, str>> {
+        Some(Cow::Borrowed("$.declared_signature"))
+    }
+
+    fn fix(&self) -> Option<Cow<'static, str>> {
+        Some(Cow::Borrowed(
+            "Adjust declared wireability to be <= inferred wireability",
+        ))
+    }
+}
+
+impl ErrorInfo for ExpandError {
+    fn rule_id(&self) -> &'static str {
+        match self {
+            Self::EmptyCluster => "D.1",
+            Self::DuplicateInputPort { .. } => "D.5",
+            Self::DuplicateOutputPort { .. } => "D.6",
+            Self::DuplicateParameter { .. } => "D.9",
+            Self::ParameterDefaultTypeMismatch { .. } => "D.8",
+            Self::SignatureInferenceFailed(_) => "D.4",
+            Self::DeclaredSignatureInvalid(_) => "D.10",
+            Self::MissingCluster { .. } => "E.9",
+            Self::MissingRequiredParameter { .. } | Self::UnresolvedExposedBinding { .. } => "I.3",
+            Self::ParameterBindingTypeMismatch { .. }
+            | Self::ExposedParameterTypeMismatch { .. } => "I.4",
+            Self::ExposedParameterNotFound { .. } => "I.5",
+            Self::UndeclaredParameter { .. } => "I.7",
+            Self::UnmappedBoundaryOutput { .. } | Self::UnmappedNestedOutput { .. } => "D.4",
+        }
+    }
+
+    fn phase(&self) -> Phase {
+        Phase::Composition
+    }
+
+    fn doc_anchor(&self) -> &'static str {
+        match self.rule_id() {
+            "D.1" => "STABLE/CLUSTER_SPEC.md#D.1",
+            "D.4" => "STABLE/CLUSTER_SPEC.md#D.4",
+            "D.5" => "STABLE/CLUSTER_SPEC.md#D.5",
+            "D.6" => "STABLE/CLUSTER_SPEC.md#D.6",
+            "D.8" => "STABLE/CLUSTER_SPEC.md#D.8",
+            "D.9" => "STABLE/CLUSTER_SPEC.md#D.9",
+            "D.10" => "STABLE/CLUSTER_SPEC.md#D.10",
+            "D.11" => "STABLE/CLUSTER_SPEC.md#D.11",
+            "I.3" => "STABLE/CLUSTER_SPEC.md#I.3",
+            "I.4" => "STABLE/CLUSTER_SPEC.md#I.4",
+            "I.5" => "STABLE/CLUSTER_SPEC.md#I.5",
+            "I.7" => "STABLE/CLUSTER_SPEC.md#I.7",
+            "E.9" => "STABLE/CLUSTER_SPEC.md#E.9",
+            _ => "CANONICAL/PHASE_INVARIANTS.md",
+        }
+    }
+
+    fn summary(&self) -> Cow<'static, str> {
+        match self {
+            Self::EmptyCluster => Cow::Borrowed("Cluster contains no nodes"),
+            Self::MissingCluster { id, version } => {
+                Cow::Owned(format!("Missing cluster '{}@{}'", id, version))
+            }
+            Self::DuplicateInputPort { name } => {
+                Cow::Owned(format!("Duplicate input port name: '{}'", name))
+            }
+            Self::DuplicateOutputPort { name } => {
+                Cow::Owned(format!("Duplicate output port name: '{}'", name))
+            }
+            Self::DuplicateParameter { name } => {
+                Cow::Owned(format!("Duplicate parameter name: '{}'", name))
+            }
+            Self::ParameterDefaultTypeMismatch {
+                name,
+                expected,
+                got,
+            } => Cow::Owned(format!(
+                "Parameter '{}' default has wrong type (expected {:?}, got {:?})",
+                name, expected, got
+            )),
+            Self::SignatureInferenceFailed(inner) => inner.summary(),
+            Self::DeclaredSignatureInvalid(inner) => inner.summary(),
+            Self::MissingRequiredParameter {
+                cluster_id,
+                parameter,
+            } => Cow::Owned(format!(
+                "Missing required parameter '{}' for cluster '{}'",
+                parameter, cluster_id
+            )),
+            Self::ParameterBindingTypeMismatch {
+                cluster_id,
+                parameter,
+                expected,
+                got,
+            } => Cow::Owned(format!(
+                "Parameter '{}' on cluster '{}' has wrong type (expected {:?}, got {:?})",
+                parameter, cluster_id, expected, got
+            )),
+            Self::ExposedParameterNotFound {
+                cluster_id,
+                parameter,
+                referenced,
+            } => Cow::Owned(format!(
+                "Exposed parameter '{}' on cluster '{}' references missing '{}'",
+                parameter, cluster_id, referenced
+            )),
+            Self::ExposedParameterTypeMismatch {
+                cluster_id,
+                parameter,
+                expected,
+                got,
+            } => Cow::Owned(format!(
+                "Exposed parameter '{}' on cluster '{}' has wrong type (expected {:?}, got {:?})",
+                parameter, cluster_id, expected, got
+            )),
+            Self::UnresolvedExposedBinding {
+                node_id,
+                parameter,
+                referenced,
+            } => Cow::Owned(format!(
+                "Unresolved exposed binding '{}' for parameter '{}' on node '{}'",
+                referenced, parameter, node_id
+            )),
+            Self::UndeclaredParameter { node_id, parameter } => Cow::Owned(format!(
+                "Undeclared parameter '{}' on node '{}' (not in manifest)",
+                parameter, node_id
+            )),
+            Self::UnmappedBoundaryOutput { port_name, .. } => Cow::Owned(format!(
+                "Boundary output '{}' maps to a missing node output",
+                port_name
+            )),
+            Self::UnmappedNestedOutput {
+                cluster_id,
+                port_name,
+            } => Cow::Owned(format!(
+                "Nested output '{}' in cluster '{}' maps to a missing node output",
+                port_name, cluster_id
+            )),
+        }
+    }
+
+    fn path(&self) -> Option<Cow<'static, str>> {
+        match self {
+            Self::EmptyCluster => Some(Cow::Borrowed("$.nodes")),
+            Self::DuplicateInputPort { .. } => Some(Cow::Borrowed("$.input_ports")),
+            Self::DuplicateOutputPort { .. } => Some(Cow::Borrowed("$.output_ports")),
+            Self::DuplicateParameter { .. } => Some(Cow::Borrowed("$.parameters")),
+            Self::ParameterDefaultTypeMismatch { .. } => Some(Cow::Borrowed("$.parameters")),
+            Self::SignatureInferenceFailed(_) => Some(Cow::Borrowed("$.output_ports")),
+            Self::DeclaredSignatureInvalid(_) => Some(Cow::Borrowed("$.declared_signature")),
+            Self::MissingRequiredParameter { .. }
+            | Self::ParameterBindingTypeMismatch { .. }
+            | Self::ExposedParameterNotFound { .. }
+            | Self::ExposedParameterTypeMismatch { .. }
+            | Self::UnresolvedExposedBinding { .. }
+            | Self::UndeclaredParameter { .. } => Some(Cow::Borrowed("$.nodes")),
+            Self::UnmappedBoundaryOutput { .. } => Some(Cow::Borrowed("$.output_ports")),
+            Self::UnmappedNestedOutput { .. } => Some(Cow::Borrowed("$.nodes")),
+            Self::MissingCluster { .. } => Some(Cow::Borrowed("$.nodes")),
+        }
+    }
+
+    fn fix(&self) -> Option<Cow<'static, str>> {
+        match self {
+            Self::EmptyCluster => Some(Cow::Borrowed("Add at least one node to the cluster")),
+            Self::MissingCluster { .. } => Some(Cow::Borrowed(
+                "Ensure referenced cluster ID and version exist",
+            )),
+            Self::DuplicateInputPort { name } => Some(Cow::Owned(format!(
+                "Rename input port '{}' to a unique name",
+                name
+            ))),
+            Self::DuplicateOutputPort { name } => Some(Cow::Owned(format!(
+                "Rename output port '{}' to a unique name",
+                name
+            ))),
+            Self::DuplicateParameter { name } => Some(Cow::Owned(format!(
+                "Rename parameter '{}' to a unique name",
+                name
+            ))),
+            Self::ParameterDefaultTypeMismatch { name, expected, .. } => Some(Cow::Owned(format!(
+                "Set default for '{}' to type {:?}",
+                name, expected
+            ))),
+            Self::SignatureInferenceFailed(_) => Some(Cow::Borrowed(
+                "Ensure output ports map to valid node outputs",
+            )),
+            Self::DeclaredSignatureInvalid(_) => Some(Cow::Borrowed(
+                "Align declared signature with the inferred signature",
+            )),
+            Self::MissingRequiredParameter { parameter, .. } => Some(Cow::Owned(format!(
+                "Bind required parameter '{}' or provide a default",
+                parameter
+            ))),
+            Self::ParameterBindingTypeMismatch {
+                parameter,
+                expected,
+                ..
+            } => Some(Cow::Owned(format!(
+                "Bind parameter '{}' with type {:?}",
+                parameter, expected
+            ))),
+            Self::ExposedParameterNotFound { referenced, .. } => Some(Cow::Owned(format!(
+                "Expose an existing parent parameter '{}'",
+                referenced
+            ))),
+            Self::ExposedParameterTypeMismatch {
+                parameter,
+                expected,
+                ..
+            } => Some(Cow::Owned(format!(
+                "Match exposed parameter '{}' type to {:?}",
+                parameter, expected
+            ))),
+            Self::UnresolvedExposedBinding { referenced, .. } => Some(Cow::Owned(format!(
+                "Provide a value for exposed parameter '{}'",
+                referenced
+            ))),
+            Self::UndeclaredParameter { parameter, .. } => Some(Cow::Owned(format!(
+                "Remove binding '{}' or add it to the primitive's manifest parameters",
+                parameter
+            ))),
+            Self::UnmappedBoundaryOutput { port_name, .. } => Some(Cow::Owned(format!(
+                "Map output port '{}' to a valid node output",
+                port_name
+            ))),
+            Self::UnmappedNestedOutput { port_name, .. } => Some(Cow::Owned(format!(
+                "Map nested output '{}' to a valid node output",
+                port_name
+            ))),
+        }
+    }
+}
+
 pub trait ClusterLoader {
     fn load(&self, id: &str, version: &Version) -> Option<ClusterDefinition>;
 }
@@ -332,7 +636,11 @@ pub fn expand<L: ClusterLoader>(
 
     let mut graph = build.graph;
     graph.boundary_inputs = cluster_def.input_ports.clone();
-    graph.boundary_outputs = map_boundary_outputs(&cluster_def.output_ports, &build.node_mapping)?;
+    graph.boundary_outputs = map_boundary_outputs(
+        &cluster_def.output_ports,
+        &build.node_mapping,
+        &build.cluster_output_map,
+    )?;
 
     // E.3 invariant: ExternalInput must not appear as edge target (sink) after expansion
     for edge in &graph.edges {
@@ -610,12 +918,27 @@ impl ExpandContext {
     }
 }
 
-/// I.3/I.4/I.5: Validate parameter bindings for a nested cluster instantiation.
+/// I.3/I.4/I.5/I.7: Validate parameter bindings for a nested cluster instantiation.
 fn validate_parameter_bindings(
     nested_def: &ClusterDefinition,
     bindings: &HashMap<String, ParameterBinding>,
     parent_parameters: &[ParameterSpec],
 ) -> Result<(), ExpandError> {
+    // I.7: Reject bindings that reference undeclared parameters
+    let spec_names: std::collections::HashSet<&str> = nested_def
+        .parameters
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect();
+    for key in bindings.keys() {
+        if !spec_names.contains(key.as_str()) {
+            return Err(ExpandError::UndeclaredParameter {
+                node_id: nested_def.id.clone(),
+                parameter: key.clone(),
+            });
+        }
+    }
+
     for param_spec in &nested_def.parameters {
         match bindings.get(&param_spec.name) {
             None => {
@@ -672,6 +995,7 @@ struct ExpandBuild {
     graph: ExpandedGraph,
     node_mapping: HashMap<NodeId, String>,
     placeholder_map: HashMap<String, String>,
+    cluster_output_map: HashMap<NodeId, HashMap<String, ExpandedEndpoint>>,
 }
 
 fn expand_with_context<L: ClusterLoader>(
@@ -809,19 +1133,24 @@ fn expand_with_context<L: ClusterLoader>(
                 // A.3: Map all output ports, failing if any node_id is unmapped
                 let mut output_map: HashMap<String, ExpandedEndpoint> = HashMap::new();
                 for output_port in &bound_nested.output_ports {
-                    let mapped_node_id = nested_build
-                        .node_mapping
-                        .get(&output_port.maps_to.node_id)
-                        .ok_or_else(|| ExpandError::UnmappedNestedOutput {
+                    let mapped_output = resolve_mapped_output(
+                        &output_port.maps_to,
+                        &nested_build.node_mapping,
+                        &nested_build.cluster_output_map,
+                    )
+                    .ok_or_else(|| ExpandError::UnmappedNestedOutput {
+                        cluster_id: node.id.clone(),
+                        port_name: output_port.name.clone(),
+                    })?;
+                    let ExpandedEndpoint::NodePort { node_id, port_name } = mapped_output else {
+                        return Err(ExpandError::UnmappedNestedOutput {
                             cluster_id: node.id.clone(),
                             port_name: output_port.name.clone(),
-                        })?;
+                        });
+                    };
                     output_map.insert(
                         output_port.name.clone(),
-                        ExpandedEndpoint::NodePort {
-                            node_id: mapped_node_id.clone(),
-                            port_name: output_port.maps_to.port_name.clone(),
-                        },
+                        ExpandedEndpoint::NodePort { node_id, port_name },
                     );
                 }
                 cluster_output_map.insert(node.id.clone(), output_map);
@@ -867,6 +1196,7 @@ fn expand_with_context<L: ClusterLoader>(
         graph,
         node_mapping,
         placeholder_map,
+        cluster_output_map,
     })
 }
 
@@ -923,6 +1253,23 @@ fn resolve_output_endpoint(
     ExpandedEndpoint::ExternalInput {
         name: external_key(authoring_prefix, cluster_id, &output.node_id),
     }
+}
+
+fn resolve_mapped_output(
+    output: &OutputRef,
+    node_mapping: &HashMap<NodeId, String>,
+    cluster_output_map: &HashMap<NodeId, HashMap<String, ExpandedEndpoint>>,
+) -> Option<ExpandedEndpoint> {
+    if let Some(node_id) = node_mapping.get(&output.node_id) {
+        return Some(ExpandedEndpoint::NodePort {
+            node_id: node_id.clone(),
+            port_name: output.port_name.clone(),
+        });
+    }
+
+    cluster_output_map
+        .get(&output.node_id)
+        .and_then(|map| map.get(&output.port_name).cloned())
 }
 
 fn resolve_input_endpoint(
@@ -1034,6 +1381,18 @@ fn resolve_impl_parameters(
     bindings: &HashMap<String, ParameterBinding>,
     parent_resolved: &HashMap<String, ParameterValue>,
 ) -> Result<HashMap<String, ParameterValue>, ExpandError> {
+    // I.7: Reject bindings that reference undeclared parameters
+    let spec_names: std::collections::HashSet<&str> =
+        specs.iter().map(|s| s.name.as_str()).collect();
+    for key in bindings.keys() {
+        if !spec_names.contains(key.as_str()) {
+            return Err(ExpandError::UndeclaredParameter {
+                node_id: node_id.to_string(),
+                parameter: key.clone(),
+            });
+        }
+    }
+
     let mut result = HashMap::new();
 
     for spec in specs {
@@ -1080,6 +1439,18 @@ fn build_resolved_params(
     bindings: &HashMap<String, ParameterBinding>,
     resolved_params: &HashMap<String, ParameterValue>,
 ) -> Result<HashMap<String, ParameterValue>, ExpandError> {
+    // I.7: Reject bindings that reference undeclared parameters
+    let spec_names: std::collections::HashSet<&str> =
+        specs.iter().map(|s| s.name.as_str()).collect();
+    for key in bindings.keys() {
+        if !spec_names.contains(key.as_str()) {
+            return Err(ExpandError::UndeclaredParameter {
+                node_id: cluster_id.to_string(),
+                parameter: key.clone(),
+            });
+        }
+    }
+
     let mut result = HashMap::new();
 
     for spec in specs {
@@ -1120,21 +1491,24 @@ fn build_resolved_params(
 fn map_boundary_outputs(
     outputs: &[OutputPortSpec],
     mapping: &HashMap<NodeId, String>,
+    cluster_output_map: &HashMap<NodeId, HashMap<String, ExpandedEndpoint>>,
 ) -> Result<Vec<OutputPortSpec>, ExpandError> {
     let mut result = Vec::with_capacity(outputs.len());
     for o in outputs {
-        let mapped_node_id = mapping.get(&o.maps_to.node_id).cloned().ok_or_else(|| {
-            ExpandError::UnmappedBoundaryOutput {
+        let mapped_output = resolve_mapped_output(&o.maps_to, mapping, cluster_output_map)
+            .ok_or_else(|| ExpandError::UnmappedBoundaryOutput {
                 port_name: o.name.clone(),
                 node_id: o.maps_to.node_id.clone(),
-            }
-        })?;
+            })?;
+        let ExpandedEndpoint::NodePort { node_id, port_name } = mapped_output else {
+            return Err(ExpandError::UnmappedBoundaryOutput {
+                port_name: o.name.clone(),
+                node_id: o.maps_to.node_id.clone(),
+            });
+        };
         result.push(OutputPortSpec {
             name: o.name.clone(),
-            maps_to: OutputRef {
-                node_id: mapped_node_id,
-                port_name: o.maps_to.port_name.clone(),
-            },
+            maps_to: OutputRef { node_id, port_name },
         });
     }
     Ok(result)
@@ -1143,6 +1517,7 @@ fn map_boundary_outputs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::ErrorInfo;
     struct TestLoader {
         clusters: HashMap<(String, Version), ClusterDefinition>,
     }
@@ -1805,16 +2180,17 @@ mod tests {
             meta(PrimitiveKind::Action, &[("outcome", ValueType::Event)]),
         );
 
-        let result = expand(&cluster, &loader, &catalog);
-
+        let err = expand(&cluster, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "D.10");
+        assert_eq!(err.path().as_deref(), Some("$.declared_signature"));
         assert!(
             matches!(
-                result,
-                Err(ExpandError::DeclaredSignatureInvalid(
+                err,
+                ExpandError::DeclaredSignatureInvalid(
                     ClusterValidationError::WireabilityExceedsInferred { ref port_name }
-                )) if port_name == "outcome"
+                ) if port_name == "outcome"
             ),
-            "D.11: Declared wireability exceeding inferred must be rejected in production path"
+            "Declared signature must not exceed inferred wireability"
         );
     }
 
@@ -1900,11 +2276,12 @@ mod tests {
 
         let loader = TestLoader::new();
         let catalog = TestCatalog::default();
-        let result = expand(&cluster, &loader, &catalog);
-
+        let err = expand(&cluster, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "D.5");
+        assert_eq!(err.path().as_deref(), Some("$.input_ports"));
         assert!(matches!(
-            result,
-            Err(ExpandError::DuplicateInputPort { name }) if name == "in"
+            err,
+            ExpandError::DuplicateInputPort { name } if name == "in"
         ));
     }
 
@@ -1951,11 +2328,12 @@ mod tests {
 
         let loader = TestLoader::new();
         let catalog = TestCatalog::default();
-        let result = expand(&cluster, &loader, &catalog);
-
+        let err = expand(&cluster, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "D.6");
+        assert_eq!(err.path().as_deref(), Some("$.output_ports"));
         assert!(matches!(
-            result,
-            Err(ExpandError::DuplicateOutputPort { name }) if name == "out"
+            err,
+            ExpandError::DuplicateOutputPort { name } if name == "out"
         ));
     }
 
@@ -2000,11 +2378,12 @@ mod tests {
 
         let loader = TestLoader::new();
         let catalog = TestCatalog::default();
-        let result = expand(&cluster, &loader, &catalog);
-
+        let err = expand(&cluster, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "D.9");
+        assert_eq!(err.path().as_deref(), Some("$.parameters"));
         assert!(matches!(
-            result,
-            Err(ExpandError::DuplicateParameter { name }) if name == "p"
+            err,
+            ExpandError::DuplicateParameter { name } if name == "p"
         ));
     }
 
@@ -2041,15 +2420,16 @@ mod tests {
 
         let loader = TestLoader::new();
         let catalog = TestCatalog::default();
-        let result = expand(&cluster, &loader, &catalog);
-
+        let err = expand(&cluster, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "D.8");
+        assert_eq!(err.path().as_deref(), Some("$.parameters"));
         assert!(matches!(
-            result,
-            Err(ExpandError::ParameterDefaultTypeMismatch {
+            err,
+            ExpandError::ParameterDefaultTypeMismatch {
                 name,
                 expected,
                 got
-            }) if name == "flag" && expected == ParameterType::Bool && got == ParameterType::Number
+            } if name == "flag" && expected == ParameterType::Bool && got == ParameterType::Number
         ));
     }
 
@@ -2113,14 +2493,15 @@ mod tests {
 
         let loader = TestLoader::new().with_cluster(inner);
         let catalog = TestCatalog::default();
-        let result = expand(&outer, &loader, &catalog);
-
+        let err = expand(&outer, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "I.3");
+        assert_eq!(err.path().as_deref(), Some("$.nodes"));
         assert!(matches!(
-            result,
-            Err(ExpandError::MissingRequiredParameter {
+            err,
+            ExpandError::MissingRequiredParameter {
                 cluster_id,
                 parameter
-            }) if cluster_id == "inner" && parameter == "required_param"
+            } if cluster_id == "inner" && parameter == "required_param"
         ));
     }
 
@@ -2189,16 +2570,17 @@ mod tests {
 
         let loader = TestLoader::new().with_cluster(inner);
         let catalog = TestCatalog::default();
-        let result = expand(&outer, &loader, &catalog);
-
+        let err = expand(&outer, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "I.4");
+        assert_eq!(err.path().as_deref(), Some("$.nodes"));
         assert!(matches!(
-            result,
-            Err(ExpandError::ParameterBindingTypeMismatch {
+            err,
+            ExpandError::ParameterBindingTypeMismatch {
                 cluster_id,
                 parameter,
                 expected,
                 got
-            }) if cluster_id == "inner"
+            } if cluster_id == "inner"
                 && parameter == "num_param"
                 && expected == ParameterType::Number
                 && got == ParameterType::Bool
@@ -2270,15 +2652,16 @@ mod tests {
 
         let loader = TestLoader::new().with_cluster(inner);
         let catalog = TestCatalog::default();
-        let result = expand(&outer, &loader, &catalog);
-
+        let err = expand(&outer, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "I.5");
+        assert_eq!(err.path().as_deref(), Some("$.nodes"));
         assert!(matches!(
-            result,
-            Err(ExpandError::ExposedParameterNotFound {
+            err,
+            ExpandError::ExposedParameterNotFound {
                 cluster_id,
                 parameter,
                 referenced
-            }) if cluster_id == "inner"
+            } if cluster_id == "inner"
                 && parameter == "inner_param"
                 && referenced == "nonexistent_param"
         ));
@@ -2354,16 +2737,17 @@ mod tests {
 
         let loader = TestLoader::new().with_cluster(inner);
         let catalog = TestCatalog::default();
-        let result = expand(&outer, &loader, &catalog);
-
+        let err = expand(&outer, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "I.4");
+        assert_eq!(err.path().as_deref(), Some("$.nodes"));
         assert!(matches!(
-            result,
-            Err(ExpandError::ExposedParameterTypeMismatch {
+            err,
+            ExpandError::ExposedParameterTypeMismatch {
                 cluster_id,
                 parameter,
                 expected,
                 got
-            }) if cluster_id == "inner"
+            } if cluster_id == "inner"
                 && parameter == "threshold"
                 && expected == ParameterType::Number
                 && got == ParameterType::Int
@@ -2535,15 +2919,16 @@ mod tests {
 
         let loader = TestLoader::new();
         let catalog = TestCatalog::default();
-        let result = expand(&cluster, &loader, &catalog);
-
+        let err = expand(&cluster, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "I.3");
+        assert_eq!(err.path().as_deref(), Some("$.nodes"));
         assert!(matches!(
-            result,
-            Err(ExpandError::UnresolvedExposedBinding {
+            err,
+            ExpandError::UnresolvedExposedBinding {
                 node_id,
                 parameter,
                 referenced
-            }) if node_id == "leaf"
+            } if node_id == "leaf"
                 && parameter == "x"
                 && referenced == "nonexistent"
         ));
@@ -2729,14 +3114,15 @@ mod tests {
             ),
         );
 
-        let result = expand(&cluster, &loader, &catalog);
-
+        let err = expand(&cluster, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "I.3");
+        assert_eq!(err.path().as_deref(), Some("$.nodes"));
         assert!(matches!(
-            result,
-            Err(ExpandError::MissingRequiredParameter {
+            err,
+            ExpandError::MissingRequiredParameter {
                 cluster_id,
                 parameter
-            }) if cluster_id == "leaf"
+            } if cluster_id == "leaf"
                 && parameter == "threshold"
         ));
     }
@@ -2941,14 +3327,15 @@ mod tests {
         let loader = TestLoader::new();
         let catalog = TestCatalog::default();
 
-        let result = expand(&cluster, &loader, &catalog);
-
+        let err = expand(&cluster, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "D.4");
+        assert_eq!(err.path().as_deref(), Some("$.output_ports"));
         assert!(matches!(
-            result,
-            Err(ExpandError::UnmappedBoundaryOutput {
+            err,
+            ExpandError::UnmappedBoundaryOutput {
                 port_name,
                 node_id
-            }) if port_name == "out" && node_id == "nonexistent_node"
+            } if port_name == "out" && node_id == "nonexistent_node"
         ));
     }
 
@@ -3014,14 +3401,190 @@ mod tests {
         let loader = TestLoader::new().with_cluster(inner);
         let catalog = TestCatalog::default();
 
-        let result = expand(&outer, &loader, &catalog);
-
+        let err = expand(&outer, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "D.4");
+        assert_eq!(err.path().as_deref(), Some("$.nodes"));
         assert!(matches!(
-            result,
-            Err(ExpandError::UnmappedNestedOutput {
+            err,
+            ExpandError::UnmappedNestedOutput {
                 cluster_id,
                 port_name
-            }) if cluster_id == "nested" && port_name == "out"
+            } if cluster_id == "nested" && port_name == "out"
+        ));
+    }
+
+    /// I.7: Binding referencing undeclared primitive parameter must be rejected
+    #[test]
+    fn undeclared_primitive_parameter_binding_rejected() {
+        // Primitive declares parameter "value", but the node binds "valeu" (typo)
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "leaf".to_string(),
+            NodeInstance {
+                id: "leaf".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "valeu".to_string(), // Typo!
+                    ParameterBinding::Literal {
+                        value: ParameterValue::Number(42.0),
+                    },
+                )]),
+            },
+        );
+
+        let cluster = ClusterDefinition {
+            id: "root".to_string(),
+            version: "v1".to_string(),
+            nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+        let catalog = TestCatalog::default().with_metadata(
+            "prim",
+            "v1",
+            meta_with_params(
+                PrimitiveKind::Compute,
+                &[("out", ValueType::Number)],
+                vec![ParameterMetadata {
+                    name: "value".to_string(),
+                    ty: ParameterType::Number,
+                    default: Some(ParameterValue::Number(0.0)),
+                    required: false,
+                }],
+            ),
+        );
+
+        let err = expand(&cluster, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "I.7");
+        assert_eq!(err.path().as_deref(), Some("$.nodes"));
+        assert!(matches!(
+            err,
+            ExpandError::UndeclaredParameter {
+                node_id,
+                parameter
+            } if node_id == "leaf" && parameter == "valeu"
+        ));
+    }
+
+    /// I.7: Binding referencing undeclared nested cluster parameter must be rejected
+    #[test]
+    fn undeclared_cluster_parameter_binding_rejected() {
+        // Inner cluster declares parameter "threshold", outer binds "threshhold" (typo)
+        let mut inner_nodes = HashMap::new();
+        inner_nodes.insert(
+            "leaf".to_string(),
+            NodeInstance {
+                id: "leaf".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+
+        let inner = ClusterDefinition {
+            id: "inner".to_string(),
+            version: "v1".to_string(),
+            nodes: inner_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: vec![ParameterSpec {
+                name: "threshold".to_string(),
+                ty: ParameterType::Number,
+                default: Some(ParameterValue::Number(0.0)),
+                required: false,
+            }],
+            declared_signature: None,
+        };
+
+        let mut outer_nodes = HashMap::new();
+        outer_nodes.insert(
+            "nested".to_string(),
+            NodeInstance {
+                id: "nested".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "inner".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "threshhold".to_string(), // Typo!
+                    ParameterBinding::Literal {
+                        value: ParameterValue::Number(5.0),
+                    },
+                )]),
+            },
+        );
+
+        let outer = ClusterDefinition {
+            id: "outer".to_string(),
+            version: "v1".to_string(),
+            nodes: outer_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: Vec::new(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new().with_cluster(inner);
+        let catalog = TestCatalog::default();
+        let err = expand(&outer, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "I.7");
+        assert_eq!(err.path().as_deref(), Some("$.nodes"));
+        assert!(matches!(
+            err,
+            ExpandError::UndeclaredParameter {
+                node_id,
+                parameter
+            } if node_id == "inner" && parameter == "threshhold"
+        ));
+    }
+
+    #[test]
+    fn missing_nested_cluster_rejected() {
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "nested".to_string(),
+            NodeInstance {
+                id: "nested".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "missing".to_string(),
+                    version: "v1".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+
+        let cluster = ClusterDefinition {
+            id: "root".to_string(),
+            version: "v1".to_string(),
+            nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+        let catalog = TestCatalog::default();
+
+        let err = expand(&cluster, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "E.9");
+        assert_eq!(err.path().as_deref(), Some("$.nodes"));
+        assert!(matches!(
+            err,
+            ExpandError::MissingCluster { id, version } if id == "missing" && version == "v1"
         ));
     }
 }

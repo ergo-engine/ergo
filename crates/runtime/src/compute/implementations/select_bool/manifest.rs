@@ -1,6 +1,7 @@
 use crate::common::{PrimitiveKind, ValueType};
 use crate::compute::{
-    Cadence, ComputePrimitiveManifest, ExecutionSpec, InputSpec, OutputSpec, StateSpec,
+    Cadence, Cardinality, ComputePrimitiveManifest, ErrorSpec, ExecutionSpec, InputSpec,
+    OutputSpec, StateSpec,
 };
 
 pub fn select_bool_manifest() -> ComputePrimitiveManifest {
@@ -13,16 +14,19 @@ pub fn select_bool_manifest() -> ComputePrimitiveManifest {
                 name: "cond".to_string(),
                 value_type: ValueType::Bool,
                 required: true,
+                cardinality: Cardinality::Single,
             },
             InputSpec {
                 name: "when_true".to_string(),
                 value_type: ValueType::Bool,
                 required: true,
+                cardinality: Cardinality::Single,
             },
             InputSpec {
                 name: "when_false".to_string(),
                 value_type: ValueType::Bool,
                 required: true,
+                cardinality: Cardinality::Single,
             },
         ],
         outputs: vec![OutputSpec {
@@ -33,10 +37,17 @@ pub fn select_bool_manifest() -> ComputePrimitiveManifest {
         execution: ExecutionSpec {
             deterministic: true,
             cadence: Cadence::Continuous,
+            may_error: false,
+        },
+        errors: ErrorSpec {
+            allowed: false,
+            types: vec![],
+            deterministic: true,
         },
         state: StateSpec {
-            stateful: false,
-            rolling_window: None,
+            allowed: false,
+            resettable: false,
+            description: None,
         },
         side_effects: false,
     }

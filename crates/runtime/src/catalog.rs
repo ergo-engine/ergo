@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::action::{
-    implementations::{ack_action_manifest, annotate_action_manifest},
-    AckAction, ActionRegistry, ActionValidationError, ActionValueType, AnnotateAction,
+    AckAction, ActionPrimitive, ActionRegistry, ActionValidationError, ActionValueType,
+    AnnotateAction,
 };
 use crate::cluster::{
     Cardinality, InputMetadata, OutputMetadata, ParameterMetadata, ParameterType, ParameterValue,
@@ -11,27 +11,18 @@ use crate::cluster::{
 use crate::common;
 use crate::common::ValidationError;
 use crate::compute::implementations::{
-    abs::abs_manifest, add::add_manifest, and::and_manifest, const_bool::const_bool_manifest,
-    const_number::const_number_manifest, divide::divide_manifest, eq::eq_manifest, gt::gt_manifest,
-    gte::gte_manifest, lt::lt_manifest, lte::lte_manifest, max::max_manifest, min::min_manifest,
-    multiply::multiply_manifest, negate::negate_manifest, neq::neq_manifest, not::not_manifest,
-    or::or_manifest, safe_divide::safe_divide_manifest, select::select_manifest,
-    select_bool::select_bool_manifest, subtract::subtract_manifest, Abs, Add, And, ConstBool,
-    ConstNumber, Divide, Eq, Gt, Gte, Lt, Lte, Max, Min, Multiply, Negate, Neq, Not, Or,
-    SafeDivide, Select, SelectBool, Subtract,
+    Abs, Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Lt, Lte, Max, Min, Multiply,
+    Negate, Neq, Not, Or, SafeDivide, Select, SelectBool, Subtract,
 };
-use crate::compute::{ComputePrimitiveManifest, PrimitiveRegistry as ComputeRegistry};
+use crate::compute::{
+    ComputePrimitive, ComputePrimitiveManifest, PrimitiveRegistry as ComputeRegistry,
+};
 use crate::source::{
-    implementations::{
-        boolean_source_manifest, context_number_source_manifest, number_source_manifest,
-        string_source_manifest,
-    },
-    BooleanSource, ContextNumberSource, NumberSource, SourceRegistry, SourceValidationError,
-    StringSource,
+    BooleanSource, ContextNumberSource, NumberSource, SourcePrimitive, SourceRegistry,
+    SourceValidationError, StringSource,
 };
 use crate::trigger::{
-    implementations::emit_if_true::emit_if_true_manifest, EmitIfTrue, TriggerRegistry,
-    TriggerValidationError, TriggerValueType,
+    EmitIfTrue, TriggerPrimitive, TriggerRegistry, TriggerValidationError, TriggerValueType,
 };
 
 #[derive(Debug)]
@@ -65,103 +56,100 @@ impl CoreRegistries {
     }
 }
 
-pub fn core_registries() -> Result<CoreRegistries, CoreRegistrationError> {
+fn core_source_primitives() -> Vec<Box<dyn SourcePrimitive>> {
+    vec![
+        Box::new(NumberSource::new()),
+        Box::new(ContextNumberSource::new()),
+        Box::new(BooleanSource::new()),
+        Box::new(StringSource::new()),
+    ]
+}
+
+fn core_compute_primitives() -> Vec<Box<dyn ComputePrimitive>> {
+    vec![
+        Box::new(ConstNumber::new()),
+        Box::new(ConstBool::new()),
+        Box::new(Abs::new()),
+        Box::new(Add::new()),
+        Box::new(Subtract::new()),
+        Box::new(Multiply::new()),
+        Box::new(Divide::new()),
+        Box::new(SafeDivide::new()),
+        Box::new(Negate::new()),
+        Box::new(Gt::new()),
+        Box::new(Gte::new()),
+        Box::new(Lt::new()),
+        Box::new(Lte::new()),
+        Box::new(Min::new()),
+        Box::new(Max::new()),
+        Box::new(Eq::new()),
+        Box::new(Neq::new()),
+        Box::new(And::new()),
+        Box::new(Or::new()),
+        Box::new(Not::new()),
+        Box::new(Select::new()),
+        Box::new(SelectBool::new()),
+    ]
+}
+
+fn core_trigger_primitives() -> Vec<Box<dyn TriggerPrimitive>> {
+    vec![Box::new(EmitIfTrue::new())]
+}
+
+fn core_action_primitives() -> Vec<Box<dyn ActionPrimitive>> {
+    vec![Box::new(AckAction::new()), Box::new(AnnotateAction::new())]
+}
+
+pub fn build_core() -> Result<(CoreRegistries, CorePrimitiveCatalog), CoreRegistrationError> {
     let mut sources = SourceRegistry::new();
-    sources
-        .register(Box::new(NumberSource::new()))
-        .map_err(CoreRegistrationError::Source)?;
-    sources
-        .register(Box::new(ContextNumberSource::new()))
-        .map_err(CoreRegistrationError::Source)?;
-    sources
-        .register(Box::new(BooleanSource::new()))
-        .map_err(CoreRegistrationError::Source)?;
-    sources
-        .register(Box::new(StringSource::new()))
-        .map_err(CoreRegistrationError::Source)?;
-
     let mut computes = ComputeRegistry::new();
-    computes
-        .register(Box::new(ConstNumber::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(ConstBool::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Abs::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Add::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Subtract::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Multiply::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Divide::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(SafeDivide::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Negate::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Gt::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Gte::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Lt::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Lte::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Min::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Max::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Eq::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Neq::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(And::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Or::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Not::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(Select::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-    computes
-        .register(Box::new(SelectBool::new()))
-        .map_err(CoreRegistrationError::Compute)?;
-
     let mut triggers = TriggerRegistry::new();
-    triggers
-        .register(Box::new(EmitIfTrue::new()))
-        .map_err(CoreRegistrationError::Trigger)?;
-
     let mut actions = ActionRegistry::new();
-    actions
-        .register(Box::new(AckAction::new()))
-        .map_err(CoreRegistrationError::Action)?;
-    actions
-        .register(Box::new(AnnotateAction::new()))
-        .map_err(CoreRegistrationError::Action)?;
+    let mut catalog = CorePrimitiveCatalog::new();
 
-    Ok(CoreRegistries::new(sources, computes, triggers, actions))
+    for primitive in core_source_primitives() {
+        let manifest = primitive.manifest().clone();
+        sources
+            .register(primitive)
+            .map_err(CoreRegistrationError::Source)?;
+        catalog.register_source(manifest);
+    }
+
+    for primitive in core_compute_primitives() {
+        let manifest = primitive.manifest().clone();
+        computes
+            .register(primitive)
+            .map_err(CoreRegistrationError::Compute)?;
+        catalog
+            .register_compute(manifest)
+            .map_err(CoreRegistrationError::Compute)?;
+    }
+
+    for primitive in core_trigger_primitives() {
+        let manifest = primitive.manifest().clone();
+        triggers
+            .register(primitive)
+            .map_err(CoreRegistrationError::Trigger)?;
+        catalog.register_trigger(manifest);
+    }
+
+    for primitive in core_action_primitives() {
+        let manifest = primitive.manifest().clone();
+        actions
+            .register(primitive)
+            .map_err(CoreRegistrationError::Action)?;
+        catalog.register_action(manifest);
+    }
+
+    let registries = CoreRegistries::new(sources, computes, triggers, actions);
+    debug_assert_registry_catalog_key_parity(&registries, &catalog);
+
+    Ok((registries, catalog))
+}
+
+pub fn core_registries() -> Result<CoreRegistries, CoreRegistrationError> {
+    let (registries, _catalog) = build_core()?;
+    Ok(registries)
 }
 
 pub struct CorePrimitiveCatalog {
@@ -169,13 +157,13 @@ pub struct CorePrimitiveCatalog {
 }
 
 impl CorePrimitiveCatalog {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             metadata: HashMap::new(),
         }
     }
 
-    pub fn register_compute(
+    pub(crate) fn register_compute(
         &mut self,
         manifest: ComputePrimitiveManifest,
     ) -> Result<(), ValidationError> {
@@ -216,12 +204,11 @@ impl CorePrimitiveCatalog {
                     got: param_value_type, // common::ValueType, not cluster::ValueType
                 }
             })?;
-            let required = p.default.is_none();
             parameters.push(ParameterMetadata {
                 name: p.name,
                 ty,
                 default: p.default.map(map_compute_param_value),
-                required,
+                required: p.required,
             });
         }
 
@@ -237,7 +224,7 @@ impl CorePrimitiveCatalog {
         Ok(())
     }
 
-    pub fn register_trigger(&mut self, manifest: crate::trigger::TriggerPrimitiveManifest) {
+    pub(crate) fn register_trigger(&mut self, manifest: crate::trigger::TriggerPrimitiveManifest) {
         let inputs = manifest
             .inputs
             .into_iter()
@@ -266,14 +253,11 @@ impl CorePrimitiveCatalog {
         let parameters = manifest
             .parameters
             .into_iter()
-            .map(|p| {
-                let required = p.default.is_none();
-                ParameterMetadata {
-                    name: p.name,
-                    ty: map_trigger_param_type(p.value_type),
-                    default: p.default.map(map_trigger_param_value),
-                    required,
-                }
+            .map(|p| ParameterMetadata {
+                name: p.name,
+                ty: map_trigger_param_type(p.value_type),
+                default: p.default.map(map_trigger_param_value),
+                required: p.required,
             })
             .collect();
 
@@ -288,7 +272,7 @@ impl CorePrimitiveCatalog {
         );
     }
 
-    pub fn register_source(&mut self, manifest: crate::source::SourcePrimitiveManifest) {
+    pub(crate) fn register_source(&mut self, manifest: crate::source::SourcePrimitiveManifest) {
         let inputs = vec![];
         let outputs = manifest
             .outputs
@@ -330,7 +314,7 @@ impl CorePrimitiveCatalog {
         );
     }
 
-    pub fn register_action(&mut self, manifest: crate::action::ActionPrimitiveManifest) {
+    pub(crate) fn register_action(&mut self, manifest: crate::action::ActionPrimitiveManifest) {
         let inputs = manifest
             .inputs
             .into_iter()
@@ -359,14 +343,11 @@ impl CorePrimitiveCatalog {
         let parameters = manifest
             .parameters
             .into_iter()
-            .map(|p| {
-                let required = p.default.is_none();
-                ParameterMetadata {
-                    name: p.name,
-                    ty: map_action_param_type(p.value_type),
-                    default: p.default.map(map_action_param_value),
-                    required,
-                }
+            .map(|p| ParameterMetadata {
+                name: p.name,
+                ty: map_action_param_type(p.value_type),
+                default: p.default.map(map_action_param_value),
+                required: p.required,
             })
             .collect();
 
@@ -380,6 +361,22 @@ impl CorePrimitiveCatalog {
             },
         );
     }
+
+    pub(crate) fn keys_for_kind(&self, kind: PrimitiveKind) -> Vec<(String, String)> {
+        let mut keys: Vec<(String, String)> = self
+            .metadata
+            .iter()
+            .filter_map(|((id, version), meta)| {
+                if meta.kind == kind {
+                    Some((id.clone(), version.to_string()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        keys.sort();
+        keys
+    }
 }
 
 impl PrimitiveCatalog for CorePrimitiveCatalog {
@@ -390,90 +387,34 @@ impl PrimitiveCatalog for CorePrimitiveCatalog {
     }
 }
 
+fn debug_assert_registry_catalog_key_parity(
+    registries: &CoreRegistries,
+    catalog: &CorePrimitiveCatalog,
+) {
+    debug_assert_eq!(
+        registries.sources.keys(),
+        catalog.keys_for_kind(PrimitiveKind::Source),
+        "registry/catalog key drift for sources"
+    );
+    debug_assert_eq!(
+        registries.computes.keys(),
+        catalog.keys_for_kind(PrimitiveKind::Compute),
+        "registry/catalog key drift for computes"
+    );
+    debug_assert_eq!(
+        registries.triggers.keys(),
+        catalog.keys_for_kind(PrimitiveKind::Trigger),
+        "registry/catalog key drift for triggers"
+    );
+    debug_assert_eq!(
+        registries.actions.keys(),
+        catalog.keys_for_kind(PrimitiveKind::Action),
+        "registry/catalog key drift for actions"
+    );
+}
+
 pub fn build_core_catalog() -> CorePrimitiveCatalog {
-    let mut catalog = CorePrimitiveCatalog::new();
-
-    // Sources
-    catalog.register_source(number_source_manifest());
-    catalog.register_source(context_number_source_manifest());
-    catalog.register_source(boolean_source_manifest());
-    catalog.register_source(string_source_manifest());
-
-    // Computes (X.10: all core compute manifests use supported parameter types)
-    catalog
-        .register_compute(const_number_manifest())
-        .expect("const_number manifest is valid");
-    catalog
-        .register_compute(const_bool_manifest())
-        .expect("const_bool manifest is valid");
-    catalog
-        .register_compute(abs_manifest())
-        .expect("abs manifest is valid");
-    catalog
-        .register_compute(add_manifest())
-        .expect("add manifest is valid");
-    catalog
-        .register_compute(subtract_manifest())
-        .expect("subtract manifest is valid");
-    catalog
-        .register_compute(multiply_manifest())
-        .expect("multiply manifest is valid");
-    catalog
-        .register_compute(divide_manifest())
-        .expect("divide manifest is valid");
-    catalog
-        .register_compute(safe_divide_manifest())
-        .expect("safe_divide manifest is valid");
-    catalog
-        .register_compute(negate_manifest())
-        .expect("negate manifest is valid");
-    catalog
-        .register_compute(gt_manifest())
-        .expect("gt manifest is valid");
-    catalog
-        .register_compute(gte_manifest())
-        .expect("gte manifest is valid");
-    catalog
-        .register_compute(lt_manifest())
-        .expect("lt manifest is valid");
-    catalog
-        .register_compute(lte_manifest())
-        .expect("lte manifest is valid");
-    catalog
-        .register_compute(min_manifest())
-        .expect("min manifest is valid");
-    catalog
-        .register_compute(max_manifest())
-        .expect("max manifest is valid");
-    catalog
-        .register_compute(eq_manifest())
-        .expect("eq manifest is valid");
-    catalog
-        .register_compute(neq_manifest())
-        .expect("neq manifest is valid");
-    catalog
-        .register_compute(and_manifest())
-        .expect("and manifest is valid");
-    catalog
-        .register_compute(or_manifest())
-        .expect("or manifest is valid");
-    catalog
-        .register_compute(not_manifest())
-        .expect("not manifest is valid");
-    catalog
-        .register_compute(select_manifest())
-        .expect("select manifest is valid");
-    catalog
-        .register_compute(select_bool_manifest())
-        .expect("select_bool manifest is valid");
-
-    // Triggers
-    catalog.register_trigger(emit_if_true_manifest());
-
-    // Actions
-    catalog.register_action(ack_action_manifest());
-    catalog.register_action(annotate_action_manifest());
-
+    let (_registries, catalog) = build_core().expect("core registries/catalog should build");
     catalog
 }
 
@@ -526,13 +467,13 @@ fn map_source_param_value(val: crate::source::ParameterValue) -> ParameterValue 
     }
 }
 
-/// X.10: Returns None for Series (unsupported parameter type for compute primitives).
+/// X.10: Returns None for Series/String (unsupported parameter types for compute primitives).
 fn map_compute_param_type(ty: common::ValueType) -> Option<ParameterType> {
     match ty {
         common::ValueType::Number => Some(ParameterType::Number),
         common::ValueType::Series => None, // X.10: Series params not supported
         common::ValueType::Bool => Some(ParameterType::Bool),
-        common::ValueType::String => Some(ParameterType::String),
+        common::ValueType::String => None, // X.10: String params not supported
     }
 }
 
@@ -544,6 +485,7 @@ fn map_compute_param_value(val: common::Value) -> ParameterValue {
             unreachable!("X.10: Series parameter type should be rejected at registration")
         }
         common::Value::Bool(b) => ParameterValue::Bool(b),
+        // X.10: String is rejected at type check; this arm is unreachable for valid registrations.
         common::Value::String(s) => ParameterValue::String(s),
     }
 }
@@ -591,7 +533,10 @@ fn map_action_param_value(val: crate::action::ParameterValue) -> ParameterValue 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::{Cadence, ExecutionSpec, InputSpec, OutputSpec, ParameterSpec, StateSpec};
+    use crate::compute::{
+        Cadence, Cardinality, ErrorSpec, ExecutionSpec, InputSpec, OutputSpec, ParameterSpec,
+        StateSpec,
+    };
 
     /// X.10: Compute primitives must not declare Series parameter types.
     #[test]
@@ -604,6 +549,7 @@ mod tests {
                 name: "x".to_string(),
                 value_type: common::ValueType::Number,
                 required: true,
+                cardinality: Cardinality::Single,
             }],
             outputs: vec![OutputSpec {
                 name: "result".to_string(),
@@ -613,14 +559,23 @@ mod tests {
                 name: "series_param".to_string(),
                 value_type: common::ValueType::Series, // X.10: unsupported
                 default: None,
+                required: true,
+                bounds: None,
             }],
             execution: ExecutionSpec {
                 deterministic: true,
                 cadence: Cadence::Continuous,
+                may_error: false,
+            },
+            errors: ErrorSpec {
+                allowed: false,
+                types: vec![],
+                deterministic: true,
             },
             state: StateSpec {
-                stateful: false,
-                rolling_window: None,
+                allowed: false,
+                resettable: false,
+                description: None,
             },
             side_effects: false,
         };
@@ -642,43 +597,30 @@ mod tests {
         ));
     }
 
-    /// Every catalog entry must have a corresponding registry entry.
+    /// REG-SYNC-1: registry and catalog key sets must be identical per primitive kind.
     #[test]
-    fn catalog_entries_have_registry_counterparts() {
-        let catalog = build_core_catalog();
-        let registries = core_registries().expect("core registries should build");
+    fn registry_catalog_key_parity() {
+        let (registries, catalog) = build_core().expect("core registries/catalog should build");
 
-        for ((id, _version), meta) in &catalog.metadata {
-            match meta.kind {
-                PrimitiveKind::Source => {
-                    assert!(
-                        registries.sources.get(id).is_some(),
-                        "catalog source '{}' missing from registry",
-                        id
-                    );
-                }
-                PrimitiveKind::Compute => {
-                    assert!(
-                        registries.computes.get(id).is_some(),
-                        "catalog compute '{}' missing from registry",
-                        id
-                    );
-                }
-                PrimitiveKind::Trigger => {
-                    assert!(
-                        registries.triggers.get(id).is_some(),
-                        "catalog trigger '{}' missing from registry",
-                        id
-                    );
-                }
-                PrimitiveKind::Action => {
-                    assert!(
-                        registries.actions.get(id).is_some(),
-                        "catalog action '{}' missing from registry",
-                        id
-                    );
-                }
-            }
-        }
+        assert_eq!(
+            registries.sources.keys(),
+            catalog.keys_for_kind(PrimitiveKind::Source),
+            "source registry/catalog keys differ"
+        );
+        assert_eq!(
+            registries.computes.keys(),
+            catalog.keys_for_kind(PrimitiveKind::Compute),
+            "compute registry/catalog keys differ"
+        );
+        assert_eq!(
+            registries.triggers.keys(),
+            catalog.keys_for_kind(PrimitiveKind::Trigger),
+            "trigger registry/catalog keys differ"
+        );
+        assert_eq!(
+            registries.actions.keys(),
+            catalog.keys_for_kind(PrimitiveKind::Action),
+            "action registry/catalog keys differ"
+        );
     }
 }

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ergo_adapter::{
-    capture::ExternalEventRecord, ErrKind, EventId, EventTime, ExecutionContext, ExternalEvent,
-    ExternalEventKind, GraphId, RunTermination, RuntimeHandle, RuntimeInvoker,
+    capture::ExternalEventRecord, AdapterProvides, ErrKind, EventId, EventTime, ExecutionContext,
+    ExternalEvent, ExternalEventKind, GraphId, RunTermination, RuntimeHandle, RuntimeInvoker,
 };
 use ergo_runtime::catalog::{CorePrimitiveCatalog, CoreRegistries};
 use ergo_runtime::cluster::ExpandedGraph;
@@ -162,7 +162,7 @@ impl<L: DecisionLog> Supervisor<L, RuntimeHandle> {
             graph_id,
             constraints,
             decision_log,
-            runtime: RuntimeHandle::new(graph, catalog, registries),
+            runtime: RuntimeHandle::new(graph, catalog, registries, AdapterProvides::default()),
             next_episode_id: 0,
             in_flight: 0,
             recent_invocations: VecDeque::new(),

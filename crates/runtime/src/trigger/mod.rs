@@ -1,4 +1,7 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
+
+use crate::common::{ErrorInfo, Phase};
 
 pub mod implementations;
 pub mod registry;
@@ -117,6 +120,7 @@ pub struct ParameterSpec {
     pub name: String,
     pub value_type: ParameterType,
     pub default: Option<ParameterValue>,
+    pub required: bool,
     pub bounds: Option<String>,
 }
 
@@ -153,13 +157,34 @@ pub struct TriggerPrimitiveManifest {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TriggerValidationError {
+    InvalidId {
+        id: String,
+    },
+    InvalidVersion {
+        version: String,
+    },
     WrongKind {
         expected: TriggerKind,
         got: TriggerKind,
     },
+    NoInputsDeclared {
+        trigger: String,
+    },
+    DuplicateInput {
+        name: String,
+        first_index: usize,
+        second_index: usize,
+    },
     SideEffectsNotAllowed,
     NonDeterministicExecution,
     DuplicateId(String),
+    TriggerWrongOutputCount {
+        got: usize,
+    },
+    InvalidInputCardinality {
+        input: String,
+        got: String,
+    },
     InvalidInputType {
         input: String,
         expected: TriggerValueType,
@@ -170,39 +195,176 @@ pub enum TriggerValidationError {
         expected: TriggerValueType,
         got: TriggerValueType,
     },
-    MissingRequiredInput(String),
-    UndeclaredInput {
-        node: String,
-        input: String,
-    },
-    UndeclaredOutput {
-        primitive: String,
-        output: String,
-    },
-    MissingDeclaredOutput {
-        primitive: String,
-        output: String,
-    },
-    UndeclaredParameter {
-        node: String,
-        parameter: String,
-    },
     InvalidParameterType {
         parameter: String,
         expected: ParameterType,
         got: ParameterType,
     },
-    UnknownPrimitive(String),
-    CycleDetected,
-    MissingNode(String),
-    MissingOutput {
-        node: String,
-        output: String,
-    },
     /// TRG-STATE-1: Triggers must be stateless.
     StatefulTriggerNotAllowed {
         trigger_id: String,
     },
+}
+
+impl ErrorInfo for TriggerValidationError {
+    fn rule_id(&self) -> &'static str {
+        match self {
+            Self::InvalidId { .. } => "TRG-1",
+            Self::InvalidVersion { .. } => "TRG-2",
+            Self::WrongKind { .. } => "TRG-3",
+            Self::NoInputsDeclared { .. } => "TRG-4",
+            Self::DuplicateInput { .. } => "TRG-5",
+            Self::InvalidInputType { .. } => "TRG-6",
+            Self::TriggerWrongOutputCount { .. } => "TRG-7",
+            Self::InvalidOutputType { .. } => "TRG-8",
+            Self::StatefulTriggerNotAllowed { .. } => "TRG-9",
+            Self::SideEffectsNotAllowed => "TRG-10",
+            Self::NonDeterministicExecution => "TRG-11",
+            Self::InvalidInputCardinality { .. } => "TRG-12",
+            Self::DuplicateId(_) => "TRG-13",
+            Self::InvalidParameterType { .. } => "TRG-14",
+        }
+    }
+
+    fn phase(&self) -> Phase {
+        Phase::Registration
+    }
+
+    fn doc_anchor(&self) -> &'static str {
+        match self.rule_id() {
+            "TRG-1" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-1",
+            "TRG-2" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-2",
+            "TRG-3" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-3",
+            "TRG-4" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-4",
+            "TRG-5" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-5",
+            "TRG-6" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-6",
+            "TRG-7" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-7",
+            "TRG-8" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-8",
+            "TRG-9" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-9",
+            "TRG-10" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-10",
+            "TRG-11" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-11",
+            "TRG-12" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-12",
+            "TRG-13" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-13",
+            "TRG-14" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-14",
+            _ => "CANONICAL/PHASE_INVARIANTS.md",
+        }
+    }
+
+    fn summary(&self) -> Cow<'static, str> {
+        match self {
+            Self::InvalidId { id } => Cow::Owned(format!("Invalid trigger ID: '{}'", id)),
+            Self::InvalidVersion { version } => {
+                Cow::Owned(format!("Invalid version: '{}'", version))
+            }
+            Self::WrongKind { expected, got } => Cow::Owned(format!(
+                "Wrong kind: expected {:?}, got {:?}",
+                expected, got
+            )),
+            Self::NoInputsDeclared { .. } => Cow::Borrowed("Trigger has no inputs"),
+            Self::DuplicateInput { name, .. } => {
+                Cow::Owned(format!("Duplicate input name: '{}'", name))
+            }
+            Self::InvalidInputType {
+                input,
+                expected,
+                got,
+            } => Cow::Owned(format!(
+                "Input '{}' has invalid type: expected {:?}, got {:?}",
+                input, expected, got
+            )),
+            Self::TriggerWrongOutputCount { got } => Cow::Owned(format!(
+                "Trigger must declare exactly one output (got {})",
+                got
+            )),
+            Self::InvalidOutputType {
+                output,
+                expected,
+                got,
+            } => Cow::Owned(format!(
+                "Output '{}' has invalid type: expected {:?}, got {:?}",
+                output, expected, got
+            )),
+            Self::StatefulTriggerNotAllowed { .. } => Cow::Borrowed("Trigger state is not allowed"),
+            Self::SideEffectsNotAllowed => Cow::Borrowed("Trigger side effects are not allowed"),
+            Self::NonDeterministicExecution => {
+                Cow::Borrowed("Trigger execution must be deterministic")
+            }
+            Self::InvalidInputCardinality { input, got } => Cow::Owned(format!(
+                "Input '{}' has invalid cardinality '{}'",
+                input, got
+            )),
+            Self::DuplicateId(_) => Cow::Borrowed("Duplicate trigger ID: already registered"),
+            Self::InvalidParameterType {
+                parameter,
+                expected,
+                got,
+            } => Cow::Owned(format!(
+                "Parameter '{}' has invalid type: expected {:?}, got {:?}",
+                parameter, expected, got
+            )),
+        }
+    }
+
+    fn path(&self) -> Option<Cow<'static, str>> {
+        match self {
+            Self::InvalidId { .. } => Some(Cow::Borrowed("$.id")),
+            Self::InvalidVersion { .. } => Some(Cow::Borrowed("$.version")),
+            Self::DuplicateId(_) => Some(Cow::Borrowed("$.id")),
+            Self::WrongKind { .. } => Some(Cow::Borrowed("$.kind")),
+            Self::NoInputsDeclared { .. } => Some(Cow::Borrowed("$.inputs")),
+            Self::DuplicateInput { second_index, .. } => {
+                Some(Cow::Owned(format!("$.inputs[{}].name", second_index)))
+            }
+            Self::InvalidInputType { .. } => Some(Cow::Borrowed("$.inputs[].type")),
+            Self::InvalidInputCardinality { .. } => Some(Cow::Borrowed("$.inputs[].cardinality")),
+            Self::TriggerWrongOutputCount { .. } => Some(Cow::Borrowed("$.outputs")),
+            Self::InvalidOutputType { .. } => Some(Cow::Borrowed("$.outputs[0].type")),
+            Self::StatefulTriggerNotAllowed { .. } => Some(Cow::Borrowed("$.state.allowed")),
+            Self::SideEffectsNotAllowed => Some(Cow::Borrowed("$.side_effects")),
+            Self::NonDeterministicExecution => Some(Cow::Borrowed("$.execution.deterministic")),
+            Self::InvalidParameterType { .. } => Some(Cow::Borrowed("$.parameters[].default")),
+        }
+    }
+
+    fn fix(&self) -> Option<Cow<'static, str>> {
+        match self {
+            Self::InvalidId { .. } => Some(Cow::Borrowed(
+                "ID must start with lowercase letter and contain only lowercase letters, digits, and underscores",
+            )),
+            Self::DuplicateId(_) => Some(Cow::Borrowed("Choose a unique ID not already registered")),
+            Self::InvalidVersion { .. } => Some(Cow::Borrowed(
+                "Version must be valid semver (e.g., '1.0.0')",
+            )),
+            Self::WrongKind { .. } => Some(Cow::Borrowed("Set kind: trigger")),
+            Self::NoInputsDeclared { .. } => Some(Cow::Borrowed("Add at least one input")),
+            Self::DuplicateInput { name, .. } => Some(Cow::Owned(format!(
+                "Rename input '{}' to a unique value",
+                name
+            ))),
+            Self::InvalidInputType { .. } => Some(Cow::Borrowed(
+                "Use a valid input type: number, bool, series, or event",
+            )),
+            Self::TriggerWrongOutputCount { .. } => {
+                Some(Cow::Borrowed("Declare exactly one output"))
+            }
+            Self::InvalidOutputType { .. } => {
+                Some(Cow::Borrowed("Output type must be event"))
+            }
+            Self::StatefulTriggerNotAllowed { .. } => {
+                Some(Cow::Borrowed("Set state.allowed: false"))
+            }
+            Self::SideEffectsNotAllowed => Some(Cow::Borrowed("Set side_effects: false")),
+            Self::NonDeterministicExecution => {
+                Some(Cow::Borrowed("Set execution.deterministic: true"))
+            }
+            Self::InvalidInputCardinality { .. } => {
+                Some(Cow::Borrowed("Set input cardinality to single"))
+            }
+            Self::InvalidParameterType { .. } => Some(Cow::Borrowed(
+                "Change parameter default value to match the declared parameter type",
+            )),
+        }
+    }
 }
 
 /// A trigger primitive that evaluates inputs and emits events.

@@ -1,6 +1,6 @@
 use crate::action::{
-    ActionKind, ActionPrimitiveManifest, ActionValueType, ExecutionSpec, InputSpec, OutputSpec,
-    ParameterSpec, ParameterValue, StateSpec,
+    ActionEffects, ActionKind, ActionPrimitiveManifest, ActionValueType, ExecutionSpec, InputSpec,
+    OutputSpec, ParameterSpec, ParameterValue, StateSpec,
 };
 
 pub fn annotate_action_manifest() -> ActionPrimitiveManifest {
@@ -22,8 +22,10 @@ pub fn annotate_action_manifest() -> ActionPrimitiveManifest {
             name: "note".to_string(),
             value_type: ParameterValue::String(String::new()).value_type(),
             default: Some(ParameterValue::String(String::new())),
+            required: false,
             bounds: None,
         }],
+        effects: ActionEffects { writes: vec![] },
         execution: ExecutionSpec {
             deterministic: true,
             retryable: false,
