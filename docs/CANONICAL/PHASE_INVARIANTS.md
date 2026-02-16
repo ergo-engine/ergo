@@ -1,8 +1,8 @@
 ---
 Authority: CANONICAL
-Version: v0.21
+Version: v0.29
 Owner: Claude (Structural Auditor)
-Last Updated: 2026-01-05
+Last Updated: 2026-02-06
 Scope: Phase boundaries, enforcement loci, gap tracking
 Verified Against Tag: v1.0.0-alpha.1
 Change Rule: Operational log
@@ -10,7 +10,7 @@ Change Rule: Operational log
 
 # Phase Invariants — v0
 
-**Tracked invariants:** 78
+**Tracked invariants:** 162
 
 This document defines the invariants that must hold at each phase boundary in the system. It is the authoritative reference for what is true, where that truth is enforced, and what happens if it is violated.
 
@@ -50,6 +50,11 @@ This checklist draws from:
 - `SUPERVISOR.md` (frozen)
 - `AUTHORING_LAYER.md` (stable)
 - `CLUSTER_SPEC.md` (stable)
+- `adapter.md` (stable)
+- `source.md` (stable)
+- `compute.md` (stable)
+- `trigger.md` (stable)
+- `action.md` (stable)
 
 ---
 
@@ -217,12 +222,14 @@ Division by zero produces `ComputeError::DivisionByZero`, not IEEE 754 inf/NaN.
 | I.4 | Bound parameter values are type-compatible | CLUSTER_SPEC.md §6.2 | — | — | ✓ | ✓ |
 | I.5 | Exposed parameters reference parameters that exist in parent context | CLUSTER_SPEC.md §6.2 | — | — | ✓ | ✓ |
 | I.6 | Version constraints are satisfied | CLUSTER_SPEC.md §6.2 | — | — | — | — |
+| I.7 | Parameter bindings reference only declared parameters | CLUSTER_SPEC.md §6.2 | — | — | ✓ | ✓ |
 
 ### Notes
 
 - **I.3–I.5:** Enforced in `cluster.rs::expand_with_context` during nested cluster processing via `validate_parameter_bindings()`. Errors: `MissingRequiredParameter`, `ParameterBindingTypeMismatch`, `ExposedParameterNotFound`, `ExposedParameterTypeMismatch`. Tests: `required_parameter_missing_rejected`, `parameter_binding_type_mismatch_rejected`, `exposed_parameter_not_in_parent_rejected`, `exposed_parameter_type_mismatch_rejected`. Note: I.4 is enforced symmetrically for both Literal and Exposed bindings.
   - **Strengthened (2025-01-05):** Exposed bindings now propagate through nested cluster hierarchies via `resolve_bindings_with_context()` and `build_resolved_params()`. Prior behavior only validated at immediate cluster boundary; multi-level nesting (Parent → Middle → Inner → Leaf) now correctly receives propagated values. Added `ExpandError::UnresolvedExposedBinding { node_id, parameter, referenced }` for primitives with dangling Exposed bindings. Tests: `exposed_binding_propagates_to_leaf_primitive`, `unresolved_exposed_binding_rejected`. Location: `cluster.rs:expand_with_context()`.
   - **Default application (2025-01-05):** Parameters with `default: Some(value)` in either `ParameterMetadata` (primitives) or `ParameterSpec` (clusters) are automatically applied during expansion when no binding is provided. Enforced by `resolve_impl_parameters()` (primitives, cluster.rs:988-1028) and `build_resolved_params()` (clusters, cluster.rs:1034-1074). Tests: `defaulted_parameter_propagates_to_leaf`, `explicit_binding_overrides_default`, `missing_required_param_no_default_rejected`, `cluster_parameter_default_propagates_to_nested`.
+- **I.7:** Enforced in `cluster.rs` across three functions: `resolve_impl_parameters()` (primitive nodes), `build_resolved_params()` (nested cluster instantiation), and `validate_parameter_bindings()` (nested cluster pre-validation). Each builds a `HashSet` of declared parameter names from the target's spec and rejects any binding key absent from that set. Error: `ExpandError::UndeclaredParameter { node_id, parameter }`. Tests: `undeclared_primitive_parameter_binding_rejected`, `undeclared_cluster_parameter_binding_rejected`. Prior to this fix, undeclared bindings were silently dropped — a typo in a parameter name would cause the primitive to receive its default value with no error. See `ESCALATION_PARAM_SILENT_DROP.md` for the full finding.
 - **I.6:** Version constraint validation **NOT IMPLEMENTED**. Cluster expansion performs exact-match lookup via `ClusterLoader::load()` and `PrimitiveCatalog::get()`. Constraint syntax (e.g., `>=1.0.0, <2.0.0`) is not parsed. See `TODO(I.6)` markers at `NodeKind::Impl` and `NodeKind::Cluster` resolution sites in `crates/runtime/src/cluster.rs`. Tracked in issue #6, deferred to future `version-constraints` branch.
 
 ---
@@ -247,6 +254,7 @@ Division by zero produces `ComputeError::DivisionByZero`, not IEEE 754 inf/NaN.
 | E.6 | Original cluster definitions are not mutated | (inferred) | — | — | — | — |
 | E.7 | `ExpandedGraph` carries boundary ports for inference only | (inferred) | — | — | — | — |
 | E.8 | Runtime ID assignment is deterministic for identical definitions | (inferred) | — | — | ✓ | ✓ |
+| E.9 | Referenced nested clusters exist | CLUSTER_SPEC.md §6.2 | — | — | ✓ | ✓ |
 
 ### Notes
 
@@ -262,6 +270,7 @@ Division by zero produces `ComputeError::DivisionByZero`, not IEEE 754 inf/NaN.
 
 - **E.2:** ✅ Strengthened (2025-01-05). Boundary output mapping (`map_boundary_outputs`) and nested output mapping now return typed errors instead of silent fallback. Errors: `ExpandError::UnmappedBoundaryOutput { port_name, node_id }`, `ExpandError::UnmappedNestedOutput { cluster_id, port_name }`. Tests: `unmapped_boundary_output_rejected`, `nested_output_mapping_failure_rejected`.
 - **E.8:** ✅ **CLOSED.** Enforced via sorted-key iteration in `expand_with_context` (cluster.rs:694-698). Test: `expansion_runtime_ids_deterministic`.
+- **E.9:** Enforced in `cluster.rs::expand_with_context()` when resolving `NodeKind::Cluster` via `ClusterLoader::load`. Missing references return `ExpandError::MissingCluster { id, version }`. Test: `missing_nested_cluster_rejected`.
 
 ---
 
@@ -320,6 +329,7 @@ Division by zero produces `ComputeError::DivisionByZero`, not IEEE 754 inf/NaN.
 | V.5 | All action nodes are gated by trigger events | ontology.md §3 | — | — | ✓ | ✓ |
 | V.6 | All nodes pass validation before any action executes | execution_model.md §7 | — | — | ✓ | ✓ |
 | V.7 | Each input port receives at most one inbound edge | (inferred) | — | — | ✓ | ✓ |
+| V.8 | Referenced primitive implementations exist in catalog | CLUSTER_SPEC.md §6.3 | — | — | ✓ | ✓ |
 
 ### Notes
 
@@ -328,6 +338,7 @@ Division by zero produces `ComputeError::DivisionByZero`, not IEEE 754 inf/NaN.
 - **V.7:** ✅ **CLOSED.** Enforced in `runtime/validate.rs::enforce_single_edge_per_input()`. Returns `ValidationError::MultipleInboundEdges { node, input }` when multiple edges target same input port. Test: `validate_rejects_multiple_edges_to_same_input`.
   - **Prior behavior:** `execute.rs` used `HashMap::insert` for input collection; multiple edges to same input caused silent last-write-wins data loss.
   - **Rationale:** Silent data loss is truth-destroying. Aggregation semantics (Cardinality::Multiple) remain schema-placeholder only; if ever needed, require explicit v1 decision.
+- **V.8:** Enforced at validation entry in `runtime/validate.rs`: each expanded node must resolve through `PrimitiveCatalog::get`, else `ValidationError::MissingPrimitive { id, version }`. Test: `validate_rejects_missing_primitive_metadata`.
 
 ---
 
@@ -420,6 +431,7 @@ must be implemented as clusters with explicit state flow through environment.
 | SUP-7 | DecisionLog is write-only | SUPERVISOR.md §3 | ✓ | — | — | ✓ |
 | SUP-TICK-1 | Tick events use deferred-retry scheduling | — | — | — | — | ✓ |
 | RTHANDLE-ID-1 | RuntimeHandle discards graph_id and event_id | — | ✓ | — | — | ✓ |
+| RTHANDLE-ERRKIND-1 | Pre-execution failures map to ValidationFailed, not RuntimeError or SemanticError | SUPERVISOR.md §2.4 | — | — | ✓ | ✓ |
 
 ### Notes
 
@@ -431,6 +443,12 @@ must be implemented as clusters with explicit state flow through environment.
 - **SUP-7:** `DecisionLog` trait has only `fn log()`; `records()` is on concrete impl, not trait.
 - **SUP-TICK-1:** Tick events have special deferred-retry behavior distinct from Command events. Test: `replay_harness.rs` uses Command (not Tick) to avoid interference.
 - **RTHANDLE-ID-1:** `RuntimeHandle::run()` explicitly discards `graph_id` and `event_id` parameters (adapter/lib.rs:234-235). Only `ctx.inner()` is passed to underlying runtime. This ensures replay determinism — fault injection keys on EventId only (REP-3).
+- **RTHANDLE-ERRKIND-1:** ✅ **CLOSED (2026-02-06).** `RuntimeHandle::run()` maps pre-execution failures to `ErrKind::ValidationFailed`, not `RuntimeError` or `SemanticError`.
+  - **Prior bug (runtime_validate path):** `runtime_validate()` errors mapped to `ErrKind::RuntimeError`. Since `should_retry()` treats `RuntimeError` as retryable, this caused **pathological retries** of structurally invalid graphs — a graph that fails validation will fail identically on every retry.
+  - **Prior bug (validate_composition path):** `validate_composition()` errors mapped to `ErrKind::SemanticError`. Non-retryable (correct behavior), but **wrong category** — `SemanticError` is for runtime deterministic failures (DivisionByZero, NonFiniteOutput per B.2), not validation-time COMP-* checks.
+  - **Fix:** Both paths now return `ErrKind::ValidationFailed`, which is non-retryable (`should_retry` returns `false`) and categorically correct per SUPERVISOR.md §2.4.
+  - **Note:** `ErrKind::ValidationFailed` was defined since v0 but never instantiated until this fix. Both error paths should have used it from the start.
+  - **Test:** `runtime_handle_rejects_required_context_when_provides_empty` updated to assert `ValidationFailed`.
 
 ---
 
@@ -519,6 +537,272 @@ This freeze applies to:
 
 ---
 
+## 9. Adapter Registration Phase
+
+**Scope:** When an adapter manifest is registered with the system.
+
+**Source:** EXTENSION_CONTRACTS_ROADMAP.md Phase 1, adapter.md (stable)
+
+**Entry invariants:**
+- Manifest is parseable YAML/JSON
+- Required fields are present (serde validation)
+
+### Exit Invariants
+
+| ID | Invariant | Spec | Type | Assertion | Validation | Test |
+|----|-----------|:----:|:----:|:---------:|:----------:|:----:|
+| ADP-1 | ID format valid | adapter.md #ADP-1 | — | — | ✓ | adp_1_invalid_id_rejected |
+| ADP-2 | Version valid semver | adapter.md #ADP-2 | — | — | ✓ | adp_2_invalid_version_rejected |
+| ADP-3 | Runtime compatibility satisfied | adapter.md #ADP-3 | — | — | ✓ | adp_3_incompatible_runtime_rejected |
+| ADP-4 | Provides something | adapter.md #ADP-4 | — | — | ✓ | adp_4_empty_adapter_rejected |
+| ADP-5 | Context key names unique | adapter.md #ADP-5 | — | — | ✓ | adp_5_duplicate_context_key_rejected |
+| ADP-6 | Context key types valid | adapter.md #ADP-6 | — | — | ✓ | adp_6_invalid_context_type_rejected |
+| ADP-7 | Event kind names unique | adapter.md #ADP-7 | — | — | ✓ | adp_7_duplicate_event_kind_rejected |
+| ADP-8 | Event schemas valid JSON Schema | adapter.md #ADP-8 | — | — | ✓ | adp_8_invalid_schema_rejected |
+| ADP-9 | Capture format version present | adapter.md #ADP-9 | — | — | ✓ | adp_9_no_capture_format_rejected |
+| ADP-10 | Capture fields referentially valid | adapter.md #ADP-10 | — | — | ✓ | adp_10_invalid_capture_field_rejected |
+| ADP-11 | Writable flag must be present | adapter.md #ADP-11 | — | — | ✓ | adp_11_missing_writable_flag_rejected |
+| ADP-12 | Effect names unique | adapter.md #ADP-12 | — | — | ✓ | adp_12_duplicate_effect_name_rejected |
+| ADP-13 | Effect schemas valid | adapter.md #ADP-13 | — | — | ✓ | adp_13_invalid_effect_schema_rejected |
+| ADP-14 | Writable implies set_context accepted | adapter.md #ADP-14 | — | — | ✓ | adp_14_writable_without_set_context_rejected |
+| ADP-15 | Writable keys must be capturable | adapter.md #ADP-15 | — | — | — | — |
+| ADP-16 | Write effect must be capturable | adapter.md #ADP-16 | — | — | — | — |
+| ADP-17 | Writable keys cannot be required | adapter.md #ADP-17 | — | — | ✓ | adp_17_writable_key_required_rejected |
+
+### Notes
+
+- **ADP-15/ADP-16:** Deferred until REP-SCOPE expansion to include context/effect capture fields.
+- **Enforcement location:** `crates/adapter/src/validate.rs`
+- **Test location:** `crates/adapter/tests/validation.rs`
+
+---
+
+## 10. Adapter Composition Phase
+
+**Scope:** When sources or actions are composed with an adapter.
+
+**Source:** EXTENSION_CONTRACTS_ROADMAP.md Phase 1, adapter.md (stable)
+
+**Entry invariants:**
+- Adapter passes registration validation (ADP-* rules)
+- Source/action manifests pass their registration validation
+
+### Exit Invariants
+
+| ID | Invariant | Spec | Type | Assertion | Validation | Test |
+|----|-----------|:----:|:----:|:---------:|:----------:|:----:|
+| COMP-1 | Source context requirements satisfied | adapter.md #COMP-1 | — | — | ✓ | comp_1_missing_context_key_rejected |
+| COMP-2 | Source context types match | adapter.md #COMP-2 | — | — | ✓ | comp_2_context_type_mismatch_rejected |
+| COMP-3 | Capture format version supported | adapter.md #COMP-3 | — | — | ✓ | comp_3_unsupported_capture_format_rejected |
+
+### Notes
+
+- **COMP-1, COMP-2:** Only keys with `required: true` in source requirements must exist in adapter provides.
+- **Enforcement location:** `crates/adapter/src/composition.rs`
+- **Test location:** `crates/adapter/tests/composition_tests.rs`
+
+---
+
+## 11. Source Registration Phase
+
+**Scope:** When a source manifest is registered with the system.
+
+**Source:** EXTENSION_CONTRACTS_ROADMAP.md Phase 2, source.md (stable)
+
+**Entry invariants:**
+- Manifest is parseable
+- Required fields are present
+
+### Exit Invariants
+
+| ID | Invariant | Spec | Type | Assertion | Validation | Test |
+|----|-----------|:----:|:----:|:---------:|:----------:|:----:|
+| SRC-1 | ID format valid | source.md #SRC-1 | — | — | ✓ | src_1_invalid_id_rejected |
+| SRC-2 | Version valid semver | source.md #SRC-2 | — | — | ✓ | src_2_invalid_version_rejected |
+| SRC-3 | Kind is "source" | source.md #SRC-3 | — | — | ✓ | src_3_kind_source_accepted |
+| SRC-4 | No inputs declared | source.md #SRC-4 | — | — | ✓ | src_4_source_has_inputs_rejected |
+| SRC-5 | At least one output | source.md #SRC-5 | — | — | ✓ | src_5_no_outputs_rejected |
+| SRC-6 | Output names unique | source.md #SRC-6 | — | — | ✓ | src_6_duplicate_output_rejected |
+| SRC-7 | Output types valid | source.md #SRC-7 | — | — | ✓ | src_7_output_types_valid |
+| SRC-8 | State not allowed | source.md #SRC-8 | — | — | ✓ | src_8_source_has_state_rejected |
+| SRC-9 | Side effects not allowed | source.md #SRC-9 | — | — | ✓ | src_9_source_has_side_effects_rejected |
+| SRC-10 | Required context keys exist in adapter | source.md #SRC-10 | — | — | ✓ | src_10_missing_context_key_rejected |
+| SRC-11 | Required context types match adapter | source.md #SRC-11 | — | — | ✓ | src_11_context_type_mismatch_rejected |
+| SRC-12 | Execution deterministic | source.md #SRC-12 | — | — | ✓ | src_12_non_deterministic_execution_rejected |
+| SRC-13 | Cadence is continuous | source.md #SRC-13 | — | — | ✓ | (structurally enforced) |
+| SRC-14 | ID unique in registry | source.md #SRC-14 | — | — | ✓ | src_14_duplicate_id_rejected |
+| SRC-15 | Parameter default type matches declared type | source.md #SRC-15 | — | — | ✓ | src_15_invalid_parameter_type_default_rejected |
+
+### Notes
+
+- **SRC-1 through SRC-9, SRC-12, SRC-14, SRC-15:** Registration-time manifest validation.
+- **SRC-13:** Structurally enforced — `Cadence` enum only has `Continuous` variant. Enforcement code at `registry.rs:77-78` will be exercised when cadence variants expand.
+- **SRC-10/SRC-11:** Composition-time validation. Same predicate and enforcement as COMP-1/COMP-2 (§10). Alias tests provide source-contract traceability.
+- **Registration enforcement location:** `crates/runtime/src/source/registry.rs`
+- **Registration test location:** `crates/runtime/src/source/tests.rs`
+- **Composition enforcement location:** `crates/adapter/src/composition.rs` (invoked by `ergo_adapter::RuntimeHandle::run` after graph validation, before execution)
+- **Composition test location:** `crates/adapter/tests/composition_tests.rs`
+
+---
+
+## 12. Compute Registration Phase
+
+**Scope:** When a compute manifest is registered with the system.
+
+**Source:** EXTENSION_CONTRACTS_ROADMAP.md Phase 3, compute.md (stable)
+
+**Entry invariants:**
+- Manifest is parseable
+- Required fields are present
+
+### Exit Invariants
+
+| ID | Invariant | Spec | Type | Assertion | Validation | Test |
+|----|-----------|:----:|:----:|:---------:|:----------:|:----:|
+| CMP-1 | ID format valid | compute.md #CMP-1 | — | — | ✓ | cmp_1_invalid_id_rejected |
+| CMP-2 | Version valid semver | compute.md #CMP-2 | — | — | ✓ | cmp_2_invalid_version_rejected |
+| CMP-3 | Kind is \"compute\" | compute.md #CMP-3 | ✓ | — | — | cmp_3_kind_compute_accepted |
+| CMP-4 | At least one input | compute.md #CMP-4 | — | — | ✓ | cmp_4_no_inputs_rejected |
+| CMP-5 | Input names unique | compute.md #CMP-5 | — | — | ✓ | cmp_5_duplicate_inputs_rejected |
+| CMP-6 | At least one output | compute.md #CMP-6 | — | — | ✓ | cmp_6_no_outputs_rejected |
+| CMP-7 | Output names unique | compute.md #CMP-7 | — | — | ✓ | cmp_7_duplicate_outputs_rejected |
+| CMP-8 | Side effects not allowed | compute.md #CMP-8 | — | — | ✓ | cmp_8_side_effects_rejected |
+| CMP-9 | State resettable if allowed | compute.md #CMP-9 | — | — | ✓ | cmp_9_state_not_resettable_rejected |
+| CMP-10 | Errors deterministic | compute.md #CMP-10 | — | — | ✓ | cmp_10_non_deterministic_errors_rejected |
+| CMP-11 | All outputs produced on success | compute.md #CMP-11 | — | — | ✓ | cmp_11_missing_output_fails |
+| CMP-12 | No outputs produced on error | compute.md #CMP-12 | ✓ | — | — | cmp_12_compute_error_fails |
+| CMP-13 | Input types valid | compute.md #CMP-13 | — | — | ✓ | cmp_13_invalid_input_type_rejected |
+| CMP-14 | Input cardinality single | compute.md #CMP-14 | — | — | ✓ | cmp_14_invalid_input_cardinality_rejected |
+| CMP-15 | Parameter types valid | compute.md #CMP-15 | — | — | ✓ | cmp_15_invalid_parameter_type_rejected |
+| CMP-16 | Cadence is continuous | compute.md #CMP-16 | — | — | ✓ | cmp_16_invalid_cadence_rejected |
+| CMP-17 | Execution deterministic | compute.md #CMP-17 | — | — | ✓ | cmp_17_non_deterministic_execution_rejected |
+| CMP-18 | ID unique in registry | compute.md #CMP-18 | — | — | ✓ | cmp_18_duplicate_id_rejected |
+| CMP-19 | Parameter default type matches declared type | compute.md #CMP-19 | — | — | ✓ | cmp_19_invalid_parameter_type_default_rejected |
+| CMP-20 | Output types valid | compute.md #CMP-20 | ✓ | — | — | cmp_20_output_types_valid |
+
+### Notes
+
+- **CMP-11/12:** Enforced at execution in `crates/runtime/src/runtime/execute.rs`. CMP-12 is structural — `compute()` returns `Result<Outputs, ComputeError>`, so errors have no outputs by construction.
+- **Registration enforcement location:** `crates/runtime/src/compute/registry.rs`
+- **Registration test location:** `crates/runtime/src/compute/registry.rs`
+- **Execution test location:** `crates/runtime/src/runtime/tests.rs`
+- **Composition rules (COMP-5/COMP-6):** enforced by Validation Phase invariant **V.4** (`ValidationError::TypeMismatch`) in `crates/runtime/src/runtime/validate.rs`.
+- **CMP-19:** Enforced in `compute/registry.rs::validate_manifest` by rejecting manifests where a parameter default value type does not match the declared parameter type (`ValidationError::InvalidParameterType`).
+- **CMP-20:** Structurally enforced in `compute/registry.rs::validate_manifest` by exhaustive `ValueType` matching for outputs (`Number | Series | Bool | String`).
+
+---
+
+## 13. Trigger Registration Phase
+
+**Scope:** When a trigger manifest is registered with the system.
+
+**Source:** EXTENSION_CONTRACTS_ROADMAP.md Phase 4, trigger.md (stable)
+
+**Entry invariants:**
+- Manifest is parseable
+- Required fields are present
+
+### Exit Invariants
+
+| ID | Invariant | Spec | Type | Assertion | Validation | Test |
+|----|-----------|:----:|:----:|:---------:|:----------:|:----:|
+| TRG-1 | ID format valid | trigger.md #TRG-1 | — | — | ✓ | trg_1_invalid_id_rejected |
+| TRG-2 | Version valid semver | trigger.md #TRG-2 | — | — | ✓ | trg_2_invalid_version_rejected |
+| TRG-3 | Kind is \"trigger\" | trigger.md #TRG-3 | ✓ | — | — | trg_3_kind_trigger_accepted |
+| TRG-4 | At least one input | trigger.md #TRG-4 | — | — | ✓ | trg_4_no_inputs_rejected |
+| TRG-5 | Input names unique | trigger.md #TRG-5 | — | — | ✓ | trg_5_duplicate_input_rejected |
+| TRG-6 | Input types valid | trigger.md #TRG-6 | ✓ | — | — | trg_6_input_types_valid |
+| TRG-7 | Exactly one output | trigger.md #TRG-7 | — | — | ✓ | trg_7_wrong_output_count_rejected |
+| TRG-8 | Output is event type | trigger.md #TRG-8 | — | — | ✓ | trg_8_output_not_event_rejected |
+| TRG-9 | State not allowed | trigger.md #TRG-9 | — | — | ✓ | trg_9_trigger_has_state_rejected |
+| TRG-10 | Side effects not allowed | trigger.md #TRG-10 | — | — | ✓ | trg_10_trigger_has_side_effects_rejected |
+| TRG-11 | Execution deterministic | trigger.md #TRG-11 | — | — | ✓ | trg_11_non_deterministic_execution_rejected |
+| TRG-12 | Input cardinality single | trigger.md #TRG-12 | — | — | ✓ | trg_12_invalid_input_cardinality_rejected |
+| TRG-13 | ID unique in registry | trigger.md #TRG-13 | — | — | ✓ | trg_13_duplicate_id_rejected |
+| TRG-14 | Parameter default type matches declared type | trigger.md #TRG-14 | — | — | ✓ | trg_14_invalid_parameter_type_default_rejected |
+
+### Notes
+
+- **TRG-9 link:** TRG-STATE-1 (stateless triggers) remains enforced by registry validation.
+- **TRG-14:** Enforced in `trigger/registry.rs::validate_manifest` by rejecting manifests where a parameter default value type does not match the declared parameter type (`TriggerValidationError::InvalidParameterType`).
+- **Registration enforcement location:** `crates/runtime/src/trigger/registry.rs`
+- **Registration test location:** `crates/runtime/src/trigger/registry.rs`
+- **Composition rules (COMP-7/COMP-8):** enforced by Validation Phase invariant **V.2** (wiring matrix) in `crates/runtime/src/runtime/validate.rs`.
+
+---
+
+## 14. Action Registration Phase
+
+**Scope:** When an action manifest is registered with the system.
+
+**Source:** EXTENSION_CONTRACTS_ROADMAP.md Phase 5, action.md (stable)
+
+**Entry invariants:**
+- Manifest is parseable
+- Required fields are present
+
+### Exit Invariants
+
+| ID | Invariant | Spec | Type | Assertion | Validation | Test |
+|----|-----------|:----:|:----:|:---------:|:----------:|:----:|
+| ACT-1 | ID format valid | action.md #ACT-1 | — | — | ✓ | act_1_invalid_id_rejected |
+| ACT-2 | Version valid semver | action.md #ACT-2 | — | — | ✓ | act_2_invalid_version_rejected |
+| ACT-3 | Kind is "action" | action.md #ACT-3 | ✓ | — | — | act_3_kind_action_accepted |
+| ACT-4 | At least one event input | action.md #ACT-4 | — | — | ✓ | act_4_no_event_input_rejected |
+| ACT-5 | Input names unique | action.md #ACT-5 | — | — | ✓ | act_5_duplicate_input_rejected |
+| ACT-6 | Input types valid | action.md #ACT-6 | ✓ | — | — | act_6_input_types_valid |
+| ACT-7 | Exactly one output | action.md #ACT-7 | — | — | ✓ | act_7_wrong_output_count_rejected |
+| ACT-8 | Output named "outcome" | action.md #ACT-8 | — | — | ✓ | act_8_output_not_outcome_rejected |
+| ACT-9 | Output is event type | action.md #ACT-9 | — | — | ✓ | act_9_output_not_event_rejected |
+| ACT-10 | State not allowed | action.md #ACT-10 | — | — | ✓ | act_10_action_has_state_rejected |
+| ACT-11 | Side effects required | action.md #ACT-11 | — | — | ✓ | act_11_action_no_side_effects_rejected |
+| ACT-12 | Gated by trigger | action.md #ACT-12 | — | — | ✓ | act_12_action_not_gated_rejected |
+| ACT-13 | Effects block present | action.md #ACT-13 | ✓ | — | — | act_3_kind_action_accepted |
+| ACT-14 | Write names unique | action.md #ACT-14 | — | — | ✓ | act_14_duplicate_write_name_rejected |
+| ACT-15 | Write types valid | action.md #ACT-15 | — | — | ✓ | act_15_invalid_write_type_rejected |
+| ACT-16 | Retryable false | action.md #ACT-16 | — | — | ✓ | act_16_retryable_not_allowed_rejected |
+| ACT-17 | Execution deterministic | action.md #ACT-17 | — | — | ✓ | act_17_non_deterministic_execution_rejected |
+| ACT-18 | ID unique in registry | action.md #ACT-18 | — | — | ✓ | act_18_duplicate_id_rejected |
+| ACT-19 | Parameter default type matches declared type | action.md #ACT-19 | — | — | ✓ | act_19_invalid_parameter_type_default_rejected |
+
+### Notes
+
+- **ACT-12:** Enforced during graph validation in `crates/runtime/src/runtime/validate.rs` (ValidationError::ActionNotGated).
+- **ACT-19:** Enforced in `action/registry.rs::validate_manifest` by rejecting manifests where a parameter default value type does not match the declared parameter type (`ActionValidationError::InvalidParameterType`).
+- **Registration enforcement location:** `crates/runtime/src/action/registry.rs`
+- **Registration test location:** `crates/runtime/src/action/registry.rs`
+- **Validation test location:** `crates/runtime/src/runtime/tests.rs`
+
+---
+
+## 15. Action Composition Phase
+
+**Scope:** When actions that declare writes are composed with an adapter.
+
+**Source:** EXTENSION_CONTRACTS_ROADMAP.md Phase 5, action.md (stable)
+
+**Entry invariants:**
+- Adapter passes registration validation (ADP-* rules)
+- Action manifests pass their registration validation
+
+### Exit Invariants
+
+| ID | Invariant | Spec | Type | Assertion | Validation | Test |
+|----|-----------|:----:|:----:|:---------:|:----------:|:----:|
+| COMP-11 | Action writes target provided keys | action.md #COMP-11 | — | — | ✓ | comp_11_write_target_not_provided_rejected |
+| COMP-12 | Action writes only writable keys | action.md #COMP-12 | — | — | ✓ | comp_12_write_target_not_writable_rejected |
+| COMP-13 | Action write types match | action.md #COMP-13 | — | — | ✓ | comp_13_write_type_mismatch_rejected |
+| COMP-14 | If action writes, adapter accepts set_context | action.md #COMP-14 | — | — | ✓ | comp_14_missing_set_context_rejected |
+
+### Notes
+
+- **COMP-9/COMP-10:** Enforced by Validation Phase invariant **V.2** (wiring matrix) in `crates/runtime/src/runtime/validate.rs`.
+- **COMP-15:** Deferred until REP-SCOPE expansion (capture includes context/effect).
+- **Enforcement location:** `crates/adapter/src/composition.rs` (invoked by `ergo_adapter::RuntimeHandle::run`).
+- **Test location:** `crates/adapter/tests/composition_tests.rs`
+
+---
+
 # Stage D Verification (stress test)
 
 No implementation required. State is already fully externalized and governed by existing invariants (CXT-1, SUP-*, REP-*). Stage D consists of stress-testing replay determinism and orchestration boundaries; any failures indicate invariant regression and require escalation.
@@ -600,3 +884,13 @@ Changes to this document require the same review bar as changes to frozen specs.
 | v0.19 | 2025-01-05 | Claude Code | Added SUP-TICK-1, RTHANDLE-ID-1 (orchestration); REP-SCOPE, SOURCE-TRUST (replay scope/trust documentation) |
 | v0.20 | 2026-01-05 | Claude Code | Added UI-REF-CLIENT-1: reference-client reframed as reference client |
 | v0.21 | 2026-01-05 | Claude Code | Added X.12 / STRING-SOURCE-1: ValueType surface coverage complete with string_source primitive |
+| v0.22 | 2026-01-21 | Claude Code | Added ADP-1..17 (Adapter Registration Phase) and COMP-1..3 (Adapter Composition Phase); +18 invariants |
+| v0.23 | 2026-02-01 | Claude Code | Added SRC-1..11 (Source Registration Phase); +11 invariants |
+| v0.24 | 2026-02-02 | Codex | Added CMP-1..17 (Compute Registration Phase); +17 invariants |
+| v0.25 | 2026-02-02 | Codex | Added TRG-1..12 (Trigger Registration Phase); +12 invariants |
+| v0.26 | 2026-02-02 | Codex | Added ACT-1..17 (Action Registration Phase) and COMP-11..14 (Action Composition Phase); +21 invariants |
+| v0.27 | 2026-02-02 | Claude Code | Added I.7 (undeclared parameter binding rejection); +1 invariant; closes ESCALATION_PARAM_SILENT_DROP |
+| v0.28 | 2026-02-06 | Codex | Added SRC-14, CMP-18, TRG-13, ACT-18 (duplicate ID rejection at registration); +4 invariants |
+| v0.29 | 2026-02-06 | Claude (Structural Auditor) | Added RTHANDLE-ERRKIND-1: RuntimeHandle::run() pre-execution failures now map to ValidationFailed; fixes pathological retry of invalid graphs (was RuntimeError) and corrects composition failure category (was SemanticError); +1 invariant |
+| v0.30 | 2026-02-12 | Codex | Added SRC-15, TRG-14, ACT-19 (parameter default type must match declared type at registration); +3 invariants |
+| v0.31 | 2026-02-12 | Codex | Added CMP-20 (compute output type validity closure; maps `ValidationError::InvalidOutputType` to CMP-20 and records structural registration enforcement); +1 invariant |

@@ -356,6 +356,66 @@ Before execution, after full expansion, validate:
    - All nodes pass validation before any action executes
    - All parameters are bound to concrete values
 
+### 6.4 Enforcement Mapping (Phase 6)
+
+This section maps cluster rules to enforcement loci and error types. It mirrors
+the phase invariants in `docs/CANONICAL/PHASE_INVARIANTS.md`.
+
+**Definition-Time (D.*)**
+
+| ID | Rule | Enforcement Locus | Error Type / Notes |
+|----|------|-------------------|--------------------|
+| D.1 | Cluster contains ≥1 node | `cluster.rs::expand_with_context` | `ExpandError::EmptyCluster` |
+| D.2 | Edges reference existing nodes/ports | `runtime/validate.rs` (post-expansion) | `ValidationError::UnknownNode` / `MissingInputMetadata` / `MissingOutputMetadata` |
+| D.3 | Edges satisfy wiring matrix | `runtime/validate.rs::enforce_wiring_matrix` | `ValidationError::InvalidEdgeKind` |
+| D.4 | Output ports reference valid internal node outputs | `cluster.rs::map_boundary_outputs` + `infer_signature` | `ExpandError::UnmappedBoundaryOutput` / `ExpandError::SignatureInferenceFailed` |
+| D.5 | Input port names unique | `cluster.rs::validate_cluster_definition` | `ExpandError::DuplicateInputPort` |
+| D.6 | Output port names unique | `cluster.rs::validate_cluster_definition` | `ExpandError::DuplicateOutputPort` |
+| D.7 | Parameter types valid | Type (enum) | No runtime error |
+| D.8 | Parameter defaults type-compatible | `cluster.rs::validate_cluster_definition` | `ExpandError::ParameterDefaultTypeMismatch` |
+| D.9 | No duplicate parameter names | `cluster.rs::validate_cluster_definition` | `ExpandError::DuplicateParameter` |
+| D.10 | Declared signature compatible with inferred | `cluster.rs::expand` → `validate_declared_signature` | `ExpandError::DeclaredSignatureInvalid` (currently wireability-only) |
+| D.11 | Declared wireability ≤ inferred | `cluster.rs::validate_declared_signature` | `ClusterValidationError::WireabilityExceedsInferred` |
+
+**Instantiation-Time (I.*)**
+
+| ID | Rule | Enforcement Locus | Error Type / Notes |
+|----|------|-------------------|--------------------|
+| I.1 | Wiring from parent edge source to cluster kind is legal | `runtime/validate.rs::enforce_wiring_matrix` | `ValidationError::InvalidEdgeKind` |
+| I.2 | Port types match at connection points | `runtime/validate.rs::enforce_types` | `ValidationError::TypeMismatch` |
+| I.3 | Required parameters bound or exposed | `cluster.rs::validate_parameter_bindings` / `build_resolved_params` | `ExpandError::MissingRequiredParameter` / `UnresolvedExposedBinding` |
+| I.4 | Bound parameter values type-compatible | `cluster.rs::validate_parameter_bindings` | `ExpandError::ParameterBindingTypeMismatch` / `ExposedParameterTypeMismatch` |
+| I.5 | Exposed parameters exist in parent | `cluster.rs::validate_parameter_bindings` | `ExpandError::ExposedParameterNotFound` |
+| I.6 | Version constraints satisfied | — | **Not implemented** (exact-match only; see `TODO(I.6)`) |
+| I.7 | Parameter bindings reference only declared parameters | `cluster.rs::resolve_impl_parameters` / `build_resolved_params` / `validate_parameter_bindings` | `ExpandError::UndeclaredParameter` |
+
+**Expansion-Time (E.*)**
+
+| ID | Rule | Enforcement Locus | Error Type / Notes |
+|----|------|-------------------|--------------------|
+| E.1 | Output contains only primitives | Type (`ExpandedNode` uses `ImplementationInstance`) | No runtime error |
+| E.2 | Placeholder edges rewritten to node-to-node edges | `cluster.rs::redirect_placeholder_edges` | Verified by tests; no error type |
+| E.3 | `ExternalInput` not an edge sink | `cluster.rs::expand` debug assertion | Assertion only |
+| E.4 | Authoring path preserved | `cluster.rs::expand_with_context` | Verified by tests; no error type |
+| E.5 | Empty clusters rejected | `cluster.rs::expand_with_context` | `ExpandError::EmptyCluster` |
+| E.6 | Definitions not mutated | Clone semantics | No runtime error |
+| E.7 | Boundary ports retained for inference only | `ExpandedGraph` doc contract | No runtime error |
+| E.8 | Deterministic runtime IDs | `cluster.rs::expand_with_context` (sorted keys) | Verified by tests; no error type |
+| E.9 | Referenced nested clusters exist | `cluster.rs::expand_with_context` (`NodeKind::Cluster` load) | `ExpandError::MissingCluster` |
+
+**Validation-Time (V.*)**
+
+| ID | Rule | Enforcement Locus | Error Type / Notes |
+|----|------|-------------------|--------------------|
+| V.1 | No cycles in graph | `runtime/validate.rs::topological_sort` | `ValidationError::CycleDetected` |
+| V.2 | Edges satisfy wiring matrix | `runtime/validate.rs::enforce_wiring_matrix` | `ValidationError::InvalidEdgeKind` |
+| V.3 | Required inputs connected | `runtime/validate.rs::enforce_required_inputs` | `ValidationError::MissingRequiredInput` |
+| V.4 | Type constraints satisfied at edges | `runtime/validate.rs::enforce_types` | `ValidationError::TypeMismatch` |
+| V.5 | Actions gated by triggers | `runtime/validate.rs::enforce_action_gating` | `ValidationError::ActionNotGated` |
+| V.6 | All nodes pass validation before any action executes | `runtime::validate()` before `execute()` | Structural; no dedicated error |
+| V.7 | Each input has ≤1 inbound edge | `runtime/validate.rs::enforce_single_edge_per_input` | `ValidationError::MultipleInboundEdges` |
+| V.8 | Referenced primitive implementations exist in catalog | `runtime/validate.rs::validate` (catalog lookup per node) | `ValidationError::MissingPrimitive` |
+
 ---
 
 ## 7. Expansion Algorithm

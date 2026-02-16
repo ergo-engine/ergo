@@ -206,8 +206,128 @@ Legend:
 - **Rule:** Every primitive registered in CorePrimitiveCatalog must have a corresponding entry in the runtime registries.
 - **Disposition:** CLOSE (defense-in-depth)
 - **Enforcement locus:** test (`crates/runtime/src/catalog.rs`)
-- **Test:** `catalog_entries_have_registry_counterparts`
+- **Test:** `registry_catalog_key_parity`
 - **PR/Commit:** <pending>
+
+---
+
+### REG-SYNC-1 — Core registries and catalog must not drift
+
+- **ID:** REG-SYNC-1
+- **Rule:** `CoreRegistries` and `CorePrimitiveCatalog` must be built from a shared source of primitive definitions and contain the identical primitive key set (id, version, kind).
+- **Disposition:** CLOSE
+- **Enforcement locus:** runtime build path (`crates/runtime/src/catalog.rs`)
+  - Introduce unified build flow (`build_core()`) that feeds both registry registration and catalog registration from the same primitive definition lists.
+  - Add `debug_assert!` parity checks for registry vs catalog key sets at build end.
+- **Error:** `debug_assert!` failure in debug builds; test failure in CI.
+- **Test:** `registry_catalog_key_parity` (bidirectional key equality across source/compute/trigger/action).
+- **Relationship to CAT-SYNC-1:** supersedes test-only parity with construction-time parity guarantees.
+- **PR/Commit:** working tree (uncommitted)
+
+---
+
+### CAT-LOCKDOWN-1 — Catalog registration APIs are crate-private
+
+- **ID:** CAT-LOCKDOWN-1
+- **Rule:** External crates must not construct or mutate `CorePrimitiveCatalog` directly; catalog metadata admission must flow through core build paths.
+- **Disposition:** CLOSE
+- **Enforcement locus:**
+  - `crates/runtime/src/catalog.rs`: `CorePrimitiveCatalog::new()` and `register_compute/register_source/register_trigger/register_action` are `pub(crate)`.
+  - `crates/adapter/src/lib.rs`: migrated test callsite to `build_core_catalog()` (no direct catalog construction/registration).
+- **Error:** compile-time visibility error on external direct catalog construction/registration attempts.
+- **Test evidence:** `cargo test` (adapter tests compile through `build_core_catalog()` path), `registry_catalog_key_parity`.
+- **Relationship to REG-SYNC-1:** complements shared-build drift prevention by blocking metadata-only admission from outside the runtime crate.
+- **PR/Commit:** working tree (uncommitted)
+
+---
+
+### CMP-19 — Parameter default type matches declared type
+
+- **ID:** CMP-19
+- **Rule:** If a compute parameter declares `default: Some(value)`, the default value type must match the parameter's declared `value_type`.
+- **Disposition:** CLOSE
+- **Implemented action:** enforce CMP-19 in compute registration while keeping CMP-15 exclusive to `UnsupportedParameterType`.
+- **Enforcement locus (mapping correction):** `crates/runtime/src/common/errors.rs` (`InvalidParameterType` maps to `CMP-19`, not `CMP-15`).
+- **Enforcement locus (runtime):** `crates/runtime/src/compute/registry.rs` parameter validation loop (typed rejection via `ValidationError::InvalidParameterType` when default type mismatches).
+- **Test (v0 correction):** mapping assertion coverage for `UnsupportedParameterType -> CMP-15` and `InvalidParameterType -> CMP-19`.
+- **Test (runtime):** `cmp_19_invalid_parameter_type_default_rejected`.
+- **Follow-up status (resolved):** CLI parse-time default coercion failures now map to concrete per-kind rule IDs via typed parse errors in `crates/ergo-cli/src/validate.rs` (`CMP-19`, `SRC-15`, `TRG-14`, `ACT-19`) instead of `rule_id = INTERNAL`.
+- **PR/Commit:** working tree (uncommitted)
+
+---
+
+### SRC-15 — Source parameter default type matches declared type
+
+- **ID:** SRC-15
+- **Rule:** If a source parameter declares `default: Some(value)`, the default value type must match the parameter's declared `value_type`.
+- **Disposition:** CLOSE
+- **Enforcement locus:** `crates/runtime/src/source/registry.rs` — parameter validation loop in `validate_manifest()`. Error: `SourceValidationError::InvalidParameterType { parameter, expected, got }`.
+- **Rule ID mapping:** `crates/runtime/src/source/mod.rs` — `Self::InvalidParameterType { .. } => "SRC-15"`.
+- **Path:** `$.parameters[].default`
+- **Fix:** Change parameter default value to match the declared parameter type.
+- **Test:** `src_15_invalid_parameter_type_default_rejected`, `src_15_matching_parameter_default_accepted`
+- **PR/Commit:** working tree (uncommitted)
+
+---
+
+### TRG-14 — Trigger parameter default type matches declared type
+
+- **ID:** TRG-14
+- **Rule:** If a trigger parameter declares `default: Some(value)`, the default value type must match the parameter's declared `value_type`.
+- **Disposition:** CLOSE
+- **Enforcement locus:** `crates/runtime/src/trigger/registry.rs` — parameter validation loop in `validate_manifest()`. Error: `TriggerValidationError::InvalidParameterType { parameter, expected, got }`.
+- **Rule ID mapping:** `crates/runtime/src/trigger/mod.rs` — `Self::InvalidParameterType { .. } => "TRG-14"`.
+- **Path:** `$.parameters[].default`
+- **Fix:** Change parameter default value to match the declared parameter type.
+- **Test:** `trg_14_invalid_parameter_type_default_rejected`, `trg_14_matching_parameter_default_accepted`
+- **PR/Commit:** working tree (uncommitted)
+
+---
+
+### ACT-19 — Action parameter default type matches declared type
+
+- **ID:** ACT-19
+- **Rule:** If an action parameter declares `default: Some(value)`, the default value type must match the parameter's declared `value_type`.
+- **Disposition:** CLOSE
+- **Enforcement locus:** `crates/runtime/src/action/registry.rs` — parameter validation loop in `validate_manifest()`. Error: `ActionValidationError::InvalidParameterType { parameter, expected, got }`.
+- **Rule ID mapping:** `crates/runtime/src/action/mod.rs` — `Self::InvalidParameterType { .. } => "ACT-19"`.
+- **Path:** `$.parameters[].default`
+- **Fix:** Change parameter default value to match the declared parameter type.
+- **Test:** `act_19_invalid_parameter_type_default_rejected`, `act_19_matching_parameter_default_accepted`
+- **PR/Commit:** working tree (uncommitted)
+
+---
+
+### CMP-20 — Compute output type validity maps to explicit rule ID
+
+- **ID:** CMP-20
+- **Rule:** Compute output types must be valid `ValueType` values (`Number | Series | Bool | String`).
+- **Disposition:** CLOSE
+- **Implemented action:** replace explicit INTERNAL mapping for `ValidationError::InvalidOutputType` with `CMP-20`.
+- **Enforcement locus (mapping):** `crates/runtime/src/common/errors.rs` — `Self::InvalidOutputType { .. } => "CMP-20"`, with explicit `doc_anchor`, `path`, and `fix` entries.
+- **Enforcement locus (registration):** `crates/runtime/src/compute/registry.rs` output validation loop includes exhaustive `ValueType` matching (`CMP-20` structural enforcement by type system).
+- **Test (mapping):** `cmp_20_reserved_for_invalid_output_type` in `crates/runtime/src/common/errors.rs`.
+- **Test (registration):** `cmp_20_output_types_valid` in `crates/runtime/src/compute/registry.rs`.
+- **Notes:** Invalid output type strings in raw CLI manifests still fail in parse conversion before registry validation; this closure addresses the runtime rule-ID gap and registration contract mapping.
+- **PR/Commit:** working tree (uncommitted)
+
+---
+
+### INTERNAL-CATCHALL-1 — Remove wildcard INTERNAL mappings in ErrorInfo::rule_id
+
+- **ID:** INTERNAL-CATCHALL-1
+- **Rule:** `ErrorInfo::rule_id()` implementations must be exhaustive; wildcard fallthrough (`_ => "INTERNAL"`) is forbidden.
+- **Disposition:** CLOSE
+- **Enforcement loci:** `rule_id()` matches in:
+  - `crates/runtime/src/source/mod.rs`
+  - `crates/runtime/src/trigger/mod.rs`
+  - `crates/runtime/src/action/mod.rs`
+  - `crates/runtime/src/common/errors.rs`
+  - `crates/runtime/src/cluster.rs`
+  - `crates/runtime/src/runtime/types.rs` (`ValidationError`, `ExecError`)
+- **Required treatment per variant:** assign real rule ID when governed; keep explicit `INTERNAL` arm only for documented defense-in-depth variants; remove dead/phase-impure variants per approved disposition.
+- **Test evidence:** compile-time exhaustiveness after wildcard removal + targeted regression tests for reassigned/live variants.
+- **PR/Commit:** working tree (uncommitted)
 
 ---
 

@@ -1,6 +1,6 @@
 # Extension Contracts Roadmap
 
-**Status:** v1.0.0-alpha.7 — Breaking changes permitted.
+**Status:** v1.0.0-alpha.8 — Breaking changes permitted.
 
 **Goal:** Define extension contracts completely enough that compliance is mechanically verifiable.
 
@@ -279,12 +279,12 @@ Planned extension (requires REP-SCOPE update):
 
 | Contract | Schema | Rules | Enforcement | Composition | Overall |
 |----------|--------|-------|-------------|-------------|---------|
-| Source | 80% | 70% | 10% | 30% | ~50% |
-| Compute | 85% | 80% | 20% | 60% | ~60% |
-| Trigger | 85% | 80% | 10% | 60% | ~60% |
-| Action | 85% | 80% | 10% | 60% | ~60% |
-| Adapter | 20% | 40% | 0% | 20% | ~20% |
-| Cluster | 90% | 85% | 30% | 80% | ~70% |
+| Source | 100% | 100% | 100% | 100% | ✓ Done |
+| Compute | 100% | 100% | 100% | 100% | ✓ Done |
+| Trigger | 100% | 100% | 100% | 100% | ✓ Done |
+| Action | 100% | 100% | 100% | 100% | ✓ Done |
+| Adapter | 100% | 100% | 100% | 100% | ✓ Done |
+| Cluster | 90% | 85% | 80% | 80% | ~85% |
 
 ---
 
@@ -707,11 +707,13 @@ side_effects: false
 | SRC-9 | Side effects not allowed | `side_effects == false` |
 | SRC-10 | Required context keys exist in adapter | `source.requires.context.filter(required).keys ⊆ adapter.provides.context.keys` |
 | SRC-11 | Required context types match adapter | `∀ k where required: source.requires.context[k].ty == adapter.provides.context[k].ty` |
+| SRC-12 | Execution deterministic | `execution.deterministic == true` |
+| SRC-13 | Cadence is continuous | `execution.cadence == continuous` |
 
 **Note on SRC-10/SRC-11:** Only keys with `required: true` must exist in adapter. Keys with `required: false` may be absent (source uses default value).
 
 **Phases:**
-- SRC-1 through SRC-9: Registration (manifest-only validation)
+- SRC-1 through SRC-9, SRC-12, SRC-13: Registration (manifest-only validation)
 - SRC-10 through SRC-11: Composition (adapter + source validation)
 
 **Deliverables:**
@@ -734,11 +736,13 @@ side_effects: false
 | SRC-9 | Registration | `InvalidManifest::SourceHasSideEffects` | `src_9_source_has_side_effects_rejected` |
 | SRC-10 | Composition | `CompositionError::MissingContextKey` | `src_10_missing_context_key_rejected` |
 | SRC-11 | Composition | `CompositionError::ContextTypeMismatch` | `src_11_context_type_mismatch_rejected` |
+| SRC-12 | Registration | `SourceValidationError::NonDeterministicExecution` | `src_12_non_deterministic_execution_rejected` |
+| SRC-13 | Registration | `SourceValidationError::InvalidCadence` | `src_13_invalid_cadence_rejected` |
 
 **Deliverables:**
 - [x] Enforcement table in `source.md`
 - [x] Each rule links to error variant + test
-- [ ] Error messages reference doc anchor (deferred to Phase 7: unified error model)
+- [x] Error messages reference doc anchor (completed in Phase 7 unified error model)
 
 ### 2.4 Composition Rules
 
@@ -1095,8 +1099,8 @@ effects:                      # What effects this action may emit
 **Note:** `effects.writes` declares intent. Actual write happens via `set_context` effect emitted at runtime.
 
 **Deliverables:**
-- [ ] Confirm schema completeness
-- [ ] Side effects requirement is unambiguous
+- [x] Confirm schema completeness
+- [x] Side effects requirement is unambiguous
 
 ### 5.2 Rules Definition
 
@@ -1125,8 +1129,8 @@ effects:                      # What effects this action may emit
 **WriteValueType:** Number | Bool | String (no Series, no Event — matching ActionValueType excluding Event)
 
 **Deliverables:**
-- [ ] Complete rule table in `action.md`
-- [ ] ACT-12 links to R.7 invariant
+- [x] Complete rule table in `action.md`
+- [x] ACT-12 links to R.7 invariant
 
 ### 5.3 Enforcement Mapping
 
@@ -1139,7 +1143,7 @@ effects:                      # What effects this action may emit
 | ACT-5 | Registration | `ActionValidationError::DuplicateInput` | `act_5_duplicate_input_rejected` |
 | ACT-6 | Registration | Type (ActionValueType enum) | `act_6_input_types_valid` |
 | ACT-7 | Registration | `ActionValidationError::UndeclaredOutput` | `act_7_wrong_output_count_rejected` |
-| ACT-8 | Registration | `ActionValidationError::InvalidOutputType` | `act_8_output_not_outcome_rejected` |
+| ACT-8 | Registration | `ActionValidationError::OutputNotOutcome` | `act_8_output_not_outcome_rejected` |
 | ACT-9 | Registration | `ActionValidationError::InvalidOutputType` | `act_9_output_not_event_rejected` |
 | ACT-10 | Registration | `ActionValidationError::StateNotAllowed` | `act_10_action_has_state_rejected` |
 | ACT-11 | Registration | `ActionValidationError::SideEffectsRequired` | `act_11_action_no_side_effects_rejected` |
@@ -1151,8 +1155,8 @@ effects:                      # What effects this action may emit
 | ACT-17 | Registration | `ActionValidationError::NonDeterministicExecution` | `act_17_non_deterministic_execution_rejected` |
 
 **Deliverables:**
-- [ ] Enforcement table in `action.md`
-- [ ] ACT-12 links to existing R.7 enforcement
+- [x] Enforcement table in `action.md`
+- [x] ACT-12 links to existing R.7 enforcement
 
 ### 5.4 Composition Rules
 
@@ -1172,8 +1176,8 @@ effects:                      # What effects this action may emit
 Non-event action inputs are therefore not satisfiable without wiring changes.
 
 **Deliverables:**
-- [ ] Composition rules in `action.md`
-- [ ] Terminal nature explicit
+- [x] Composition rules in `action.md`
+- [x] Terminal nature explicit
 
 ### 5.5 Composition Enforcement Mapping
 
@@ -1187,14 +1191,14 @@ Non-event action inputs are therefore not satisfiable without wiring changes.
 
 ### 5.6 Implementation
 
-- [ ] Verify all ACT-* rules enforced
-- [ ] Write 17 tests (one per rule)
-- [ ] Write 4 composition tests (COMP-11 through COMP-14; COMP-15 deferred)
+- [x] Verify all ACT-* rules enforced
+- [x] Write 17 tests (one per rule)
+- [x] Write 4 composition tests (COMP-11 through COMP-14; COMP-15 deferred)
 
 ### 5.7 Documentation
 
-- [ ] Update `STABLE/PRIMITIVE_MANIFESTS/action.md`
-- [ ] Add ACT-* invariants to PHASE_INVARIANTS.md
+- [x] Update `STABLE/PRIMITIVE_MANIFESTS/action.md`
+- [x] Add ACT-* invariants to PHASE_INVARIANTS.md
 
 ---
 
@@ -1204,15 +1208,17 @@ Non-event action inputs are therefore not satisfiable without wiring changes.
 
 ### 6.1 Remaining Gaps
 
-- [ ] Add enforcement loci for all expansion rules
-- [ ] Add enforcement loci for all validation rules
-- [ ] Map each rule to error type
+- [x] Add enforcement loci for all expansion rules
+- [x] Add enforcement loci for all validation rules
+- [x] Map each rule to error type
 
 ### 6.2 Deliverables
 
-- [ ] Enforcement table in `CLUSTER_SPEC.md`
-- [ ] All E-* (expansion) invariants mapped to code
-- [ ] All V-* (validation) invariants mapped to code
+- [x] Enforcement table in `CLUSTER_SPEC.md`
+- [x] All E-* (expansion) invariants mapped to code
+- [x] All V-* (validation) invariants mapped to code
+
+**Phase 6 closure note:** Mapping completeness is satisfied even where a rule has no dedicated runtime error variant (for example, type-level or assertion-level enforcement). `I.6` remains explicitly mapped as **not implemented** in `CLUSTER_SPEC.md` and `PHASE_INVARIANTS.md`.
 
 ---
 
@@ -1277,7 +1283,9 @@ pub enum Phase {
   - [x] `ExpandError` (+ nested signature errors)
   - [x] `ExecError` (execution rule IDs: CMP-11/12, SRC-10/11, NUM-FINITE-1, X.11)
 - [x] CLI maps typed errors → `RuleViolation` for uniform rendering
-- [ ] (Optional) Accumulation mode for improved author UX
+- [ ] (Optional) Accumulation mode for improved author UX (explicitly deferred; early-exit semantics remain acceptable)
+
+**Phase 7 closure note:** Required deliverables for 7.1 through 7.5 are complete. Optional accumulation remains deferred by design and is not a blocker for Phase 7 closure.
 
 ### 7.2 CLI: `ergo validate`
 
@@ -1724,18 +1732,18 @@ All rules by extension type:
 | Extension | Rules | Count |
 |-----------|-------|-------|
 | Adapter | ADP-1..ADP-17 | 17 |
-| Source | SRC-1..SRC-11 | 11 |
-| Compute | CMP-1..CMP-12 | 12 |
-| Trigger | TRG-1..TRG-10 | 10 |
-| Action | ACT-1..ACT-15 | 15 |
+| Source | SRC-1..SRC-13 | 13 |
+| Compute | CMP-1..CMP-17 | 17 |
+| Trigger | TRG-1..TRG-12 | 12 |
+| Action | ACT-1..ACT-17 | 17 |
 | Composition | COMP-1..COMP-15 | 15 |
-| **Total** | | **80** |
+| **Total** | | **91** |
 
 ---
 
 ## Governance
 
-**Status:** v1.0.0-alpha.7 — Breaking changes permitted.
+**Status:** v1.0.0-alpha.8 — Breaking changes permitted.
 
 This roadmap is a v1 workstream item.
 
@@ -1772,3 +1780,4 @@ This roadmap is a v1 workstream item.
 | v1.0.0-alpha.5 | 2026-01-11 | Claude (Structural Auditor) | Codex re-audit fixes: (1) RuleViolation marked as Phase 7 target not current, (2) CMP-12 ExecError::OutputOnError marked TO BE ADDED, (3) Source error path fixed (trait can't return errors), (4) SRC-10/SRC-11 predicates filter by required |
 | v1.0.0-alpha.6 | 2026-01-21 | Claude (Structural Auditor) | Error model fork resolved: (1) Added ErrorInfo trait with MUST/SHOULD gradation, (2) RuleViolation is presentation format not internal, (3) Phase 1.3 InvalidAdapter typed enum with ErrorInfo impl, (4) Phase 7.1 retrofits existing enums, (5) path/fix are SHOULD not MUST, (6) ADP-15/16 enforcement deferred until REP-SCOPE expansion |
 | v1.0.0-alpha.7 | 2026-01-21 | Claude (Structural Auditor) | Phase 1.3 consistency fixes per ChatGPT review: (1) Added index fields to all list-locus variants, (2) Complete path()/fix() implementations, (3) ADP-6 requires String parsing not ValueType, (4) ADP-10/ADP-11 semantics clarified, (5) doc_anchor format locked to STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-N |
+| v1.0.0-alpha.8 | 2026-02-05 | Claude Code | Marked Phase 5 (Action) complete; updated Current State table (Phases 1-5 done); corrected Rule Summary counts (91 total rules) |

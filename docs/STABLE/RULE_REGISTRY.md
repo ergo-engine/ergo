@@ -48,6 +48,10 @@ Primary spec: `STABLE/PRIMITIVE_MANIFESTS/source.md`
 | SRC-7 | Registration | enforced | Output types valid | `all(outputs[].type ∈ ValueType)` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-7` |
 | SRC-8 | Registration | enforced | State not allowed | `state.allowed == false` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-8` |
 | SRC-9 | Registration | enforced | Side effects not allowed | `side_effects == false` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-9` |
+| SRC-12 | Registration | enforced | Execution deterministic | `execution.deterministic == true` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-12` |
+| SRC-13 | Registration | enforced | Cadence is continuous | `execution.cadence == continuous` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-13` |
+| SRC-14 | Registration | enforced | ID unique in registry | `!registry.contains_key(id)` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-14` |
+| SRC-15 | Registration | enforced | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-15` |
 | SRC-10 | Composition | alias -> COMP-1 | Required context keys exist in adapter | `source.requires.context.filter(required).keys ⊆ adapter.provides.context.keys` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-10` |
 | SRC-11 | Composition | alias -> COMP-2 | Required context types match adapter | `∀ k where required: source.requires.context[k].ty == adapter.provides.context[k].ty` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-11` |
 
@@ -74,6 +78,9 @@ Primary spec: `STABLE/PRIMITIVE_MANIFESTS/compute.md`
 | CMP-15 | Registration | enforced | Parameter types valid | `parameters[].type ∈ {Int, Number, Bool}` | `STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-15` |
 | CMP-16 | Registration | enforced | Cadence is continuous | `execution.cadence == continuous` | `STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-16` |
 | CMP-17 | Registration | enforced | Execution deterministic | `execution.deterministic == true` | `STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-17` |
+| CMP-18 | Registration | enforced | ID unique in registry | `!registry.contains_key(id)` | `STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-18` |
+| CMP-19 | Registration | enforced | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` | `STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-19` |
+| CMP-20 | Registration | enforced | Output types valid | `all(outputs[].type ∈ ValueType)` | `STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-20` |
 
 ## Trigger (TRG-*)
 
@@ -93,6 +100,8 @@ Primary spec: `STABLE/PRIMITIVE_MANIFESTS/trigger.md`
 | TRG-10 | Registration | enforced | Side effects not allowed | `side_effects == false` | `STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-10` |
 | TRG-11 | Registration | enforced | Execution deterministic | `execution.deterministic == true` | `STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-11` |
 | TRG-12 | Registration | enforced | Input cardinality single | `inputs[].cardinality == single` | `STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-12` |
+| TRG-13 | Registration | enforced | ID unique in registry | `!registry.contains_key(id)` | `STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-13` |
+| TRG-14 | Registration | enforced | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` | `STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-14` |
 
 ## Action (ACT-*)
 
@@ -117,17 +126,19 @@ Primary spec: `STABLE/PRIMITIVE_MANIFESTS/action.md`
 | ACT-15 | Registration | enforced | Write types valid | `all(effects.writes[].type ∈ {Number, Bool, String})` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-15` |
 | ACT-16 | Registration | enforced | Retryable false | `execution.retryable == false` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-16` |
 | ACT-17 | Registration | enforced | Execution deterministic | `execution.deterministic == true` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-17` |
+| ACT-18 | Registration | enforced | ID unique in registry | `!registry.contains_key(id)` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-18` |
+| ACT-19 | Registration | enforced | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-19` |
 
 ## Composition (COMP-*)
 
-Primary spec: `docs/EXTENSION_CONTRACTS_ROADMAP.md`
+Primary spec: `STABLE/PRIMITIVE_MANIFESTS (distributed)`
 
 | Rule ID | Phase | Status | Summary | Predicate | Docs |
 |---------|-------|--------|---------|-----------|------|
 | COMP-1 | Composition | enforced | Source context requirements satisfied | `source.requires.context.filter(required).keys ⊆ adapter.provides.context.keys` | `STABLE/PRIMITIVE_MANIFESTS/adapter.md#COMP-1` |
 | COMP-2 | Composition | enforced | Source context types match | `∀ k where required: source.requires.context[k].ty == adapter.provides.context[k].ty` | `STABLE/PRIMITIVE_MANIFESTS/adapter.md#COMP-2` |
 | COMP-3 | Composition | enforced | Capture format version supported | `runtime.supports_capture(adapter.capture.format_version)` | `STABLE/PRIMITIVE_MANIFESTS/adapter.md#COMP-3` |
-| COMP-4 | Composition | alias -> V.4 | Source output type equals Compute input type | `source.output.type == compute.input.type` | `docs/EXTENSION_CONTRACTS_ROADMAP.md#COMP-4` |
+| COMP-4 | Composition | alias -> V.4 | Source output type equals Compute input type | `source.output.type == compute.input.type` | `STABLE/PRIMITIVE_MANIFESTS/compute.md#COMP-4` |
 | COMP-5 | Composition | alias -> V.4 | Input type equals upstream output type | `upstream.output.type == compute.input.type` | `STABLE/PRIMITIVE_MANIFESTS/compute.md#COMP-5` |
 | COMP-6 | Composition | alias -> V.4 | Output type equals downstream input type | `compute.output.type == downstream.input.type` | `STABLE/PRIMITIVE_MANIFESTS/compute.md#COMP-6` |
 | COMP-7 | Composition | alias -> V.2 | Trigger input from Compute or Trigger | `upstream.kind ∈ {"compute", "trigger"}` | `STABLE/PRIMITIVE_MANIFESTS/trigger.md#COMP-7` |

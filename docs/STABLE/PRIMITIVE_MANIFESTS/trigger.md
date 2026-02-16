@@ -1,15 +1,18 @@
 ---
 Authority: STABLE
-Version: v0
-Last Amended: 2026-01-11
+Version: v1
+Last Updated: 2026-02-02
+Last Amended: 2026-02-02
 ---
 
-# Trigger Primitive Manifest — v0
+> **Amended 2026-02-02** by Codex (Implementation Assistant)
+> Phase 4 (Trigger Contract) completion: schema updates, rule table, enforcement mapping,
+> composition rules, and examples.
 
-## 1. Definition
+# Trigger Primitive Manifest — v1
 
 A Trigger Primitive is a deterministic event extractor that converts
-typed inputs (usually series or booleans) into discrete events.
+typed inputs into discrete events.
 
 Triggers:
 - do not perform actions
@@ -20,6 +23,19 @@ Triggers:
 A trigger answers one question:
 
 *"Did an event occur at this evaluation point?"*
+
+---
+
+## 1. Definition
+
+A Trigger Primitive is a deterministic event extractor:
+
+```
+inputs (typed) -> trigger -> event
+```
+
+It converts boolean/series/value inputs (or upstream events) into a single
+emitted/not-emitted event.
 
 ---
 
@@ -38,9 +54,9 @@ kind: trigger
 ```
 
 Rules:
-- `id` is unique and stable
-- `version` is semver or monotonic
-- `kind` must be `trigger`
+- `id` must start with a lowercase letter and contain only lowercase letters, digits, and underscores (`^[a-z][a-z0-9_]*$`)
+- `version` must be valid semver
+- `kind` must be literal `trigger`
 
 ---
 
@@ -49,16 +65,16 @@ Rules:
 ```yaml
 inputs:
   - name: string
-    type: series | number | bool | event
-    required: true
-    cardinality: single | multiple
+    type: number | bool | series | event
+    required: bool
+    cardinality: single
 ```
 
 Rules:
-- Inputs are explicit, named, and typed
-- No implicit inputs (time, identifier, state must be upstream)
-- Triggers do not read execution context
-- Inputs may be continuous values, booleans, or upstream events (Trigger → Trigger chaining)
+- At least one input is required
+- Input names must be unique
+- Input types must be `Number`, `Bool`, `Series`, or `Event` (no `String`)
+- Cardinality must be `single` (multiple is reserved)
 
 ---
 
@@ -66,15 +82,14 @@ Rules:
 
 ```yaml
 outputs:
-  - name: event
+  - name: string
     type: event
 ```
 
 Rules:
-- Triggers always emit events
-- Output type is always `event`
-- Events are discrete (occur or not)
-- No additional outputs allowed in v0
+- Exactly one output is required
+- Output type must be `event`
+- Output name is not enforced today
 
 ---
 
@@ -85,14 +100,15 @@ parameters:
   - name: string
     type: int | number | bool | string | enum
     default: any
+    required: bool
     bounds: optional
 ```
 
 Rules:
 - Parameters are static presets
 - Parameters must be serializable
-- Parameters must be fully declared
 - No runtime mutation allowed
+- If `default` is present, its type must match the declared parameter `type`
 
 ---
 
@@ -105,9 +121,9 @@ execution:
 ```
 
 Rules:
-- `continuous` = evaluated every bar / tick
-- `event` = evaluated only when upstream event occurs
 - Determinism is required
+- `continuous` = evaluated every tick
+- `event` = evaluated only when upstream event occurs
 
 ---
 
@@ -115,53 +131,14 @@ Rules:
 
 ```yaml
 state:
-  allowed: false  # REQUIRED — triggers are stateless
+  allowed: false
+  description: optional
 ```
 
 **Triggers are stateless.** The `state.allowed` field must be `false` for all trigger
-implementations. The registry will reject any trigger manifest with `allowed: true`.
+implementations. The registry rejects any trigger manifest with `allowed: true`.
 
-#### Execution-Local Bookkeeping
-
-Trigger implementations may use ephemeral, execution-local bookkeeping during evaluation
-(temporary variables, scratch registers). This is permitted because it:
-
-- Is not observable by the runtime
-- Is not serialized or captured
-- Is not preserved across evaluations
-- Does not participate in causality
-
-Such bookkeeping does not constitute "state" in the system's ontological sense.
-
-#### Temporal Patterns
-
-Behaviors requiring cross-evaluation memory are **not triggers**. They are compositional
-patterns (clusters) that must be built from:
-
-| Primitive | Role in Pattern |
-|-----------|-----------------|
-| Source | Read persisted state from environment |
-| Compute | Evaluate policy / transform state |
-| Trigger | Emit event based on computed boolean |
-| Action | Write updated state to environment |
-
-Examples of temporal patterns (implemented as clusters, not triggers):
-- `OnceCluster` — emit only on first occurrence
-- `CountCluster` — count events
-- `LatchCluster` — set/reset state machine
-- `DebounceCluster` — cooldown gating
-
-#### Amendment Record
-
-> **Amended 2025-12-28** by Sebastian (Freeze Authority)
->
-> Prior language allowing `state.allowed: true` was a semantic error. Triggers are
-> ontologically stateless. This field must always be `false`.
-
-> **Amended 2026-01-11** by Sebastian (Freeze Authority)
->
-> Updated §2.2 input type list to include `event`, aligning the manifest schema text with the
-> already-supported TriggerValueType and the "upstream events" language elsewhere in this doc.
+TRG-STATE-1 (PHASE_INVARIANTS.md) formalizes this requirement.
 
 ---
 
@@ -171,153 +148,100 @@ Examples of temporal patterns (implemented as clusters, not triggers):
 side_effects: false
 ```
 
-Hard rule:
-- Triggers may not:
-  - perform I/O
-  - access network
-  - access external state
-  - emit actions
-  - log as behavior
-
-If it touches the world, it is not a trigger.
-
----
-
-## 3. Event Semantics (Critical)
-
-An event is:
-- a discrete occurrence
-- tied to a specific evaluation index
-- either emitted or not emitted
-
 Rules:
-- Events do not persist
-- Events do not carry payloads in v0
-- Events are consumed downstream by:
-  - actions
-  - other triggers (via event cadence)
+- Triggers may not perform I/O or access external state
+- If it touches the world, it is not a trigger
 
 ---
 
-## 4. Prohibited Behavior
+## 3. Rules Definition
 
-A trigger primitive may not:
-- Emit multiple event streams
-- Emit continuous values
-- Access execution mode
-- Access external state
-- Perform actions
-- Mutate global state
-- Hold internal state
-- Accept undeclared inputs or parameters
-- Emit undeclared outputs
+| Rule ID | Rule | Predicate |
+|---------|------|-----------|
+| TRG-1 | ID format valid | `regex(id, /^[a-z][a-z0-9_]*$/)` |
+| TRG-2 | Version valid semver | `semver.valid(version)` |
+| TRG-3 | Kind is "trigger" | `kind == "trigger"` |
+| TRG-4 | At least one input | `inputs.len >= 1` |
+| TRG-5 | Input names unique | `unique(inputs[].name)` |
+| TRG-6 | Input types valid | `all(inputs[].type ∈ TriggerValueType)` |
+| TRG-7 | Exactly one output | `outputs.len == 1` |
+| TRG-8 | Output is event type | `outputs[0].type == "event"` |
+| TRG-9 | State not allowed | `state.allowed == false` |
+| TRG-10 | Side effects not allowed | `side_effects == false` |
+| TRG-11 | Execution deterministic | `execution.deterministic == true` |
+| TRG-12 | Input cardinality single | `inputs[].cardinality == single` |
+| TRG-13 | ID unique in registry | `id ∉ TriggerRegistry.ids` |
+| TRG-14 | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` |
 
-Violation invalidates the primitive.
+**Note on TRG-13:** Uniqueness is by id only; version is not considered. Two primitives with the same id but different versions are rejected.
 
----
-
-## 5. Composition Rule
-
-Triggers sit between compute and action.
-
-- Compute → Trigger → Action
-- Triggers may consume:
-  - compute outputs
-  - boolean series
-  - upstream events
-- Triggers may not:
-  - execute side effects
-  - store state
-
-Composition occurs only via the graph.
+**TriggerValueType:** Number | Bool | Series | Event (no String)
 
 ---
 
-## 6. Orchestrator Contract
+## 4. Enforcement Mapping
 
-The orchestrator guarantees:
-- Inputs match declared types
-- Cadence is respected
-- Events are emitted exactly once per evaluation
+| Rule ID | Phase | Error Variant | Test Name |
+|---------|-------|---------------|-----------|
+| TRG-1 | Registration | `TriggerValidationError::InvalidId` | `trg_1_invalid_id_rejected` |
+| TRG-2 | Registration | `TriggerValidationError::InvalidVersion` | `trg_2_invalid_version_rejected` |
+| TRG-3 | Registration | Type (TriggerKind::Trigger only) | `trg_3_kind_trigger_accepted` |
+| TRG-4 | Registration | `TriggerValidationError::NoInputsDeclared` | `trg_4_no_inputs_rejected` |
+| TRG-5 | Registration | `TriggerValidationError::DuplicateInput` | `trg_5_duplicate_input_rejected` |
+| TRG-6 | Registration | Type (TriggerValueType enum) | `trg_6_input_types_valid` |
+| TRG-7 | Registration | `TriggerValidationError::TriggerWrongOutputCount` | `trg_7_wrong_output_count_rejected` |
+| TRG-8 | Registration | `TriggerValidationError::InvalidOutputType` | `trg_8_output_not_event_rejected` |
+| TRG-9 | Registration | `TriggerValidationError::StatefulTriggerNotAllowed` | `trg_9_trigger_has_state_rejected` |
+| TRG-10 | Registration | `TriggerValidationError::SideEffectsNotAllowed` | `trg_10_trigger_has_side_effects_rejected` |
+| TRG-11 | Registration | `TriggerValidationError::NonDeterministicExecution` | `trg_11_non_deterministic_execution_rejected` |
+| TRG-12 | Registration | `TriggerValidationError::InvalidInputCardinality` | `trg_12_invalid_input_cardinality_rejected` |
+| TRG-13 | Registration | `TriggerValidationError::DuplicateId` | `trg_13_duplicate_id_rejected` |
+| TRG-14 | Registration | `TriggerValidationError::InvalidParameterType` | `trg_14_invalid_parameter_type_default_rejected` |
 
-The orchestrator does not:
-- interpret meaning
-- debounce implicitly
-- infer intent
-- tolerate non-determinism
+**Enforcement location:** `crates/runtime/src/trigger/registry.rs`
 
----
-
-## 7. Canonical Primitive Trigger Examples
-
-The following are valid primitive trigger implementations under v0 constraints.
-All are stateless and evaluate purely on current-evaluation inputs.
-
-**emit_if_true**
-- inputs: `input:bool`
-- outputs: `event`
-- state: `false`
-- cadence: `continuous`
-- emits event when `input == true` at evaluation point
-
-**gt (greater-than)**
-- inputs: `a:number`, `b:number`
-- outputs: `event`
-- state: `false`
-- cadence: `continuous`
-- emits event when `a > b` at evaluation point
-
-**pass_through**
-- inputs: `upstream:event`
-- outputs: `event`
-- state: `false`
-- cadence: `event`
-- re-emits upstream event (identity trigger for Trigger → Trigger chaining)
+**TRG-9 link:** TRG-STATE-1 in `docs/CANONICAL/PHASE_INVARIANTS.md`.
 
 ---
 
-### 7.1 Behaviors That Are NOT Primitive Triggers
+## 5. Composition Rules
 
-The following require cross-evaluation memory and must be implemented as clusters
-(see §2.6 Temporal Patterns):
+| Rule ID | Rule | Predicate |
+|---------|------|-----------|
+| COMP-7 | Trigger input from Compute or Trigger | `upstream.kind ∈ {"compute", "trigger"}` |
+| COMP-8 | Trigger output to Action or Trigger | `downstream.kind ∈ {"action", "trigger"}` |
 
-| Behavior | Why It's Not a Primitive |
-|----------|--------------------------|
-| **crossover** | Detecting "fast crossed slow" requires comparing current vs. previous evaluation |
-| **once** | Emitting only on first occurrence requires remembering prior emissions |
-| **debounce** | Cooldown gating requires tracking time since last emission |
-| **latch** | Set/reset state machine requires persistent state |
-| **count** | Counting events requires accumulating across evaluations |
-
-These are compositional patterns built from Source + Compute + Trigger + Action, not atomic triggers
+**Enforcement location:** `crates/runtime/src/runtime/validate.rs` (wiring matrix validation)
 
 ---
 
-## 8. Scope
+## 6. Example Manifests
 
-This document defines Trigger Primitive Manifest v0.
-- Payload-carrying events are out of scope
-- Multi-output triggers are out of scope
-- Cross-identifier triggers are out of scope
+### 6.1 Minimal Valid Trigger
 
-Those belong to later versions.
+```yaml
+kind: trigger
+id: emit_if_true
+version: 1.0.0
 
----
+inputs:
+  - name: input
+    type: bool
+    required: true
+    cardinality: single
 
-## 9. Contract Stability
+outputs:
+  - name: event
+    type: event
 
-This contract is STABLE.
+parameters: []
 
-Breaking changes require a manifest version bump.
+execution:
+  cadence: continuous
+  deterministic: true
 
----
+state:
+  allowed: false
 
-## Bottom Line
-
-Compute gave you truth.
-Triggers give you causality.
-
-With this locked:
-- actions become trivial
-- strategies become closures over events
-- the system becomes fully temporal and deterministic
+side_effects: false
+```

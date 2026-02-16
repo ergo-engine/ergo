@@ -1,50 +1,48 @@
 ---
 Authority: STABLE
-Version: v0
-Last Updated: 2026-01-11
-Last Amended: 2026-01-11
+Version: v1
+Last Updated: 2026-02-12
+Last Amended: 2026-02-12
 ---
 
-# Compute Primitive Manifest — v0
+> **Amended 2026-02-02** by Codex (Implementation Assistant)
+> Phase 3 (Compute Contract) completion: schema updates (cardinality, may_error, errors, resettable),
+> rules table, enforcement mapping, composition rules, and examples.
 
-## Amendment Record
+# Compute Primitive Manifest — v1
 
-> **Amended 2026-01-11** by Claude (Structural Auditor)
->
-> Aligned spec with code reality:
-> - §2.2 Inputs: Removed `event` (Trigger → Compute forbidden by FROZEN wiring matrix)
->   and `string` (map_to_compute_value rejects String). Valid: `series | number | bool`
-> - §2.3 Outputs: Removed `event`, kept `string` (compute can return Value::String).
->   Valid: `series | number | bool | string`
-> - §2.4 Parameters: Removed `string | enum` (runtime only maps int/number/bool).
->   Valid: `int | number | bool`
-> - §2.5 Cadence: Removed `event` (unsatisfiable in v0 — no upstream events can reach Compute)
->
-> Origin: Initial commit 66f6576 shipped with these inconsistencies. Code was correct;
-> spec was wrong from day one.
->
-> Authority: FROZEN > STABLE. Code is ground truth for runtime behavior.
+A Compute Primitive is a pure, deterministic transform that maps
+named, typed inputs to named, typed outputs on a declared cadence.
+
+Computes:
+- have no side effects
+- do not access external I/O
+- do not observe the execution mode
+- are composable only via graph wiring
+
+The primitive is atomic; composition happens at the graph level.
+
+---
 
 ## 1. Definition
 
-A Compute Primitive is a pure, deterministic transform that maps
-typed inputs → typed outputs on a declared execution cadence.
+A Compute Primitive is a deterministic data transform:
 
-It:
-- has no side effects
-- performs no I/O
-- does not know about execution mode
-- is composable only via a graph
-- contains no strategy or intent logic
+```
+inputs (typed) -> compute -> outputs (typed)
+```
 
-The primitive itself is atomic.
-All composition happens at the graph level.
+It answers one question:
+
+*"Given these inputs, what are the outputs?"*
 
 ---
 
 ## 2. Required Manifest Fields
 
 Every compute primitive must declare all of the following.
+
+---
 
 ### 2.1 Identity
 
@@ -54,9 +52,10 @@ version: string
 kind: compute
 ```
 
-- `id` is stable and unique
-- `version` is semver or monotonic
-- `kind` must be `compute`
+Rules:
+- `id` must start with a lowercase letter and contain only lowercase letters, digits, and underscores (`^[a-z][a-z0-9_]*$`)
+- `version` must be valid semver
+- `kind` must be literal `compute`
 
 ---
 
@@ -65,17 +64,16 @@ kind: compute
 ```yaml
 inputs:
   - name: string
-    type: series | number | bool
-    required: true
-    cardinality: single | multiple
+    type: number | bool | series
+    required: bool
+    cardinality: single
 ```
 
 Rules:
-- Inputs are explicit, named, and typed
-- No implicit inputs exist
-- Time, identifier, state, or context must be provided upstream
-- Cardinality must be declared
-- At least one input is required (zero-input nodes are Sources by definition)
+- At least one input is required
+- Input names must be unique
+- Input types must be `Number`, `Bool`, or `Series` (no `String`, no `Event`)
+- Cardinality must be `single` (multiple is reserved)
 
 ---
 
@@ -84,14 +82,15 @@ Rules:
 ```yaml
 outputs:
   - name: string
-    type: series | number | bool | string
+    type: number | bool | series | string
 ```
 
 Rules:
-- Outputs are named and typed
-- Multiple outputs are first-class
-- No undeclared outputs are permitted
-- All declared outputs must be produced
+- At least one output is required
+- Output names must be unique
+- Output types must be `Number`, `Bool`, `Series`, or `String`
+- On success, all declared outputs must be produced
+- Undeclared outputs are not permitted
 
 ---
 
@@ -102,14 +101,14 @@ parameters:
   - name: string
     type: int | number | bool
     default: any
+    required: bool
     bounds: optional
 ```
 
 Rules:
-- Parameters are static presets
-- Parameters do not change during execution
-- Parameters must be fully serializable
-- No hidden or dynamic parameters allowed
+- Parameter types are limited to `int | number | bool`
+- Parameters are static presets (do not change during execution)
+- Parameters must be serializable
 
 ---
 
@@ -123,142 +122,220 @@ execution:
 ```
 
 Rules:
-
-- `continuous` = evaluated every bar / tick
+- Cadence is `continuous` only (event cadence is unsatisfiable in v0)
 - Determinism is required
-- Errors are permitted for domain-specific edge cases (see §2.8)
-
-Note: `event` cadence (evaluated only on upstream event emission) is not implemented
-in v0. Trigger → Compute wiring is forbidden, so event-gated compute is unsatisfiable.
+- `may_error` indicates whether the compute may return a `ComputeError` (informational)
 
 ---
 
-### 2.6 State
+### 2.6 Error Semantics
+
+```yaml
+errors:
+  allowed: bool
+  types: [ErrorType]
+  deterministic: true
+```
+
+Valid ErrorType values:
+- `DivisionByZero`
+- `NonFiniteResult`
+
+Rules:
+- If `errors.allowed == true`, then `errors.deterministic` must be true
+- When execution succeeds, all declared outputs must be produced
+- When execution fails, no outputs are produced
+- Errors surface as `ExecError::ComputeFailed` at runtime
+
+---
+
+### 2.7 State
 
 ```yaml
 state:
-  allowed: true | false
+  allowed: bool
+  resettable: bool
   description: optional
 ```
 
 Rules:
-- State is allowed only if:
-  - deterministic
-  - resettable
-  - time-indexed
-- Rolling / windowed state is valid
+- If `state.allowed == true`, then `state.resettable` must be true
 - External or hidden state is forbidden
 
 ---
 
-### 2.7 Side Effects
+### 2.8 Side Effects
 
 ```yaml
 side_effects: false
 ```
 
-Hard rule:
-
+Rules:
 - Compute primitives may not perform I/O
-- May not access network, filesystem, or external state
-- If it touches the world, it is not compute
+- Compute primitives may not access external state
 
 ---
 
-### 2.8 Error Semantics
+## 3. Rules Definition
+
+| Rule ID | Rule | Predicate |
+|---------|------|-----------|
+| CMP-1 | ID format valid | `regex(id, /^[a-z][a-z0-9_]*$/)` |
+| CMP-2 | Version valid semver | `semver.valid(version)` |
+| CMP-3 | Kind is "compute" | `kind == "compute"` |
+| CMP-4 | At least one input | `inputs.len >= 1` |
+| CMP-5 | Input names unique | `unique(inputs[].name)` |
+| CMP-6 | At least one output | `outputs.len >= 1` |
+| CMP-7 | Output names unique | `unique(outputs[].name)` |
+| CMP-8 | Side effects not allowed | `side_effects == false` |
+| CMP-9 | State resettable if allowed | `state.allowed => state.resettable` |
+| CMP-10 | Errors deterministic | `errors.allowed => errors.deterministic` |
+| CMP-11 | All outputs produced on success | `compute() -> Ok(outputs)` must include every declared output |
+| CMP-12 | No outputs produced on error | `compute() -> Err(_)` emits no outputs |
+| CMP-13 | Input types valid | `inputs[].type ∈ {Number, Bool, Series}` |
+| CMP-14 | Input cardinality single | `inputs[].cardinality == single` |
+| CMP-15 | Parameter types valid | `parameters[].type ∈ {Int, Number, Bool}` |
+| CMP-16 | Cadence is continuous | `execution.cadence == continuous` |
+| CMP-17 | Execution deterministic | `execution.deterministic == true` |
+| CMP-18 | ID unique in registry | `id ∉ ComputeRegistry.ids` |
+| CMP-19 | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` |
+| CMP-20 | Output types valid | `all(outputs[].type ∈ ValueType)` |
+
+**Note on CMP-18:** Uniqueness is by id only; version is not considered. Two primitives with the same id but different versions are rejected.
+
+---
+
+## 4. Enforcement Mapping
+
+| Rule ID | Phase | Error Variant | Test Name |
+|---------|-------|---------------|-----------|
+| CMP-1 | Registration | `ValidationError::InvalidId` | `cmp_1_invalid_id_rejected` |
+| CMP-2 | Registration | `ValidationError::InvalidVersion` | `cmp_2_invalid_version_rejected` |
+| CMP-3 | Registration | Type (PrimitiveKind::Compute only) | `cmp_3_kind_compute_accepted` |
+| CMP-4 | Registration | `ValidationError::NoInputsDeclared` | `cmp_4_no_inputs_rejected` |
+| CMP-5 | Registration | `ValidationError::DuplicateInput` | `cmp_5_duplicate_inputs_rejected` |
+| CMP-6 | Registration | `ValidationError::NoOutputsDeclared` | `cmp_6_no_outputs_rejected` |
+| CMP-7 | Registration | `ValidationError::DuplicateOutput` | `cmp_7_duplicate_outputs_rejected` |
+| CMP-8 | Registration | `ValidationError::SideEffectsNotAllowed` | `cmp_8_side_effects_rejected` |
+| CMP-9 | Registration | `ValidationError::StateNotResettable` | `cmp_9_state_not_resettable_rejected` |
+| CMP-10 | Registration | `ValidationError::NonDeterministicErrors` | `cmp_10_non_deterministic_errors_rejected` |
+| CMP-11 | Execution | `ExecError::MissingOutput` | `cmp_11_missing_output_fails` |
+| CMP-12 | Execution | `ExecError::ComputeFailed` | `cmp_12_compute_error_fails` |
+| CMP-13 | Registration | `ValidationError::InvalidInputType` | `cmp_13_invalid_input_type_rejected` |
+| CMP-14 | Registration | `ValidationError::InvalidInputCardinality` | `cmp_14_invalid_input_cardinality_rejected` |
+| CMP-15 | Registration | `ValidationError::UnsupportedParameterType` | `cmp_15_invalid_parameter_type_rejected` |
+| CMP-16 | Registration | `ValidationError::InvalidCadence` | `cmp_16_invalid_cadence_rejected` |
+| CMP-17 | Registration | `ValidationError::NonDeterministicExecution` | `cmp_17_non_deterministic_execution_rejected` |
+| CMP-18 | Registration | `ValidationError::DuplicateId` | `cmp_18_duplicate_id_rejected` |
+| CMP-19 | Registration | `ValidationError::InvalidParameterType` | `cmp_19_invalid_parameter_type_default_rejected` |
+| CMP-20 | Registration | Type (`ValueType` enum) | `cmp_20_output_types_valid` |
+
+**Enforcement location (registration):** `crates/runtime/src/compute/registry.rs`
+
+**Enforcement location (execution):** `crates/runtime/src/runtime/execute.rs`
+
+**CMP-12 note:** The compute API returns `Result<Outputs, ComputeError>`. An error has no outputs by
+construction; the runtime surfaces this as `ExecError::ComputeFailed`.
+
+**CMP-19 note:** Enforced in registration by validating that `parameters[].default` (when present)
+matches `parameters[].type`.
+
+**CMP-20 note:** Structurally enforced in registration via exhaustive `ValueType` matching in
+`crates/runtime/src/compute/registry.rs`; invalid manifest strings (for example `type: event`)
+are rejected during CLI parse before registry validation.
+
+---
+
+## 5. Composition Rules
+
+| Rule ID | Rule | Predicate |
+|---------|------|-----------|
+| COMP-4 | Source output type equals Compute input type | `source.output.type == compute.input.type` |
+| COMP-5 | Input type equals upstream output type | `upstream.output.type == compute.input.type` |
+| COMP-6 | Output type equals downstream input type | `compute.output.type == downstream.input.type` |
+
+**Enforcement location:** `crates/runtime/src/runtime/validate.rs` (`ValidationError::TypeMismatch`)
+
+---
+
+## 6. Example Manifests
+
+### 6.1 Minimal Valid Compute
 
 ```yaml
-errors:
-  allowed: true
+kind: compute
+id: add_two
+version: 1.0.0
+
+inputs:
+  - name: a
+    type: number
+    required: true
+    cardinality: single
+  - name: b
+    type: number
+    required: true
+    cardinality: single
+
+outputs:
+  - name: result
+    type: number
+
+parameters: []
+
+execution:
+  cadence: continuous
   deterministic: true
+  may_error: false
+
+errors:
+  allowed: false
+  types: []
+  deterministic: true
+
+state:
+  allowed: false
+  resettable: false
+
+side_effects: false
 ```
 
-Rules:
+### 6.2 Compute With Declared Errors
 
-- Compute primitives may produce errors for domain-specific edge cases
-- Errors must be deterministic (same inputs → same error)
-- When execution succeeds, all declared outputs must be produced
-- When execution fails, no outputs are produced
-- Errors surface as `ExecError::ComputeFailed` at runtime
+```yaml
+kind: compute
+id: divide
+version: 1.0.0
 
-Error types (B.2):
+inputs:
+  - name: a
+    type: number
+    required: true
+    cardinality: single
+  - name: b
+    type: number
+    required: true
+    cardinality: single
 
-- `DivisionByZero` — Division by zero attempted
-- `NonFiniteResult` — Result overflowed to infinity or NaN
+outputs:
+  - name: result
+    type: number
 
-Errors are semantic failures, not infrastructure failures. They are non-retryable.
+parameters: []
 
-See: PHASE_INVARIANTS.md B.2, NUM-FINITE-1
+execution:
+  cadence: continuous
+  deterministic: true
+  may_error: true
 
----
+errors:
+  allowed: true
+  types: [DivisionByZero, NonFiniteResult]
+  deterministic: true
 
-## 3. Prohibited Behavior
+state:
+  allowed: false
+  resettable: false
 
-A compute primitive may not:
-
-- Read or write files
-- Access network resources
-- Inspect execution mode
-- Emit actions or alerts
-- Access external state
-- Mutate global state
-- Branch on execution mode
-- Accept undeclared inputs or parameters
-- Emit undeclared outputs
-- Emit non-deterministic errors
-
-Violation invalidates the primitive.
-
----
-
-## 4. Composition Rule
-
-Compute primitives are atomic.
-Composition occurs only at the graph level.
-
-No nested graphs.
-No internal orchestration.
-No embedded control flow.
-
-This preserves determinism and debuggability.
-
----
-
-## 5. Orchestrator Contract
-
-The orchestrator guarantees:
-- Inputs match declared types
-- Execution cadence is respected
-- State is reset deterministically
-- Outputs are captured exactly as declared
-
-The orchestrator does not:
-- infer intent
-- modify parameters
-- tolerate non-determinism
-- interpret semantics
-
----
-
-## 6. Consequences
-
-Because this contract is enforced:
-- The manifest is the single source of truth
-- User-defined primitives cannot cheat
-- Node UIs are pure projections of the manifest
-- Canvas values are presets, not logic
-- All execution modes share identical execution paths
-
----
-
-## 7. Scope
-
-This document defines Compute Primitive Manifest v0.
-
----
-
-## 8. Contract Stability
-
-This contract is STABLE.
-
-Breaking changes require a manifest version bump.
+side_effects: false
+```
