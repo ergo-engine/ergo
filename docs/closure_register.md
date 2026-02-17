@@ -1,6 +1,7 @@
 # Closure Register (v0)
 
 Purpose: Track semantic gaps, hardening closures, and explicit v0 rejections.
+Status: Living closure log (active maintenance; not archival-only).
 Rule: Every closure must specify (a) disposition, (b) enforcement locus, (c) test evidence, (d) PR/commit.
 
 Legend:
@@ -337,11 +338,11 @@ Legend:
 - **Rule:** The capture bundle format version must be defined in exactly one place and referenced everywhere else.
 - **Disposition:** CLOSE
 - **Enforcement locus:** constant (`crates/supervisor/src/lib.rs`)
-  - `pub(crate) const CAPTURE_FORMAT_VERSION: &str = "v0";`
+  - `pub(crate) const CAPTURE_FORMAT_VERSION: &str = "v1";`
   - `capture.rs` uses `crate::CAPTURE_FORMAT_VERSION.to_string()` for bundle creation
   - `replay.rs` uses `crate::CAPTURE_FORMAT_VERSION` for version validation
 - **Test:** N/A (compile-time consistency)
-- **PR/Commit:** cd4dd86
+- **PR/Commit:** working tree (v1 hard-break cleanup)
 
 ---
 

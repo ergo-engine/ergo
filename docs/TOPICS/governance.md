@@ -13,7 +13,7 @@
 | CANONICAL | Derived checklists and terminology | Owned by Claude; tracks implementation |
 | CONTRACTS | External interfaces | Review required |
 
-**Source:** [README.md](../README.md)
+**Source:** [INDEX.md](../INDEX.md)
 
 ---
 

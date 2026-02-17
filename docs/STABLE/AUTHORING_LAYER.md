@@ -3,7 +3,6 @@ Authority: STABLE
 Version: v0
 Last Updated: 2025-12-22
 Scope: Cluster concepts, fractal composition, boundary kinds
-Verified Against Tag: v1.0.0-alpha.1
 Change Rule: Additive only
 ---
 

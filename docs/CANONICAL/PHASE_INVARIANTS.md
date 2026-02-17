@@ -1,16 +1,15 @@
 ---
 Authority: CANONICAL
-Version: v0.29
+Version: v0.32
 Owner: Claude (Structural Auditor)
-Last Updated: 2026-02-06
+Last Updated: 2026-02-17
 Scope: Phase boundaries, enforcement loci, gap tracking
-Verified Against Tag: v1.0.0-alpha.1
 Change Rule: Operational log
 ---
 
 # Phase Invariants — v0
 
-**Tracked invariants:** 162
+**Tracked invariants:** 165
 
 This document defines the invariants that must hold at each phase boundary in the system. It is the authoritative reference for what is true, where that truth is enforced, and what happens if it is violated.
 
@@ -909,3 +908,4 @@ Changes to this document require the same review bar as changes to frozen specs.
 | v0.29 | 2026-02-06 | Claude (Structural Auditor) | Added RTHANDLE-ERRKIND-1: RuntimeHandle::run() pre-execution failures now map to ValidationFailed; fixes pathological retry of invalid graphs (was RuntimeError) and corrects composition failure category (was SemanticError); +1 invariant |
 | v0.30 | 2026-02-12 | Codex | Added SRC-15, TRG-14, ACT-19 (parameter default type must match declared type at registration); +3 invariants |
 | v0.31 | 2026-02-12 | Codex | Added CMP-20 (compute output type validity closure; maps `ValidationError::InvalidOutputType` to CMP-20 and records structural registration enforcement); +1 invariant |
+| v0.32 | 2026-02-17 | Codex | Added canonical run/replay strictness section (RUN-CANON-1, RUN-CANON-2, REP-7) and documented strict v1 capture bundle requirements (required adapter_provenance, unknown-field rejection, legacy adapter_version deserialization failure). |

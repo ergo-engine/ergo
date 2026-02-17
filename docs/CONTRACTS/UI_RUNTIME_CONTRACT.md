@@ -4,7 +4,6 @@ Version: v0
 Last Updated: 2026-01-05
 Derived From: src/runtime/tests.rs::hello_world_graph_executes_with_core_catalog_and_registries
 Scope: Data structures UI must emit for runtime
-Verified Against Tag: v1.0.0-alpha.1
 Change Rule: Review required
 ---
 

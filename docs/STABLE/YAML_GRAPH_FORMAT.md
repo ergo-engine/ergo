@@ -1,9 +1,10 @@
 # YAML Graph Format — Specification
 
-**Status:** STABLE DRAFT — agreed design, pending implementation
+**Status:** STABLE — implemented for CLI graph execution (canonical + direct modes)
 **Scope:** How `ClusterDefinition` maps to YAML for hand-authoring and tooling
 **Litmus test:** Demo 1 graph (15 nodes, 16 edges, 4 boundary outputs)
-**Goal:** Enable `ergo run graph.yaml --adapter adapter.yaml` (planned — not yet implemented)
+**Current CLI contract:** `ergo run <graph.yaml> --fixture <events.jsonl> [--adapter <adapter.yaml>] [--capture-output <path>] [--cluster-path <path> ...]` and `ergo run <graph.yaml> --direct`
+**Future work:** Live adapter-driven event sources remain a future extension.
 
 ---
 

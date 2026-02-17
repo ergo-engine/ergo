@@ -4,7 +4,6 @@ Version: v1
 Last Updated: 2026-01-11
 Owner: Claude (Structural Auditor)
 Scope: v0 baseline declaration, v1 workstream rules
-Verified Against Tag: v1.0.0-alpha.1
 Change Rule: Operational log
 ---
 

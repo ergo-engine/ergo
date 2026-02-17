@@ -8,16 +8,16 @@
 
 The v0 kernel includes domain-neutral standard library atoms.
 
-Total stdlib implementations: 30
+Exact implementation inventory is maintained in the runtime catalog and manifest docs.
 
-### Sources (4)
+### Sources
 
 - `number_source` — Produces a configured number value
 - `boolean_source` — Produces a configured boolean value
 - `string_source` — Produces a configured string value (STRING-SOURCE-1)
 - `context_number_source` — Reads number from ExecutionContext (CONTEXT-NUMBER-SOURCE-1)
 
-### Computes (23)
+### Computes
 
 - `const_number` — Outputs a constant number
 - `const_bool` — Outputs a constant boolean
@@ -42,11 +42,11 @@ Total stdlib implementations: 30
 - `select` — Select between two numbers based on condition
 - `select_bool` — Select between two booleans based on condition
 
-### Triggers (1)
+### Triggers
 
 - `emit_if_true` — Emits when input is true
 
-### Actions (2)
+### Actions
 
 - `ack_action` — Acknowledges execution
 - `annotate_action` — Adds annotation to execution context

@@ -92,9 +92,10 @@ If you find duplicate content, the FROZEN/STABLE/CANONICAL/CONTRACTS version is 
 - **closure_register.md** tracks semantic gaps and their resolutions
 - Both reference spec documents (ontology, execution_model, etc.) as the source of truth
 
-### Verified Against
+### Currency
 
-All documents verified against tag: `v1.0.0-alpha.1`
+Use each document's `Last Updated` and revision history to track currency.
+This index does not pin all docs to a single release tag.
 
 ---
 

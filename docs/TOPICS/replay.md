@@ -18,21 +18,16 @@ Replay determinism covers **supervisor scheduling decisions only**.
 
 ## Capture Requirements
 
-### Adapter Contract
+### Canonical Capture Bundle
 
-Adapters must support input capture at orchestrator request:
+Canonical capture and strict replay use a v1 bundle shape:
 
-- Captured inputs sufficient to reproduce outputs during replay
-- Capture format implementation-defined in v0
-- Determinism under replay is required
+- `capture_version: "v1"`
+- Required `adapter_provenance` field (adapter fingerprint or `none`)
+- Unknown fields rejected at deserialization (`deny_unknown_fields`)
+- Legacy `adapter_version` bundles rejected during deserialization in strict paths
 
-**Source:** [adapter_contract.md](../FROZEN/adapter_contract.md) §2
-
-### Capture Bundle Format
-
-- `ExternalEventRecord` and `EpisodeInvocationRecord`
-- Self-validating records (REP-1)
-- Format version is single-source-of-truth (CAPTURE-FMT-1)
+**Source:** [PHASE_INVARIANTS.md](../CANONICAL/PHASE_INVARIANTS.md) Canonical Run / Replay Strictness (v1)
 
 ---
 
@@ -45,8 +40,9 @@ Adapters must support input capture at orchestrator request:
 | REP-3 | Fault injection keys on EventId only | Type enforcement |
 | REP-4 | Capture/runtime type separation | Separate serde types |
 | REP-5 | No wall-clock time in supervisor | grep test |
+| REP-7 | Strict replay provenance contract match | `replay_checked_strict` |
 
-**Source:** [PHASE_INVARIANTS.md](../CANONICAL/PHASE_INVARIANTS.md) §8
+**Source:** [PHASE_INVARIANTS.md](../CANONICAL/PHASE_INVARIANTS.md) §8 + Canonical Run / Replay Strictness (v1)
 
 ---
 
