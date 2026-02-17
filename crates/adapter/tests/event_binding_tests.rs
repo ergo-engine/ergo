@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use ergo_adapter::event_binding::{bind_semantic_event, EventBindingError};
+use ergo_adapter::event_binding::{
+    bind_semantic_event_with_binder, compile_event_binder, EventBindingError,
+};
 use ergo_adapter::provides::{AdapterProvides, ContextKeyProvision};
 use ergo_adapter::{EventId, EventTime, ExternalEventKind};
 use serde_json::json;
@@ -48,9 +50,10 @@ fn unknown_semantic_kind_rejected() {
         ]),
         HashMap::from([("PriceTick".to_string(), price_tick_schema())]),
     );
+    let binder = compile_event_binder(&provides).expect("binder should compile");
 
-    let err = bind_semantic_event(
-        &provides,
+    let err = bind_semantic_event_with_binder(
+        &binder,
         EventId::new("e1"),
         ExternalEventKind::Command,
         EventTime::default(),
@@ -69,15 +72,7 @@ fn invalid_schema_rejected() {
         HashMap::from([("Broken".to_string(), json!({"type": 7}))]),
     );
 
-    let err = bind_semantic_event(
-        &provides,
-        EventId::new("e1"),
-        ExternalEventKind::Command,
-        EventTime::default(),
-        "Broken",
-        json!({"price": 1.0}),
-    )
-    .unwrap_err();
+    let err = compile_event_binder(&provides).unwrap_err();
 
     assert!(matches!(err, EventBindingError::InvalidSchema { .. }));
 }
@@ -91,9 +86,10 @@ fn payload_schema_mismatch_rejected() {
         ]),
         HashMap::from([("PriceTick".to_string(), price_tick_schema())]),
     );
+    let binder = compile_event_binder(&provides).expect("binder should compile");
 
-    let err = bind_semantic_event(
-        &provides,
+    let err = bind_semantic_event_with_binder(
+        &binder,
         EventId::new("e1"),
         ExternalEventKind::Command,
         EventTime::default(),
@@ -114,9 +110,10 @@ fn payload_must_be_object_rejected() {
         HashMap::new(),
         HashMap::from([("Scalar".to_string(), json!({"type": "number"}))]),
     );
+    let binder = compile_event_binder(&provides).expect("binder should compile");
 
-    let err = bind_semantic_event(
-        &provides,
+    let err = bind_semantic_event_with_binder(
+        &binder,
         EventId::new("e1"),
         ExternalEventKind::Command,
         EventTime::default(),
@@ -143,15 +140,7 @@ fn missing_context_provision_rejected() {
         )]),
     );
 
-    let err = bind_semantic_event(
-        &provides,
-        EventId::new("e1"),
-        ExternalEventKind::Command,
-        EventTime::default(),
-        "PriceOnly",
-        json!({"price": 12.3}),
-    )
-    .unwrap_err();
+    let err = compile_event_binder(&provides).unwrap_err();
 
     assert!(matches!(
         err,
@@ -174,15 +163,7 @@ fn context_type_mismatch_rejected() {
         )]),
     );
 
-    let err = bind_semantic_event(
-        &provides,
-        EventId::new("e1"),
-        ExternalEventKind::Command,
-        EventTime::default(),
-        "PriceOnly",
-        json!({"price": 12.3}),
-    )
-    .unwrap_err();
+    let err = compile_event_binder(&provides).unwrap_err();
 
     assert!(matches!(err, EventBindingError::ContextTypeMismatch { .. }));
 }
@@ -202,15 +183,7 @@ fn unsupported_field_type_rejected() {
         )]),
     );
 
-    let err = bind_semantic_event(
-        &provides,
-        EventId::new("e1"),
-        ExternalEventKind::Command,
-        EventTime::default(),
-        "Nested",
-        json!({"nested": {"a": 1}}),
-    )
-    .unwrap_err();
+    let err = compile_event_binder(&provides).unwrap_err();
 
     assert!(matches!(
         err,
@@ -237,9 +210,10 @@ fn series_mapping_success() {
             }),
         )]),
     );
+    let binder = compile_event_binder(&provides).expect("binder should compile");
 
-    let event = bind_semantic_event(
-        &provides,
+    let event = bind_semantic_event_with_binder(
+        &binder,
         EventId::new("e1"),
         ExternalEventKind::Command,
         EventTime::default(),
@@ -262,9 +236,10 @@ fn valid_payload_emits_expected_payload() {
         ]),
         HashMap::from([("PriceTick".to_string(), price_tick_schema())]),
     );
+    let binder = compile_event_binder(&provides).expect("binder should compile");
 
-    let event = bind_semantic_event(
-        &provides,
+    let event = bind_semantic_event_with_binder(
+        &binder,
         EventId::new("e1"),
         ExternalEventKind::Command,
         EventTime::default(),

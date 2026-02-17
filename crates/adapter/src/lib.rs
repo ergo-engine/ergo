@@ -28,7 +28,9 @@ pub use composition::{
     validate_source_adapter_composition, CompositionError, ContextRequirement, SourceRequires,
 };
 pub use errors::InvalidAdapter;
-pub use event_binding::{bind_semantic_event, EventBindingError};
+pub use event_binding::{
+    bind_semantic_event_with_binder, compile_event_binder, EventBinder, EventBindingError,
+};
 pub use manifest::{
     AcceptsSpec, AdapterManifest, CaptureSpec, ContextKeySpec, EffectSpec, EventKindSpec,
 };

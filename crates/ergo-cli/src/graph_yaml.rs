@@ -6,9 +6,10 @@ use std::sync::Arc;
 use crate::adapter_manifest_io::parse_adapter_manifest;
 use crate::error_format::render_error_info;
 use ergo_adapter::{
-    bind_semantic_event, fixture, validate_action_adapter_composition, validate_capture_format,
-    validate_source_adapter_composition, AdapterProvides, EventId, EventPayload, EventTime,
-    ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
+    bind_semantic_event_with_binder, compile_event_binder, fixture,
+    validate_action_adapter_composition, validate_capture_format,
+    validate_source_adapter_composition, AdapterProvides, EventBinder, EventId, EventPayload,
+    EventTime, ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
 };
 use ergo_runtime::catalog::{
     build_core_catalog, core_registries, CorePrimitiveCatalog, CoreRegistries,
@@ -118,6 +119,7 @@ fn run_canonical(
 
     let mut adapter_bound = false;
     let mut adapter_provides = AdapterProvides::default();
+    let mut event_binder: Option<EventBinder> = None;
 
     if let Some(adapter_path) = &opts.adapter_path {
         let adapter = parse_adapter_manifest(adapter_path)?;
@@ -125,12 +127,15 @@ fn run_canonical(
             .map_err(|err| format!("adapter invalid: {}", render_error_info(&err)))?;
         adapter_provides = AdapterProvides::from_manifest(&adapter);
         validate_adapter_composition(&expanded, &catalog, &registries, &adapter_provides)?;
+        event_binder = Some(
+            compile_event_binder(&adapter_provides)
+                .map_err(|err| format!("adapter event binder compilation failed: {err}"))?,
+        );
         adapter_bound = true;
     } else if dependency_summary.requires_adapter {
         return Err(format_missing_adapter_error(&dependency_summary));
     }
 
-    let binder_provides = adapter_provides.clone();
     let adapter_provenance = if adapter_bound {
         adapter_provides.adapter_fingerprint.clone()
     } else {
@@ -184,6 +189,9 @@ fn run_canonical(
                 event_counter += 1;
                 let event_id = id.unwrap_or_else(|| format!("fixture_evt_{}", event_counter));
                 let event = if adapter_bound {
+                    let binder = event_binder
+                        .as_ref()
+                        .expect("event binder must exist when adapter is bound");
                     let semantic = semantic_kind.ok_or_else(|| {
                         format!(
                             "fixture event '{}' is missing semantic_kind in adapter-bound canonical run",
@@ -193,8 +201,8 @@ fn run_canonical(
                     let payload_value = payload
                         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
 
-                    bind_semantic_event(
-                        &binder_provides,
+                    bind_semantic_event_with_binder(
+                        binder,
                         EventId::new(event_id.clone()),
                         kind,
                         EventTime::default(),
