@@ -25,8 +25,8 @@ use ergo_supervisor::demo::demo_1;
 use ergo_supervisor::fixture_runner;
 use ergo_supervisor::replay::{replay_checked_strict, ReplayError};
 use ergo_supervisor::{
-    CaptureBundle, CapturingSession, Constraints, Decision, DecisionLog, DecisionLogEntry,
-    NO_ADAPTER_PROVENANCE,
+    write_capture_bundle, CaptureBundle, CaptureJsonStyle, CapturingSession, Constraints, Decision,
+    DecisionLog, DecisionLogEntry, NO_ADAPTER_PROVENANCE,
 };
 #[cfg(test)]
 use std::collections::HashMap;
@@ -78,13 +78,15 @@ fn run() -> Result<(), String> {
             let target = args.next().ok_or_else(usage)?;
             match target.as_str() {
                 "demo-1" => {
-                    ensure_no_extra_args(&mut args)?;
-                    run_demo_1()
+                    let rest: Vec<String> = args.collect();
+                    let run_opts = parse_run_artifact_options(&rest, "demo-1")?;
+                    run_demo_1(run_opts.pretty_capture, None).map(|_| ())
                 }
                 "fixture" => {
                     let path = args.next().ok_or_else(usage)?;
-                    ensure_no_extra_args(&mut args)?;
-                    run_fixture(Path::new(&path), None).map(|_| ())
+                    let rest: Vec<String> = args.collect();
+                    let run_opts = parse_run_artifact_options(&rest, "fixture")?;
+                    run_fixture(Path::new(&path), None, run_opts.pretty_capture).map(|_| ())
                 }
                 _ => {
                     let rest: Vec<String> = args.collect();
@@ -110,18 +112,33 @@ fn run() -> Result<(), String> {
     }
 }
 
-fn ensure_no_extra_args(args: &mut impl Iterator<Item = String>) -> Result<(), String> {
-    if args.next().is_some() {
-        return Err(usage());
-    }
-    Ok(())
-}
-
 #[derive(Debug, Default)]
 struct ReplayOptions {
     graph_path: Option<PathBuf>,
     adapter_path: Option<PathBuf>,
     cluster_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Default)]
+struct RunArtifactOptions {
+    pretty_capture: bool,
+}
+
+fn parse_run_artifact_options(args: &[String], target: &str) -> Result<RunArtifactOptions, String> {
+    let mut options = RunArtifactOptions::default();
+
+    for arg in args {
+        match arg.as_str() {
+            "--pretty-capture" => options.pretty_capture = true,
+            other => {
+                return Err(format!(
+                    "unknown run {target} option '{other}'. expected --pretty-capture"
+                ));
+            }
+        }
+    }
+
+    Ok(options)
 }
 
 fn parse_replay_options(args: &[String]) -> Result<ReplayOptions, String> {
@@ -173,9 +190,9 @@ fn usage() -> String {
         "  ergo validate <manifest.yaml> [--format json]",
         "  ergo csv-to-fixture <prices.csv> <events.jsonl> [--semantic-kind <name>] [--event-kind <Pump|DataAvailable|Command>] [--episode-id <id>]",
         "  ergo check-compose <adapter.yaml> <source|action>.yaml [--format json]",
-        "  ergo run demo-1",
-        "  ergo run fixture <path>",
-        "  ergo run <graph.yaml> --fixture <events.jsonl> [--adapter <adapter.yaml>] [--capture-output <path>] [--cluster-path <path> ...]",
+        "  ergo run demo-1 [--pretty-capture]",
+        "  ergo run fixture <path> [--pretty-capture]",
+        "  ergo run <graph.yaml> --fixture <events.jsonl> [--adapter <adapter.yaml>] [--capture-output <path>] [--pretty-capture] [--cluster-path <path> ...]",
         "  ergo run <graph.yaml> --direct [--cluster-path <path> ...]",
         "  ergo replay <path> --graph <graph.yaml> [--adapter <adapter.yaml>] [--cluster-path <path> ...]",
     ]
@@ -187,18 +204,7 @@ fn load_bundle(path: &Path) -> Result<CaptureBundle, String> {
     serde_json::from_str(&data).map_err(|err| format!("parse replay artifact: {err}"))
 }
 
-fn write_replay_artifact(path: &Path, bundle: &CaptureBundle) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|err| format!("create replay directory: {err}"))?;
-    }
-
-    let data = serde_json::to_string_pretty(bundle)
-        .map_err(|err| format!("serialize replay bundle: {err}"))?;
-    fs::write(path, format!("{data}\n")).map_err(|err| format!("write replay artifact: {err}"))?;
-    Ok(())
-}
-
-fn run_demo_1() -> Result<(), String> {
+fn run_demo_1(pretty_capture: bool, output_override: Option<&Path>) -> Result<PathBuf, String> {
     let graph = Arc::new(demo_1::build_demo_1_graph());
     let catalog = Arc::new(build_core_catalog());
     let core_registries =
@@ -239,14 +245,25 @@ fn run_demo_1() -> Result<(), String> {
         );
     }
 
-    let artifact_path = PathBuf::from(DEFAULT_REPLAY_PATH);
-    write_replay_artifact(&artifact_path, &bundle)?;
+    let artifact_path = output_override
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_REPLAY_PATH));
+    let style = if pretty_capture {
+        CaptureJsonStyle::Pretty
+    } else {
+        CaptureJsonStyle::Compact
+    };
+    write_capture_bundle(&artifact_path, &bundle, style)?;
 
     println!("replay artifact: {}", artifact_path.display());
-    Ok(())
+    Ok(artifact_path)
 }
 
-fn run_fixture(path: &Path, output_override: Option<&Path>) -> Result<PathBuf, String> {
+fn run_fixture(
+    path: &Path,
+    output_override: Option<&Path>,
+    pretty_capture: bool,
+) -> Result<PathBuf, String> {
     let graph = Arc::new(demo_1::build_demo_1_graph());
     let catalog = Arc::new(build_core_catalog());
     let core_registries =
@@ -257,8 +274,19 @@ fn run_fixture(path: &Path, output_override: Option<&Path>) -> Result<PathBuf, S
     let output_path = output_override
         .map(PathBuf::from)
         .unwrap_or_else(|| fixture::fixture_output_path(path));
-    let result =
-        fixture_runner::run_fixture(items, graph, catalog, core_registries, Some(output_path))?;
+    let style = if pretty_capture {
+        CaptureJsonStyle::Pretty
+    } else {
+        CaptureJsonStyle::Compact
+    };
+    let result = fixture_runner::run_fixture(
+        items,
+        graph,
+        catalog,
+        core_registries,
+        Some(output_path),
+        style,
+    )?;
 
     for episode in &result.episodes {
         println!(
@@ -534,7 +562,7 @@ mod tests {
 
         fs::write(&fixture_path, fixture_data).map_err(|err| format!("write fixture: {err}"))?;
 
-        let artifact_path = run_fixture(&fixture_path, Some(&output_path))?;
+        let artifact_path = run_fixture(&fixture_path, Some(&output_path), false)?;
         assert_eq!(artifact_path, output_path);
         assert!(artifact_path.exists(), "expected replay artifact to exist");
 
@@ -668,5 +696,69 @@ outputs:
             err.contains("replay requires --graph"),
             "unexpected err: {err}"
         );
+    }
+
+    #[test]
+    fn parse_replay_options_rejects_pretty_capture_flag() {
+        let err = parse_replay_options(&[
+            "--graph".to_string(),
+            "graph.yaml".to_string(),
+            "--pretty-capture".to_string(),
+        ])
+        .expect_err("unknown replay flag should fail");
+        assert!(
+            err.contains("unknown replay option '--pretty-capture'"),
+            "unexpected err: {err}"
+        );
+    }
+
+    #[test]
+    fn demo_run_pretty_capture_writes_multiline_json() -> Result<(), String> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-cli-demo-pretty-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
+        let output_path = temp_dir.join("demo-replay.json");
+
+        run_demo_1(true, Some(&output_path))?;
+        let raw = fs::read_to_string(&output_path).map_err(|err| format!("read output: {err}"))?;
+        assert!(
+            raw.matches('\n').count() > 1,
+            "pretty capture should be multiline json"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_run_pretty_capture_writes_multiline_json() -> Result<(), String> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-cli-fixture-pretty-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
+
+        let fixture_path = temp_dir.join("fixture.jsonl");
+        let output_path = temp_dir.join("fixture-replay.json");
+        let fixture_data = "\
+{\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
+{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n";
+        fs::write(&fixture_path, fixture_data).map_err(|err| format!("write fixture: {err}"))?;
+
+        run_fixture(&fixture_path, Some(&output_path), true)?;
+        let raw = fs::read_to_string(&output_path).map_err(|err| format!("read output: {err}"))?;
+        assert!(
+            raw.matches('\n').count() > 1,
+            "pretty capture should be multiline json"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
     }
 }

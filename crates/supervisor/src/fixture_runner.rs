@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -14,8 +13,8 @@ use ergo_runtime::cluster::ExpandedGraph;
 
 use crate::demo::demo_1;
 use crate::{
-    CaptureBundle, CapturingSession, Constraints, Decision, DecisionLog, DecisionLogEntry,
-    NO_ADAPTER_PROVENANCE,
+    write_capture_bundle, CaptureBundle, CaptureJsonStyle, CapturingSession, Constraints, Decision,
+    DecisionLog, DecisionLogEntry, NO_ADAPTER_PROVENANCE,
 };
 
 const DEFAULT_GRAPH_ID: &str = "demo_1";
@@ -55,6 +54,7 @@ pub fn run_fixture(
     catalog: Arc<CorePrimitiveCatalog>,
     registries: Arc<CoreRegistries>,
     output_path: Option<PathBuf>,
+    capture_style: CaptureJsonStyle,
 ) -> Result<FixtureRunResult, String> {
     ensure_demo_sources_have_no_required_context(&graph, &catalog, &registries)?;
     let runtime = RuntimeHandle::new(graph, catalog, registries, AdapterProvides::default());
@@ -119,7 +119,7 @@ pub fn run_fixture(
 
     let artifact_path =
         output_path.unwrap_or_else(|| PathBuf::from("target").join(DEFAULT_ARTIFACT_NAME));
-    write_replay_artifact(&artifact_path, &bundle)?;
+    write_capture_bundle(&artifact_path, &bundle, capture_style)?;
 
     Ok(FixtureRunResult {
         artifact_path,
@@ -252,15 +252,4 @@ fn context_value_from_payload(payload: &EventPayload) -> Option<f64> {
         .as_object()
         .and_then(|object| object.get(demo_1::CONTEXT_NUMBER_KEY))
         .and_then(|value| value.as_f64())
-}
-
-fn write_replay_artifact(path: &PathBuf, bundle: &CaptureBundle) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|err| format!("create replay directory: {err}"))?;
-    }
-
-    let data = serde_json::to_string_pretty(bundle)
-        .map_err(|err| format!("serialize replay bundle: {err}"))?;
-    fs::write(path, format!("{data}\n")).map_err(|err| format!("write replay artifact: {err}"))?;
-    Ok(())
 }

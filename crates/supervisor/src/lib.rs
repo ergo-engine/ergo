@@ -22,7 +22,7 @@ pub mod replay;
 #[cfg(any(test, feature = "demo"))]
 pub mod demo;
 
-pub use capture::{CapturingDecisionLog, CapturingSession};
+pub use capture::{write_capture_bundle, CaptureJsonStyle, CapturingDecisionLog, CapturingSession};
 
 /// SUP-7: DecisionLog is write-only. No read/query surface is ever exposed.
 pub trait DecisionLog {

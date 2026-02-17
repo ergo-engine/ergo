@@ -24,8 +24,8 @@ use ergo_runtime::runtime::{
     ExecutionContext, Registries, RuntimeError, RuntimeEvent, RuntimeValue,
 };
 use ergo_supervisor::{
-    CaptureBundle, CapturingSession, Constraints, Decision, DecisionLog, DecisionLogEntry,
-    NO_ADAPTER_PROVENANCE,
+    write_capture_bundle, CaptureJsonStyle, CapturingSession, Constraints, Decision, DecisionLog,
+    DecisionLogEntry, NO_ADAPTER_PROVENANCE,
 };
 use serde::Deserialize;
 
@@ -244,7 +244,12 @@ fn run_canonical(
         .capture_output
         .clone()
         .unwrap_or_else(|| default_capture_output_path(graph_path));
-    write_capture_bundle(&capture_path, &bundle)?;
+    let capture_style = if opts.pretty_capture {
+        CaptureJsonStyle::Pretty
+    } else {
+        CaptureJsonStyle::Compact
+    };
+    write_capture_bundle(&capture_path, &bundle, capture_style)?;
 
     let invoked = bundle
         .decisions
@@ -288,18 +293,6 @@ fn event_from_fixture_payload(
     }
 }
 
-fn write_capture_bundle(path: &Path, bundle: &CaptureBundle) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("create capture output directory: {err}"))?;
-    }
-
-    let data = serde_json::to_string_pretty(bundle)
-        .map_err(|err| format!("serialize capture bundle: {err}"))?;
-    fs::write(path, format!("{data}\n"))
-        .map_err(|err| format!("write capture bundle '{}': {err}", path.display()))
-}
-
 fn default_capture_output_path(graph_path: &Path) -> PathBuf {
     let stem = graph_path
         .file_stem()
@@ -332,6 +325,7 @@ struct RunGraphOptions {
     adapter_path: Option<PathBuf>,
     fixture_path: Option<PathBuf>,
     capture_output: Option<PathBuf>,
+    pretty_capture: bool,
     cluster_paths: Vec<PathBuf>,
     direct: bool,
 }
@@ -363,6 +357,10 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
                 options.capture_output = Some(PathBuf::from(value));
                 i += 2;
             }
+            "--pretty-capture" => {
+                options.pretty_capture = true;
+                i += 1;
+            }
             "--direct" => {
                 options.direct = true;
                 i += 1;
@@ -376,7 +374,7 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
             }
             other => {
                 return Err(format!(
-                    "unknown run option '{other}'. expected --adapter, --fixture, --capture-output, --direct, --cluster-path, or --search-path"
+                    "unknown run option '{other}'. expected --adapter, --fixture, --capture-output, --pretty-capture, --direct, --cluster-path, or --search-path"
                 ))
             }
         }
@@ -391,6 +389,9 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
         }
         if options.capture_output.is_some() {
             return Err("--direct cannot be combined with --capture-output".to_string());
+        }
+        if options.pretty_capture {
+            return Err("--direct cannot be combined with --pretty-capture".to_string());
         }
         return Ok(options);
     }
@@ -1393,6 +1394,7 @@ fn validate_general_identifier(
 mod tests {
     use super::*;
     use ergo_runtime::action::ActionOutcome;
+    use ergo_supervisor::CaptureBundle;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -1579,7 +1581,7 @@ outputs:
     }
 
     #[test]
-    fn direct_mode_rejects_fixture_and_adapter_flags() {
+    fn direct_mode_rejects_fixture_adapter_and_pretty_flags() {
         let graph = r#"
 kind: cluster
 id: basic
@@ -1616,6 +1618,14 @@ outputs:
             .expect_err("adapter must be rejected");
         assert!(
             err.contains("--direct cannot be combined with --adapter"),
+            "unexpected error: {err}"
+        );
+
+        let args_with_pretty = vec!["--direct".to_string(), "--pretty-capture".to_string()];
+        let err = run_graph_command(&graph_path, &args_with_pretty)
+            .expect_err("pretty-capture must be rejected");
+        assert!(
+            err.contains("--direct cannot be combined with --pretty-capture"),
             "unexpected error: {err}"
         );
     }
@@ -1760,6 +1770,50 @@ outputs:
         run_graph_command(&graph_path, &args).expect("canonical run should produce capture");
 
         let raw = fs::read_to_string(&output_path).expect("capture file should be readable");
+        assert!(
+            raw.matches('\n').count() == 1,
+            "default capture should be compact single-line JSON"
+        );
+        let bundle: CaptureBundle = serde_json::from_str(&raw).expect("capture bundle parses");
+        assert_eq!(bundle.adapter_provenance, NO_ADAPTER_PROVENANCE);
+    }
+
+    #[test]
+    fn canonical_run_pretty_capture_writes_multiline_output() {
+        let graph = r#"
+kind: cluster
+id: basic
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#;
+        let graph_path = write_temp_yaml("basic_capture_pretty.yaml", graph);
+        let fixture_path = write_temp_fixture(
+            "basic_capture_pretty.fixture.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+        let output_path = write_temp_yaml("capture_output_pretty.json", "{}");
+
+        let args = vec![
+            "--fixture".to_string(),
+            fixture_path.to_string_lossy().to_string(),
+            "--capture-output".to_string(),
+            output_path.to_string_lossy().to_string(),
+            "--pretty-capture".to_string(),
+        ];
+        run_graph_command(&graph_path, &args).expect("canonical run should produce capture");
+
+        let raw = fs::read_to_string(&output_path).expect("capture file should be readable");
+        assert!(
+            raw.matches('\n').count() > 1,
+            "pretty capture should be multiline JSON"
+        );
         let bundle: CaptureBundle = serde_json::from_str(&raw).expect("capture bundle parses");
         assert_eq!(bundle.adapter_provenance, NO_ADAPTER_PROVENANCE);
     }
