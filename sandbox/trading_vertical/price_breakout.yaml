@@ -1,0 +1,125 @@
+kind: cluster
+id: price_breakout
+version: "0.1.0"
+
+nodes:
+  src_price:
+    impl: context_number_source@0.1.0
+  upper_level:
+    impl: const_number@0.1.0
+    params:
+      value: 101.45
+  lower_level:
+    impl: const_number@0.1.0
+    params:
+      value: 101.20
+  strength_floor:
+    impl: const_number@0.1.0
+    params:
+      value: 0.15
+
+  is_breakout:
+    impl: gt@0.1.0
+  up_delta:
+    impl: subtract@0.1.0
+  up_abs_delta:
+    impl: abs@0.1.0
+  up_is_strong:
+    impl: gte@0.1.0
+  long_condition:
+    impl: and@0.1.0
+
+  is_breakdown:
+    impl: lt@0.1.0
+  down_delta:
+    impl: subtract@0.1.0
+  down_abs_delta:
+    impl: abs@0.1.0
+  down_is_strong:
+    impl: gte@0.1.0
+  short_condition:
+    impl: and@0.1.0
+
+  gte_lower:
+    impl: gte@0.1.0
+  lte_upper:
+    impl: lte@0.1.0
+  in_range:
+    impl: and@0.1.0
+  any_trade_signal:
+    impl: or@0.1.0
+  no_trade_signal:
+    impl: not@0.1.0
+  hold_condition:
+    impl: and@0.1.0
+
+  trg_long:
+    impl: emit_if_true@0.1.0
+  trg_short:
+    impl: emit_if_true@0.1.0
+  trg_hold:
+    impl: emit_if_true@0.1.0
+
+  act_long:
+    impl: ack_action@0.1.0
+    params:
+      accept: true
+  act_short:
+    impl: ack_action@0.1.0
+    params:
+      accept: true
+  act_hold:
+    impl: annotate_action@0.1.0
+    params:
+      note: "range_hold"
+
+edges:
+  - src_price.value -> is_breakout.a
+  - upper_level.value -> is_breakout.b
+  - src_price.value -> up_delta.a
+  - upper_level.value -> up_delta.b
+  - up_delta.result -> up_abs_delta.value
+  - up_abs_delta.result -> up_is_strong.a
+  - strength_floor.value -> up_is_strong.b
+  - is_breakout.result -> long_condition.a
+  - up_is_strong.result -> long_condition.b
+
+  - src_price.value -> is_breakdown.a
+  - lower_level.value -> is_breakdown.b
+  - src_price.value -> down_delta.a
+  - lower_level.value -> down_delta.b
+  - down_delta.result -> down_abs_delta.value
+  - down_abs_delta.result -> down_is_strong.a
+  - strength_floor.value -> down_is_strong.b
+  - is_breakdown.result -> short_condition.a
+  - down_is_strong.result -> short_condition.b
+
+  - src_price.value -> gte_lower.a
+  - lower_level.value -> gte_lower.b
+  - src_price.value -> lte_upper.a
+  - upper_level.value -> lte_upper.b
+  - gte_lower.result -> in_range.a
+  - lte_upper.result -> in_range.b
+  - long_condition.result -> any_trade_signal.a
+  - short_condition.result -> any_trade_signal.b
+  - any_trade_signal.result -> no_trade_signal.value
+  - in_range.result -> hold_condition.a
+  - no_trade_signal.result -> hold_condition.b
+
+  - long_condition.result -> trg_long.input
+  - short_condition.result -> trg_short.input
+  - hold_condition.result -> trg_hold.input
+  - trg_long.event -> act_long.event
+  - trg_short.event -> act_short.event
+  - trg_hold.event -> act_hold.event
+
+outputs:
+  price: src_price.value
+  long_condition: long_condition.result
+  short_condition: short_condition.result
+  hold_condition: hold_condition.result
+  in_range: in_range.result
+  any_trade_signal: any_trade_signal.result
+  long_outcome: act_long.outcome
+  short_outcome: act_short.outcome
+  hold_outcome: act_hold.outcome

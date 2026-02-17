@@ -14,7 +14,7 @@ use ergo_runtime::catalog::{
     build_core_catalog, core_registries, CorePrimitiveCatalog, CoreRegistries,
 };
 use ergo_runtime::cluster::{
-    expand, BoundaryKind, Cardinality, ClusterDefinition, ClusterLoader, Edge,
+    expand, BoundaryKind, Cardinality, ClusterDefinition, ClusterLoader, Edge, ExpandedGraph,
     GraphInputPlaceholder, InputPortSpec, InputRef, NodeInstance, NodeKind, OutputPortSpec,
     OutputRef, ParameterBinding, ParameterSpec, ParameterType, ParameterValue, PortSpec,
     PrimitiveCatalog, PrimitiveKind, Signature, ValueType, Version,
@@ -34,10 +34,19 @@ impl DecisionLog for NullLog {
     fn log(&self, _entry: DecisionLogEntry) {}
 }
 
-pub fn run_graph_command(graph_path: &Path, args: &[String]) -> Result<(), String> {
-    let opts = parse_run_options(args)?;
+pub(crate) struct PreparedGraphRuntime {
+    pub graph_id: String,
+    pub expanded: ExpandedGraph,
+    pub catalog: CorePrimitiveCatalog,
+    pub registries: CoreRegistries,
+}
+
+pub(crate) fn prepare_graph_runtime(
+    graph_path: &Path,
+    cluster_paths: &[PathBuf],
+) -> Result<PreparedGraphRuntime, String> {
     let root = parse_graph_file(graph_path)?;
-    let clusters = load_cluster_tree(graph_path, &root, &opts.cluster_paths)?;
+    let clusters = load_cluster_tree(graph_path, &root, cluster_paths)?;
     let loader = PreloadedClusterLoader::new(clusters);
 
     let catalog = build_core_catalog();
@@ -45,19 +54,32 @@ pub fn run_graph_command(graph_path: &Path, args: &[String]) -> Result<(), Strin
     let expanded = expand(&root, &loader, &catalog)
         .map_err(|err| format!("graph expansion failed: {}", render_error_info(&err)))?;
 
-    if opts.direct {
-        return run_direct(&expanded, &catalog, &registries);
-    }
-
-    let dependency_summary = scan_adapter_dependencies(&expanded, &catalog, &registries)?;
-    run_canonical(
-        graph_path,
-        &root.id,
-        opts,
-        dependency_summary,
+    Ok(PreparedGraphRuntime {
+        graph_id: root.id,
         expanded,
         catalog,
         registries,
+    })
+}
+
+pub fn run_graph_command(graph_path: &Path, args: &[String]) -> Result<(), String> {
+    let opts = parse_run_options(args)?;
+    let prepared = prepare_graph_runtime(graph_path, &opts.cluster_paths)?;
+
+    if opts.direct {
+        return run_direct(&prepared.expanded, &prepared.catalog, &prepared.registries);
+    }
+
+    let dependency_summary =
+        scan_adapter_dependencies(&prepared.expanded, &prepared.catalog, &prepared.registries)?;
+    run_canonical(
+        graph_path,
+        &prepared.graph_id,
+        opts,
+        dependency_summary,
+        prepared.expanded,
+        prepared.catalog,
+        prepared.registries,
     )
 }
 
@@ -470,7 +492,7 @@ fn format_missing_adapter_error(summary: &AdapterDependencySummary) -> String {
     }
 }
 
-fn validate_adapter_composition(
+pub(crate) fn validate_adapter_composition(
     expanded: &ergo_runtime::cluster::ExpandedGraph,
     catalog: &CorePrimitiveCatalog,
     registries: &CoreRegistries,

@@ -1,9 +1,9 @@
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 mod adapter_manifest_io;
+mod csv_fixture;
 mod error_format;
 mod gen_docs;
 mod graph_yaml;
@@ -12,10 +12,13 @@ mod validate;
 use crate::adapter_manifest_io::parse_adapter_manifest;
 use crate::error_format::render_error_info;
 use ergo_adapter::fixture;
+#[cfg(test)]
+use ergo_adapter::EventPayload;
 use ergo_adapter::{
     adapter_fingerprint, ensure_demo_sources_have_no_required_context, AdapterProvides, EventId,
-    EventPayload, ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
+    ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
 };
+#[cfg(test)]
 use ergo_runtime::action::ActionOutcome;
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
 use ergo_supervisor::demo::demo_1;
@@ -25,6 +28,8 @@ use ergo_supervisor::{
     CaptureBundle, CapturingSession, Constraints, Decision, DecisionLog, DecisionLogEntry,
     NO_ADAPTER_PROVENANCE,
 };
+#[cfg(test)]
+use std::collections::HashMap;
 
 const DEMO_GRAPH_ID: &str = "demo_1";
 const DEFAULT_REPLAY_PATH: &str = "target/demo-1-replay.json";
@@ -57,6 +62,12 @@ fn run() -> Result<(), String> {
             print!("{out}");
             Ok(())
         }
+        Some("csv-to-fixture") => {
+            let rest: Vec<String> = args.collect();
+            let out = csv_fixture::csv_to_fixture_command(&rest)?;
+            print!("{out}");
+            Ok(())
+        }
         Some("check-compose") => {
             let rest: Vec<String> = args.collect();
             let out = validate::check_compose_command(&rest)?;
@@ -85,7 +96,15 @@ fn run() -> Result<(), String> {
             let path = args.next().ok_or_else(usage)?;
             let rest: Vec<String> = args.collect();
             let replay_opts = parse_replay_options(&rest)?;
-            replay_demo_1(Path::new(&path), replay_opts.adapter_path.as_deref())
+            replay_graph(
+                Path::new(&path),
+                replay_opts
+                    .graph_path
+                    .as_ref()
+                    .expect("replay options enforce graph path"),
+                &replay_opts.cluster_paths,
+                replay_opts.adapter_path.as_deref(),
+            )
         }
         _ => Err(usage()),
     }
@@ -100,7 +119,9 @@ fn ensure_no_extra_args(args: &mut impl Iterator<Item = String>) -> Result<(), S
 
 #[derive(Debug, Default)]
 struct ReplayOptions {
+    graph_path: Option<PathBuf>,
     adapter_path: Option<PathBuf>,
+    cluster_paths: Vec<PathBuf>,
 }
 
 fn parse_replay_options(args: &[String]) -> Result<ReplayOptions, String> {
@@ -109,6 +130,13 @@ fn parse_replay_options(args: &[String]) -> Result<ReplayOptions, String> {
 
     while i < args.len() {
         match args[i].as_str() {
+            "--graph" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--graph requires a path".to_string())?;
+                options.graph_path = Some(PathBuf::from(value));
+                i += 2;
+            }
             "--adapter" => {
                 let value = args
                     .get(i + 1)
@@ -116,12 +144,23 @@ fn parse_replay_options(args: &[String]) -> Result<ReplayOptions, String> {
                 options.adapter_path = Some(PathBuf::from(value));
                 i += 2;
             }
+            "--cluster-path" | "--search-path" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| format!("{} requires a path", args[i]))?;
+                options.cluster_paths.push(PathBuf::from(value));
+                i += 2;
+            }
             other => {
                 return Err(format!(
-                    "unknown replay option '{other}'. expected --adapter"
+                    "unknown replay option '{other}'. expected --graph, --adapter, --cluster-path, or --search-path"
                 ))
             }
         }
+    }
+
+    if options.graph_path.is_none() {
+        return Err("replay requires --graph <graph.yaml>".to_string());
     }
 
     Ok(options)
@@ -132,12 +171,13 @@ fn usage() -> String {
         "usage:",
         "  ergo gen-docs [--check]",
         "  ergo validate <manifest.yaml> [--format json]",
+        "  ergo csv-to-fixture <prices.csv> <events.jsonl> [--semantic-kind <name>] [--event-kind <Pump|DataAvailable|Command>] [--episode-id <id>]",
         "  ergo check-compose <adapter.yaml> <source|action>.yaml [--format json]",
         "  ergo run demo-1",
         "  ergo run fixture <path>",
         "  ergo run <graph.yaml> --fixture <events.jsonl> [--adapter <adapter.yaml>] [--capture-output <path>] [--cluster-path <path> ...]",
         "  ergo run <graph.yaml> --direct [--cluster-path <path> ...]",
-        "  ergo replay <path> [--adapter <adapter.yaml>]",
+        "  ergo replay <path> --graph <graph.yaml> [--adapter <adapter.yaml>] [--cluster-path <path> ...]",
     ]
     .join("\n")
 }
@@ -236,6 +276,7 @@ fn run_fixture(path: &Path, output_override: Option<&Path>) -> Result<PathBuf, S
     Ok(result.artifact_path)
 }
 
+#[cfg(test)]
 fn action_status(outcome: ActionOutcome) -> &'static str {
     if outcome == ActionOutcome::Skipped {
         "skipped"
@@ -244,6 +285,7 @@ fn action_status(outcome: ActionOutcome) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn trigger_status(outcome: ActionOutcome) -> &'static str {
     if outcome == ActionOutcome::Skipped {
         "not_emitted"
@@ -252,6 +294,7 @@ fn trigger_status(outcome: ActionOutcome) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn context_value_from_json(payload: &serde_json::Value) -> Option<f64> {
     payload
         .as_object()
@@ -259,6 +302,7 @@ fn context_value_from_json(payload: &serde_json::Value) -> Option<f64> {
         .and_then(|value| value.as_f64())
 }
 
+#[cfg(test)]
 fn context_value_from_payload(payload: &EventPayload) -> Option<f64> {
     if payload.data.is_empty() {
         return None;
@@ -288,6 +332,84 @@ fn format_replay_error(err: &ReplayError) -> String {
     }
 }
 
+fn replay_graph(
+    path: &Path,
+    graph_path: &Path,
+    cluster_paths: &[PathBuf],
+    adapter_path: Option<&Path>,
+) -> Result<(), String> {
+    let bundle = load_bundle(path)?;
+    let prepared = graph_yaml::prepare_graph_runtime(graph_path, cluster_paths)?;
+
+    if bundle.graph_id.as_str() != prepared.graph_id {
+        return Err(format!(
+            "expected graph_id '{}', got '{}'",
+            prepared.graph_id,
+            bundle.graph_id.as_str()
+        ));
+    }
+
+    let (adapter_provides, replay_fingerprint) = if let Some(path) = adapter_path {
+        let manifest = parse_adapter_manifest(path)?;
+        ergo_adapter::validate_adapter(&manifest)
+            .map_err(|err| format!("adapter invalid: {}", render_error_info(&err)))?;
+        let provides = AdapterProvides::from_manifest(&manifest);
+        graph_yaml::validate_adapter_composition(
+            &prepared.expanded,
+            &prepared.catalog,
+            &prepared.registries,
+            &provides,
+        )?;
+        (provides, Some(adapter_fingerprint(&manifest)))
+    } else {
+        (AdapterProvides::default(), None)
+    };
+
+    let runtime = RuntimeHandle::new(
+        Arc::new(prepared.expanded),
+        Arc::new(prepared.catalog),
+        Arc::new(prepared.registries),
+        adapter_provides,
+    );
+
+    let replayed = replay_checked_strict(&bundle, runtime, replay_fingerprint.as_deref())
+        .map_err(|err| format!("strict replay failed: {}", format_replay_error(&err)))?;
+    let replay_matches = replayed == bundle.decisions;
+
+    let invoke_count = replayed
+        .iter()
+        .filter(|record| record.decision == Decision::Invoke)
+        .count();
+    let defer_count = replayed
+        .iter()
+        .filter(|record| record.decision == Decision::Defer)
+        .count();
+    let skip_count = replayed
+        .iter()
+        .filter(|record| record.decision == Decision::Skip)
+        .count();
+
+    println!(
+        "replay graph_id={} events={} invoked={} deferred={} skipped={}",
+        bundle.graph_id.as_str(),
+        bundle.events.len(),
+        invoke_count,
+        defer_count,
+        skip_count
+    );
+    println!(
+        "replay identity: {}",
+        if replay_matches { "match" } else { "mismatch" }
+    );
+
+    if !replay_matches {
+        return Err("replay decisions must match capture".to_string());
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
 fn replay_demo_1(path: &Path, adapter_path: Option<&Path>) -> Result<(), String> {
     let bundle = load_bundle(path)?;
 
@@ -420,5 +542,131 @@ mod tests {
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
+    }
+
+    #[test]
+    fn replay_graph_replays_yaml_capture() -> Result<(), String> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-cli-replay-graph-test-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
+
+        let graph_path = temp_dir.join("graph.yaml");
+        let fixture_path = temp_dir.join("fixture.jsonl");
+        let capture_path = temp_dir.join("capture.json");
+
+        let graph = r#"
+kind: cluster
+id: replay_basic
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#;
+        let fixture = "\
+{\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
+{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n";
+
+        fs::write(&graph_path, graph).map_err(|err| format!("write graph: {err}"))?;
+        fs::write(&fixture_path, fixture).map_err(|err| format!("write fixture: {err}"))?;
+
+        let run_args = vec![
+            "--fixture".to_string(),
+            fixture_path.to_string_lossy().to_string(),
+            "--capture-output".to_string(),
+            capture_path.to_string_lossy().to_string(),
+        ];
+        graph_yaml::run_graph_command(&graph_path, &run_args)?;
+
+        replay_graph(&capture_path, &graph_path, &[], None)?;
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn replay_graph_rejects_graph_id_mismatch() -> Result<(), String> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-cli-replay-mismatch-test-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
+
+        let graph_path = temp_dir.join("graph.yaml");
+        let other_graph_path = temp_dir.join("other_graph.yaml");
+        let fixture_path = temp_dir.join("fixture.jsonl");
+        let capture_path = temp_dir.join("capture.json");
+
+        let graph = r#"
+kind: cluster
+id: replay_basic
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#;
+
+        let other_graph = r#"
+kind: cluster
+id: replay_other
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 8.0
+edges: []
+outputs:
+  value_out: src.value
+"#;
+
+        let fixture = "\
+{\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
+{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n";
+
+        fs::write(&graph_path, graph).map_err(|err| format!("write graph: {err}"))?;
+        fs::write(&other_graph_path, other_graph)
+            .map_err(|err| format!("write other graph: {err}"))?;
+        fs::write(&fixture_path, fixture).map_err(|err| format!("write fixture: {err}"))?;
+
+        let run_args = vec![
+            "--fixture".to_string(),
+            fixture_path.to_string_lossy().to_string(),
+            "--capture-output".to_string(),
+            capture_path.to_string_lossy().to_string(),
+        ];
+        graph_yaml::run_graph_command(&graph_path, &run_args)?;
+
+        let err = replay_graph(&capture_path, &other_graph_path, &[], None)
+            .expect_err("graph id mismatch should fail");
+        assert!(err.contains("expected graph_id"), "unexpected err: {err}");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_replay_options_requires_graph() {
+        let err = parse_replay_options(&["--adapter".to_string(), "adapter.yaml".to_string()])
+            .expect_err("missing graph should fail");
+        assert!(
+            err.contains("replay requires --graph"),
+            "unexpected err: {err}"
+        );
     }
 }
