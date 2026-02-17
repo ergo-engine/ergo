@@ -15,6 +15,7 @@ pub enum FixtureItem {
         id: Option<String>,
         kind: ExternalEventKind,
         payload: Option<serde_json::Value>,
+        semantic_kind: Option<String>,
     },
 }
 
@@ -33,6 +34,8 @@ struct FixtureEvent {
     id: Option<String>,
     #[serde(default)]
     payload: Option<serde_json::Value>,
+    #[serde(default)]
+    semantic_kind: Option<String>,
 }
 
 pub fn parse_fixture(path: &Path) -> Result<Vec<FixtureItem>, String> {
@@ -62,6 +65,7 @@ pub fn parse_fixture(path: &Path) -> Result<Vec<FixtureItem>, String> {
                     id: event.id,
                     kind: event.kind,
                     payload: event.payload,
+                    semantic_kind: event.semantic_kind,
                 });
             }
         }

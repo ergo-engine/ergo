@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 use ergo_adapter::capture::{CaptureError, ExternalEventRecord};
 use ergo_adapter::{EventId, RuntimeInvoker};
 
-use crate::{CaptureBundle, DecisionLog, DecisionLogEntry, EpisodeInvocationRecord, Supervisor};
+use crate::{
+    CaptureBundle, DecisionLog, DecisionLogEntry, EpisodeInvocationRecord, Supervisor,
+    NO_ADAPTER_PROVENANCE,
+};
 
 #[derive(Clone, Default)]
 pub struct MemoryDecisionLog {
@@ -28,6 +31,9 @@ impl MemoryDecisionLog {
 pub enum ReplayError {
     UnsupportedVersion { capture_version: String },
     HashMismatch { event_id: EventId },
+    AdapterProvenanceMismatch { expected: String, got: String },
+    UnexpectedAdapterProvidedForNoAdapterCapture,
+    AdapterRequiredForProvenancedCapture,
 }
 
 pub fn validate_bundle(bundle: &CaptureBundle) -> Result<(), ReplayError> {
@@ -56,6 +62,16 @@ pub fn replay_checked<R: RuntimeInvoker + Clone>(
     replay_inner(bundle, runtime)
 }
 
+pub fn replay_checked_strict<R: RuntimeInvoker + Clone>(
+    bundle: &CaptureBundle,
+    runtime: R,
+    adapter_fingerprint: Option<&str>,
+) -> Result<Vec<EpisodeInvocationRecord>, ReplayError> {
+    validate_bundle(bundle)?;
+    validate_replay_provenance(bundle, adapter_fingerprint)?;
+    replay_inner(bundle, runtime)
+}
+
 pub fn replay<R: RuntimeInvoker + Clone>(
     bundle: &CaptureBundle,
     runtime: R,
@@ -80,6 +96,32 @@ fn replay_inner<R: RuntimeInvoker + Clone>(
     }
 
     Ok(decision_log.records())
+}
+
+fn validate_replay_provenance(
+    bundle: &CaptureBundle,
+    adapter_fingerprint: Option<&str>,
+) -> Result<(), ReplayError> {
+    let provenance = bundle.adapter_provenance.as_str();
+    if provenance == NO_ADAPTER_PROVENANCE {
+        if adapter_fingerprint.is_some() {
+            return Err(ReplayError::UnexpectedAdapterProvidedForNoAdapterCapture);
+        }
+        return Ok(());
+    }
+
+    let Some(got) = adapter_fingerprint else {
+        return Err(ReplayError::AdapterRequiredForProvenancedCapture);
+    };
+
+    if got != provenance {
+        return Err(ReplayError::AdapterProvenanceMismatch {
+            expected: provenance.to_string(),
+            got: got.to_string(),
+        });
+    }
+
+    Ok(())
 }
 
 fn rehydrate_event(

@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::manifest::AdapterManifest;
+use crate::provenance;
 
 /// What an adapter provides for composition validation.
 /// Built from AdapterManifest after registration-phase validation passes.
@@ -9,6 +10,9 @@ pub struct AdapterProvides {
     pub context: HashMap<String, ContextKeyProvision>,
     pub events: HashSet<String>,
     pub effects: HashSet<String>,
+    pub event_schemas: HashMap<String, serde_json::Value>,
+    pub capture_format_version: String,
+    pub adapter_fingerprint: String,
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +45,11 @@ impl AdapterProvides {
             .iter()
             .map(|e| e.name.clone())
             .collect();
+        let event_schemas = manifest
+            .event_kinds
+            .iter()
+            .map(|e| (e.name.clone(), e.payload_schema.clone()))
+            .collect();
 
         let effects = manifest
             .accepts
@@ -52,6 +61,9 @@ impl AdapterProvides {
             context,
             events,
             effects,
+            event_schemas,
+            capture_format_version: manifest.capture.format_version.clone(),
+            adapter_fingerprint: provenance::fingerprint(manifest),
         }
     }
 }
@@ -62,6 +74,9 @@ impl Default for AdapterProvides {
             context: HashMap::new(),
             events: HashSet::new(),
             effects: HashSet::new(),
+            event_schemas: HashMap::new(),
+            capture_format_version: String::new(),
+            adapter_fingerprint: String::new(),
         }
     }
 }

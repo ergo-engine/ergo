@@ -1,6 +1,6 @@
 # Extension Contracts Roadmap
 
-**Status:** v1.0.0-alpha.8 — Breaking changes permitted.
+**Status:** v1.0.0-alpha.9 — Breaking changes permitted.
 
 **Goal:** Define extension contracts completely enough that compliance is mechanically verifiable.
 
@@ -94,11 +94,16 @@ enum ValueType {
 
 ### Event Kinds
 
-**PLANNED (v1 breaking change):** Open world.
+**CURRENT (v1 alpha):**
+- `ExternalEventKind` remains the transport enum (`Pump`, `DataAvailable`, `Command`) for supervisor scheduling mechanics.
+- Adapter semantic event kinds are open-world strings declared in adapter manifests.
+- Semantic event consistency is enforced in adapter layer:
+  - ADP-18 (required semantic payload fields must map to context keys with compatible types)
+  - ADP-19 (materialized field shapes must map to supported runtime value types)
+  - Runtime binder validates `(semantic_kind, payload)` before emitting `ExternalEvent`.
 
-Current: `ExternalEventKind` is a closed enum in code.
-
-Target: Adapters declare what they emit as strings. Supervisor routes by kind string. Third parties can define their own event kinds.
+**PLANNED (later v1):**
+- Supervisor policy/routing by semantic event kind string.
 
 ### Schema vs Rules
 
@@ -1748,7 +1753,7 @@ All rules by extension type:
 This roadmap is a v1 workstream item.
 
 - **v1 alpha:** FROZEN documents remain immutable; v1 contracts live in STABLE
-- Adapter contract v1 will be authored in `STABLE/PRIMITIVE_MANIFESTS/adapter.md`
+- Adapter contract v1 is authored in `STABLE/PRIMITIVE_MANIFESTS/adapter.md`
 - Primitive manifest contracts are STABLE (additive preferred, breaking allowed in alpha)
 - New invariants added to PHASE_INVARIANTS.md
 - Progress tracked in GitHub Issues
@@ -1781,3 +1786,4 @@ This roadmap is a v1 workstream item.
 | v1.0.0-alpha.6 | 2026-01-21 | Claude (Structural Auditor) | Error model fork resolved: (1) Added ErrorInfo trait with MUST/SHOULD gradation, (2) RuleViolation is presentation format not internal, (3) Phase 1.3 InvalidAdapter typed enum with ErrorInfo impl, (4) Phase 7.1 retrofits existing enums, (5) path/fix are SHOULD not MUST, (6) ADP-15/16 enforcement deferred until REP-SCOPE expansion |
 | v1.0.0-alpha.7 | 2026-01-21 | Claude (Structural Auditor) | Phase 1.3 consistency fixes per ChatGPT review: (1) Added index fields to all list-locus variants, (2) Complete path()/fix() implementations, (3) ADP-6 requires String parsing not ValueType, (4) ADP-10/ADP-11 semantics clarified, (5) doc_anchor format locked to STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-N |
 | v1.0.0-alpha.8 | 2026-02-05 | Claude Code | Marked Phase 5 (Action) complete; updated Current State table (Phases 1-5 done); corrected Rule Summary counts (91 total rules) |
+| v1.0.0-alpha.9 | 2026-02-17 | Codex | Hard break cleanup: capture bundle schema moved to strict v1 (`capture_version: v1`, required `adapter_provenance`, unknown fields denied), legacy `adapter_version` bundles rejected, and canonical/replay strictness docs aligned |

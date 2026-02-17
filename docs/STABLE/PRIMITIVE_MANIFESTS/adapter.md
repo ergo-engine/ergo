@@ -1,10 +1,10 @@
 ---
 Authority: STABLE
-Version: v0
-Last Updated: 2026-01-21
+Version: v1
+Last Updated: 2026-02-17
 ---
 
-# Adapter Manifest — v0
+# Adapter Manifest — v1
 
 An adapter is the bridge between the runtime and the external world.
 It defines what context data is available to the graph, what external events
@@ -167,6 +167,10 @@ These rules are checked during adapter registration (manifest-only validation).
 | ADP-13 | Effect schemas valid | `all(accepts.effects[].payload_schema is valid Draft 2020-12)` |
 | ADP-14 | Writable implies set_context accepted | `any(writable == true) => accepts contains "set_context"` |
 | ADP-17 | Writable keys cannot be required | `all(writable == true => required == false)` |
+| ADP-18 | Required semantic event fields map to context keys | `all(required(event.payload_schema) fields exist in context_keys with matching types)` |
+| ADP-19 | Materialized event field types are supported | `event payload object fields map only to Number/Bool/String/Series` |
+
+**ADP-18 scope note:** This rule intentionally validates only fields listed in `payload_schema.required`. If `required` is omitted, ADP-18 vacuously passes.
 
 ### 4.2 Deferred Rules (REP-SCOPE)
 
@@ -202,6 +206,8 @@ The following rules are deferred until REP-SCOPE is expanded to include context/
 | ADP-15 | Registration | `InvalidAdapter::WritableKeyNotCaptured` | — (Deferred) |
 | ADP-16 | Registration | `InvalidAdapter::SetContextNotCaptured` | — (Deferred) |
 | ADP-17 | Registration | `InvalidAdapter::WritableKeyRequired` | `adp_17_writable_key_required_rejected` |
+| ADP-18 | Registration | `InvalidAdapter::RequiredEventFieldNotProvided` / `InvalidAdapter::RequiredEventFieldTypeMismatch` | `adp_18_*` |
+| ADP-19 | Registration | `InvalidAdapter::EventPayloadSchemaNotObject` / `InvalidAdapter::UnsupportedEventFieldType` | `adp_19_*` |
 
 **Enforcement location:** `crates/adapter/src/validate.rs`
 **Test location:** `crates/adapter/tests/validation.rs`
@@ -240,6 +246,9 @@ pub struct AdapterProvides {
     pub context: HashMap<String, ContextKeyProvision>,
     pub events: HashSet<String>,
     pub effects: HashSet<String>,
+    pub event_schemas: HashMap<String, serde_json::Value>,
+    pub capture_format_version: String,
+    pub adapter_fingerprint: String,
 }
 
 pub struct ContextKeyProvision {
@@ -296,7 +305,7 @@ capture:
     - meta.timestamp
 ```
 
-This manifest passes all 15 implemented ADP rules:
+This manifest passes all 17 implemented ADP rules:
 - ADP-1: `id` matches `^[a-z][a-z0-9_]*$`
 - ADP-2: `version` is valid semver
 - ADP-3: `runtime_compatibility` is valid semver
@@ -312,6 +321,8 @@ This manifest passes all 15 implemented ADP rules:
 - ADP-13: No effect schemas to validate
 - ADP-14: No writable keys, so no `set_context` required
 - ADP-17: No writable keys, so no required conflict
+- ADP-18: No required semantic event fields, so required-field context mapping is satisfied
+- ADP-19: Event payload shape remains within supported materialization types
 
 ### Full-Featured Manifest (with writable keys)
 
@@ -787,11 +798,69 @@ capture:
     - meta.timestamp
 ```
 
+**ADP-18: Required semantic event field not mapped to context**
+```yaml
+kind: adapter
+id: good_id
+version: 1.0.0
+runtime_compatibility: 0.1.0
+context_keys:
+  - name: symbol
+    type: String
+    required: true
+    writable: false
+event_kinds:
+  - name: price_tick
+    payload_schema:
+      type: object
+      properties:
+        price:
+          type: number
+      required: [price]
+      additionalProperties: false
+capture:
+  format_version: "1"
+  fields:
+    - event.price_tick
+    - meta.adapter_id
+    - meta.adapter_version
+    - meta.timestamp
+```
+
+**ADP-19: Unsupported materialization type in event payload schema**
+```yaml
+kind: adapter
+id: good_id
+version: 1.0.0
+runtime_compatibility: 0.1.0
+context_keys:
+  - name: metadata
+    type: String
+    required: false
+    writable: false
+event_kinds:
+  - name: price_tick
+    payload_schema:
+      type: object
+      properties:
+        metadata:
+          type: object
+          additionalProperties: false
+      additionalProperties: false
+capture:
+  format_version: "1"
+  fields:
+    - event.price_tick
+    - meta.adapter_id
+    - meta.adapter_version
+    - meta.timestamp
+```
+
 ---
 
 ## 9. Scope
 
-This document defines Adapter Manifest v0.
+This document defines Adapter Manifest v1.
 
 Out of scope:
 - Trust tiers

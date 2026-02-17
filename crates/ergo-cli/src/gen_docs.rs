@@ -317,6 +317,22 @@ const ADAPTER_RULES: &[RuleDefinition] = &[
         doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-17",
         status: RuleStatus::Enforced,
     },
+    RuleDefinition {
+        id: "ADP-18",
+        phase: Phase::Registration,
+        summary: "Required event fields map to context keys with compatible types",
+        predicate: "all(required(event.payload_schema) fields exist in context_keys with matching ValueType)",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-18",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "ADP-19",
+        phase: Phase::Registration,
+        summary: "Materialized event field types are supported",
+        predicate: "event payload object fields map only to Number/Bool/String/Series",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-19",
+        status: RuleStatus::Enforced,
+    },
 ];
 
 const SOURCE_RULES: &[RuleDefinition] = &[

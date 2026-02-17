@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use jsonschema::draft202012;
 use regex::Regex;
@@ -7,6 +7,9 @@ use serde_json::Value;
 
 use crate::errors::InvalidAdapter;
 use crate::manifest::AdapterManifest;
+use crate::schema_materialization::{
+    schema_properties, schema_property_to_context_type, schema_required_fields,
+};
 
 /// Placeholder constant for runtime version comparison (ADP-3).
 /// TODO: Replace with actual runtime version from ergo-runtime crate.
@@ -28,6 +31,8 @@ pub fn validate_adapter(manifest: &AdapterManifest) -> Result<(), InvalidAdapter
     check_adp_13(manifest)?;
     check_adp_14(manifest)?;
     check_adp_17(manifest)?;
+    check_adp_19(manifest)?;
+    check_adp_18(manifest)?;
     // ADP-15, ADP-16: TODO - Deferred until REP-SCOPE expansion
     Ok(())
 }
@@ -341,4 +346,118 @@ fn check_adp_17(m: &AdapterManifest) -> Result<(), InvalidAdapter> {
         }
     }
     Ok(())
+}
+
+/// ADP-19: Context-materialized semantic event fields must use supported types.
+fn check_adp_19(m: &AdapterManifest) -> Result<(), InvalidAdapter> {
+    for (event_index, event) in m.event_kinds.iter().enumerate() {
+        let Some(schema_object) = event.payload_schema.as_object() else {
+            return Err(InvalidAdapter::EventPayloadSchemaNotObject {
+                event: event.name.clone(),
+                event_index,
+            });
+        };
+
+        if !schema_is_object(schema_object) {
+            return Err(InvalidAdapter::EventPayloadSchemaNotObject {
+                event: event.name.clone(),
+                event_index,
+            });
+        }
+
+        let Some(properties) = schema_properties(schema_object) else {
+            continue;
+        };
+
+        for (field_name, field_schema) in properties {
+            if let Err(detail) = schema_property_to_context_type(field_schema) {
+                return Err(InvalidAdapter::UnsupportedEventFieldType {
+                    event: event.name.clone(),
+                    field: field_name.clone(),
+                    detail,
+                    event_index,
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// ADP-18: Required semantic event payload fields must map to context keys and compatible types.
+fn check_adp_18(m: &AdapterManifest) -> Result<(), InvalidAdapter> {
+    let context_types: HashMap<&str, &str> = m
+        .context_keys
+        .iter()
+        .map(|key| (key.name.as_str(), key.ty.as_str()))
+        .collect();
+
+    for (event_index, event) in m.event_kinds.iter().enumerate() {
+        let Some(schema_object) = event.payload_schema.as_object() else {
+            // ADP-19 owns this shape guard; keep fail-fast behavior stable here too.
+            return Err(InvalidAdapter::EventPayloadSchemaNotObject {
+                event: event.name.clone(),
+                event_index,
+            });
+        };
+
+        let properties = schema_properties(schema_object);
+        // ADP-18 is intentionally scoped to required fields only.
+        // If payload_schema omits `required`, the check vacuously passes.
+        for required_field in schema_required_fields(schema_object) {
+            let Some(field_schema) = properties.and_then(|map| map.get(required_field)) else {
+                return Err(InvalidAdapter::UnsupportedEventFieldType {
+                    event: event.name.clone(),
+                    field: required_field.to_string(),
+                    detail: "required field is not declared under payload_schema.properties"
+                        .to_string(),
+                    event_index,
+                });
+            };
+
+            let expected_ty = schema_property_to_context_type(field_schema).map_err(|detail| {
+                InvalidAdapter::UnsupportedEventFieldType {
+                    event: event.name.clone(),
+                    field: required_field.to_string(),
+                    detail,
+                    event_index,
+                }
+            })?;
+
+            let Some(got_ty) = context_types.get(required_field).copied() else {
+                return Err(InvalidAdapter::RequiredEventFieldNotProvided {
+                    event: event.name.clone(),
+                    field: required_field.to_string(),
+                    event_index,
+                });
+            };
+
+            if got_ty != expected_ty {
+                return Err(InvalidAdapter::RequiredEventFieldTypeMismatch {
+                    event: event.name.clone(),
+                    field: required_field.to_string(),
+                    expected: expected_ty.to_string(),
+                    got: got_ty.to_string(),
+                    event_index,
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn schema_is_object(schema: &serde_json::Map<String, Value>) -> bool {
+    if schema.contains_key("properties") {
+        return true;
+    }
+
+    match schema.get("type") {
+        Some(Value::String(ty)) => ty == "object",
+        Some(Value::Array(types)) => types.iter().any(|entry| match entry {
+            Value::String(ty) => ty == "object",
+            _ => false,
+        }),
+        _ => false,
+    }
 }

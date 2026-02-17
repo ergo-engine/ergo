@@ -3,22 +3,27 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod adapter_manifest_io;
+mod error_format;
 mod gen_docs;
 mod graph_yaml;
 mod validate;
 
+use crate::adapter_manifest_io::parse_adapter_manifest;
+use crate::error_format::render_error_info;
 use ergo_adapter::fixture;
 use ergo_adapter::{
-    ensure_demo_sources_have_no_required_context, AdapterProvides, EventId, EventPayload,
-    ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
+    adapter_fingerprint, ensure_demo_sources_have_no_required_context, AdapterProvides, EventId,
+    EventPayload, ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
 };
 use ergo_runtime::action::ActionOutcome;
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
 use ergo_supervisor::demo::demo_1;
 use ergo_supervisor::fixture_runner;
-use ergo_supervisor::replay::replay_checked;
+use ergo_supervisor::replay::{replay_checked_strict, ReplayError};
 use ergo_supervisor::{
     CaptureBundle, CapturingSession, Constraints, Decision, DecisionLog, DecisionLogEntry,
+    NO_ADAPTER_PROVENANCE,
 };
 
 const DEMO_GRAPH_ID: &str = "demo_1";
@@ -78,8 +83,9 @@ fn run() -> Result<(), String> {
         }
         Some("replay") => {
             let path = args.next().ok_or_else(usage)?;
-            ensure_no_extra_args(&mut args)?;
-            replay_demo_1(Path::new(&path))
+            let rest: Vec<String> = args.collect();
+            let replay_opts = parse_replay_options(&rest)?;
+            replay_demo_1(Path::new(&path), replay_opts.adapter_path.as_deref())
         }
         _ => Err(usage()),
     }
@@ -92,6 +98,35 @@ fn ensure_no_extra_args(args: &mut impl Iterator<Item = String>) -> Result<(), S
     Ok(())
 }
 
+#[derive(Debug, Default)]
+struct ReplayOptions {
+    adapter_path: Option<PathBuf>,
+}
+
+fn parse_replay_options(args: &[String]) -> Result<ReplayOptions, String> {
+    let mut options = ReplayOptions::default();
+    let mut i = 0;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--adapter" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--adapter requires a path".to_string())?;
+                options.adapter_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            other => {
+                return Err(format!(
+                    "unknown replay option '{other}'. expected --adapter"
+                ))
+            }
+        }
+    }
+
+    Ok(options)
+}
+
 fn usage() -> String {
     [
         "usage:",
@@ -100,8 +135,9 @@ fn usage() -> String {
         "  ergo check-compose <adapter.yaml> <source|action>.yaml [--format json]",
         "  ergo run demo-1",
         "  ergo run fixture <path>",
-        "  ergo run <graph.yaml> [--adapter <adapter.yaml>] [--cluster-path <path> ...]",
-        "  ergo replay <path>",
+        "  ergo run <graph.yaml> --fixture <events.jsonl> [--adapter <adapter.yaml>] [--capture-output <path>] [--cluster-path <path> ...]",
+        "  ergo run <graph.yaml> --direct [--cluster-path <path> ...]",
+        "  ergo replay <path> [--adapter <adapter.yaml>]",
     ]
     .join("\n")
 }
@@ -136,11 +172,12 @@ fn run_demo_1() -> Result<(), String> {
         core_registries.clone(),
         AdapterProvides::default(),
     );
-    let mut session = CapturingSession::new(
+    let mut session = CapturingSession::new_with_provenance(
         GraphId::new(DEMO_GRAPH_ID),
         Constraints::default(),
         NullLog,
         runtime,
+        NO_ADAPTER_PROVENANCE.to_string(),
     );
 
     let events = [
@@ -231,7 +268,27 @@ fn context_value_from_payload(payload: &EventPayload) -> Option<f64> {
     context_value_from_json(&parsed)
 }
 
-fn replay_demo_1(path: &Path) -> Result<(), String> {
+fn format_replay_error(err: &ReplayError) -> String {
+    match err {
+        ReplayError::UnsupportedVersion { capture_version } => {
+            format!("unsupported capture version '{capture_version}'")
+        }
+        ReplayError::HashMismatch { event_id } => {
+            format!("payload hash mismatch for event '{}'", event_id.as_str())
+        }
+        ReplayError::AdapterProvenanceMismatch { expected, got } => {
+            format!("adapter provenance mismatch: expected '{expected}', got '{got}'")
+        }
+        ReplayError::UnexpectedAdapterProvidedForNoAdapterCapture => {
+            "bundle provenance is 'none'; do not pass --adapter".to_string()
+        }
+        ReplayError::AdapterRequiredForProvenancedCapture => {
+            "bundle is adapter-provenanced; provide --adapter <adapter.yaml>".to_string()
+        }
+    }
+}
+
+fn replay_demo_1(path: &Path, adapter_path: Option<&Path>) -> Result<(), String> {
     let bundle = load_bundle(path)?;
 
     if bundle.graph_id.as_str() != DEMO_GRAPH_ID {
@@ -246,13 +303,25 @@ fn replay_demo_1(path: &Path) -> Result<(), String> {
     let core_registries =
         Arc::new(core_registries().map_err(|err| format!("core registries: {err:?}"))?);
 
+    let (adapter_provides, replay_fingerprint) = if let Some(path) = adapter_path {
+        let manifest = parse_adapter_manifest(path)?;
+        ergo_adapter::validate_adapter(&manifest)
+            .map_err(|err| format!("adapter invalid: {}", render_error_info(&err)))?;
+        (
+            AdapterProvides::from_manifest(&manifest),
+            Some(adapter_fingerprint(&manifest)),
+        )
+    } else {
+        (AdapterProvides::default(), None)
+    };
+
     let runtime = RuntimeHandle::new(
         graph.clone(),
         catalog.clone(),
         core_registries.clone(),
-        AdapterProvides::default(),
+        adapter_provides,
     );
-    let replay_result = replay_checked(&bundle, runtime);
+    let replay_result = replay_checked_strict(&bundle, runtime, replay_fingerprint.as_deref());
     let replay_matches = match &replay_result {
         Ok(records) => records == &bundle.decisions,
         Err(_) => false,
@@ -302,7 +371,10 @@ fn replay_demo_1(path: &Path) -> Result<(), String> {
     }
 
     if let Err(err) = replay_result {
-        eprintln!("replay error: {err:?}");
+        return Err(format!(
+            "strict replay failed: {}",
+            format_replay_error(&err)
+        ));
     }
 
     println!("{}", demo_1::format_replay_identity(replay_matches));
@@ -344,7 +416,7 @@ mod tests {
         assert_eq!(artifact_path, output_path);
         assert!(artifact_path.exists(), "expected replay artifact to exist");
 
-        replay_demo_1(&artifact_path)?;
+        replay_demo_1(&artifact_path, None)?;
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())

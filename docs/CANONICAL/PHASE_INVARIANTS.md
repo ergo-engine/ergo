@@ -97,6 +97,21 @@ These tests are permanent. Failure indicates invariant regression.
 
 ---
 
+## Canonical Run / Replay Strictness (v1)
+
+| ID | Invariant | Enforcement Locus | Status |
+|----|-----------|-------------------|--------|
+| RUN-CANON-1 | Canonical graph run requires explicit event source | CLI validation (`ergo run <graph.yaml>` requires `--fixture` unless `--direct`) | Enforced |
+| RUN-CANON-2 | Adapter binding is mandatory only for adapter-dependent graphs | CLI dependency scan over expanded source/action manifests | Enforced |
+| REP-7 | Strict replay requires provenance contract match | `supervisor::replay::replay_checked_strict` | Enforced |
+
+Notes:
+- Adapter-dependent graph detection is based on required source context keys and action writes.
+- Adapter-independent canonical captures use explicit provenance sentinel `none`.
+- Capture bundles are strict v1 (`capture_version: "v1"`): `adapter_provenance` is required, unknown fields are rejected, and legacy `adapter_version` bundles fail deserialization.
+
+---
+
 ## 0. Cross-Phase Invariants
 
 These invariants hold across all phases. Violation at any point is a system-level failure.

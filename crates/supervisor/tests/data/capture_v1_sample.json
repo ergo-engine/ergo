@@ -1,5 +1,5 @@
 {
-  "capture_version": "v0",
+  "capture_version": "v1",
   "graph_id": "g-sample",
   "config": {
     "max_in_flight": null,
@@ -31,5 +31,5 @@
       "retry_count": 0
     }
   ],
-  "adapter_version": null
+  "adapter_provenance": "none"
 }

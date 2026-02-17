@@ -32,6 +32,8 @@ Primary spec: `STABLE/PRIMITIVE_MANIFESTS/adapter.md`
 | ADP-15 | Registration | deferred | Writable keys must be capturable (planned) | `all(writable == true => "context." + name in capture.fields)` | `STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-15` |
 | ADP-16 | Registration | deferred | Write effect must be capturable (planned) | `any(writable == true) => "effect.set_context" in capture.fields` | `STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-16` |
 | ADP-17 | Registration | enforced | Writable keys cannot be required | `all(writable == true => required == false)` | `STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-17` |
+| ADP-18 | Registration | enforced | Required event fields map to context keys with compatible types | `all(required(event.payload_schema) fields exist in context_keys with matching ValueType)` | `STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-18` |
+| ADP-19 | Registration | enforced | Materialized event field types are supported | `event payload object fields map only to Number/Bool/String/Series` | `STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-19` |
 
 ## Source (SRC-*)
 

@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::path::Path;
 
+use crate::adapter_manifest_io::parse_adapter_manifest;
 use ergo_adapter::composition::{
     validate_action_adapter_composition, validate_source_adapter_composition,
 };
@@ -223,12 +224,6 @@ fn parse_manifest(path: &Path) -> Result<ParsedManifest, RuleViolation> {
             "unknown manifest kind '{other}'"
         ))),
     }
-}
-
-fn parse_adapter_manifest(path: &Path) -> Result<AdapterManifest, String> {
-    let value = load_manifest_value(path)?;
-    serde_json::from_value::<AdapterManifest>(value)
-        .map_err(|err| format!("parse adapter manifest: {err}"))
 }
 
 fn load_manifest_value(path: &Path) -> Result<serde_json::Value, String> {

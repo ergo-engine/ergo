@@ -14,10 +14,13 @@ use serde::{Deserialize, Serialize};
 pub mod capture;
 pub mod composition;
 pub mod errors;
+pub mod event_binding;
 pub mod fixture;
 pub mod manifest;
+pub mod provenance;
 pub mod provides;
 pub mod registry;
+mod schema_materialization;
 pub mod validate;
 
 pub use composition::{
@@ -25,9 +28,11 @@ pub use composition::{
     validate_source_adapter_composition, CompositionError, ContextRequirement, SourceRequires,
 };
 pub use errors::InvalidAdapter;
+pub use event_binding::{bind_semantic_event, EventBindingError};
 pub use manifest::{
     AcceptsSpec, AdapterManifest, CaptureSpec, ContextKeySpec, EffectSpec, EventKindSpec,
 };
+pub use provenance::fingerprint as adapter_fingerprint;
 pub use provides::{AdapterProvides, ContextKeyProvision};
 pub use registry::register;
 pub use validate::validate_adapter;
@@ -410,6 +415,11 @@ impl RuntimeHandle {
         &self,
         graph: &ergo_runtime::runtime::ValidatedGraph,
     ) -> Result<(), CompositionError> {
+        // COMP-3: only adapter-bound runs have a capture format to validate.
+        if !self.adapter_provides.capture_format_version.is_empty() {
+            validate_capture_format(&self.adapter_provides.capture_format_version)?;
+        }
+
         for node in graph.nodes.values() {
             if node.kind != PrimitiveKind::Source {
                 continue;
@@ -530,7 +540,7 @@ mod tests {
     use std::sync::Arc;
 
     use ergo_runtime::action::ActionRegistry;
-    use ergo_runtime::catalog::{build_core_catalog, CoreRegistries};
+    use ergo_runtime::catalog::{build_core_catalog, core_registries, CoreRegistries};
     use ergo_runtime::cluster::{ExpandedGraph, ExpandedNode, ImplementationInstance};
     use ergo_runtime::compute::PrimitiveRegistry as ComputeRegistry;
     use ergo_runtime::runtime::ExecutionContext as RuntimeExecutionContext;
@@ -682,6 +692,9 @@ mod tests {
                 context: HashMap::new(),
                 events: HashSet::new(),
                 effects: HashSet::new(),
+                event_schemas: HashMap::new(),
+                capture_format_version: String::new(),
+                adapter_fingerprint: String::new(),
             },
         );
 
@@ -689,6 +702,51 @@ mod tests {
         let ctx = ExecutionContext::new(rt_ctx);
         let term = runtime.run(&GraphId::new("g"), &EventId::new("e"), &ctx, None);
 
+        assert_eq!(term, RunTermination::Failed(ErrKind::ValidationFailed));
+    }
+
+    #[test]
+    fn runtime_handle_rejects_unsupported_capture_format() {
+        let graph = ExpandedGraph {
+            nodes: HashMap::from([(
+                "src".to_string(),
+                ExpandedNode {
+                    runtime_id: "src".to_string(),
+                    authoring_path: vec![],
+                    implementation: ImplementationInstance {
+                        impl_id: "number_source".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    parameters: HashMap::from([(
+                        "value".to_string(),
+                        ergo_runtime::cluster::ParameterValue::Number(1.0),
+                    )]),
+                },
+            )]),
+            edges: vec![],
+            boundary_inputs: vec![],
+            boundary_outputs: vec![],
+        };
+
+        let runtime = RuntimeHandle::new(
+            Arc::new(graph),
+            Arc::new(build_core_catalog()),
+            Arc::new(
+                core_registries()
+                    .expect("core registries should initialize for capture format test"),
+            ),
+            AdapterProvides {
+                context: HashMap::new(),
+                events: HashSet::new(),
+                effects: HashSet::new(),
+                event_schemas: HashMap::new(),
+                capture_format_version: "999".to_string(),
+                adapter_fingerprint: "adapter:test@1.0.0;sha256:test".to_string(),
+            },
+        );
+
+        let ctx = ExecutionContext::new(RuntimeExecutionContext::default());
+        let term = runtime.run(&GraphId::new("g"), &EventId::new("e"), &ctx, None);
         assert_eq!(term, RunTermination::Failed(ErrKind::ValidationFailed));
     }
 }

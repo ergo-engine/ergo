@@ -1,6 +1,6 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AdapterManifest {
     pub kind: String,
     pub id: String,
@@ -12,7 +12,7 @@ pub struct AdapterManifest {
     pub capture: CaptureSpec,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ContextKeySpec {
     pub name: String,
     #[serde(rename = "type")]
@@ -22,24 +22,24 @@ pub struct ContextKeySpec {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EventKindSpec {
     pub name: String,
     pub payload_schema: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AcceptsSpec {
     pub effects: Vec<EffectSpec>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EffectSpec {
     pub name: String,
     pub payload_schema: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CaptureSpec {
     pub format_version: String,
     pub fields: Vec<String>,

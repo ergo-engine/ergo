@@ -67,6 +67,28 @@ pub enum InvalidAdapter {
         key: String,
         index: usize,
     },
+    RequiredEventFieldNotProvided {
+        event: String,
+        field: String,
+        event_index: usize,
+    },
+    RequiredEventFieldTypeMismatch {
+        event: String,
+        field: String,
+        expected: String,
+        got: String,
+        event_index: usize,
+    },
+    EventPayloadSchemaNotObject {
+        event: String,
+        event_index: usize,
+    },
+    UnsupportedEventFieldType {
+        event: String,
+        field: String,
+        detail: String,
+        event_index: usize,
+    },
 }
 
 impl ErrorInfo for InvalidAdapter {
@@ -90,6 +112,10 @@ impl ErrorInfo for InvalidAdapter {
             Self::WritableKeyNotCaptured { .. } => "ADP-15",
             Self::SetContextNotCaptured => "ADP-16",
             Self::WritableKeyRequired { .. } => "ADP-17",
+            Self::RequiredEventFieldNotProvided { .. } => "ADP-18",
+            Self::RequiredEventFieldTypeMismatch { .. } => "ADP-18",
+            Self::EventPayloadSchemaNotObject { .. } => "ADP-19",
+            Self::UnsupportedEventFieldType { .. } => "ADP-19",
         }
     }
 
@@ -121,6 +147,18 @@ impl ErrorInfo for InvalidAdapter {
             Self::WritableKeyNotCaptured { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-15",
             Self::SetContextNotCaptured => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-16",
             Self::WritableKeyRequired { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-17",
+            Self::RequiredEventFieldNotProvided { .. } => {
+                "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-18"
+            }
+            Self::RequiredEventFieldTypeMismatch { .. } => {
+                "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-18"
+            }
+            Self::EventPayloadSchemaNotObject { .. } => {
+                "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-19"
+            }
+            Self::UnsupportedEventFieldType { .. } => {
+                "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-19"
+            }
         }
     }
 
@@ -181,6 +219,30 @@ impl ErrorInfo for InvalidAdapter {
             Self::WritableKeyRequired { key, .. } => {
                 Cow::Owned(format!("Writable key '{}' cannot have required: true", key))
             }
+            Self::RequiredEventFieldNotProvided { event, field, .. } => Cow::Owned(format!(
+                "Required event field '{}.{}' is not declared in adapter context_keys",
+                event, field
+            )),
+            Self::RequiredEventFieldTypeMismatch {
+                event,
+                field,
+                expected,
+                got,
+                ..
+            } => Cow::Owned(format!(
+                "Required event field '{}.{}' type mismatch: context key is '{}', schema requires '{}'",
+                event, field, got, expected
+            )),
+            Self::EventPayloadSchemaNotObject { event, .. } => Cow::Owned(format!(
+                "Event '{}' payload_schema must be an object schema for context materialization",
+                event
+            )),
+            Self::UnsupportedEventFieldType {
+                event, field, detail, ..
+            } => Cow::Owned(format!(
+                "Event field '{}.{}' uses unsupported materialization type: {}",
+                event, field, detail
+            )),
         }
     }
 
@@ -228,6 +290,28 @@ impl ErrorInfo for InvalidAdapter {
             Self::WritableKeyRequired { index, .. } => {
                 Some(Cow::Owned(format!("$.context_keys[{}]", index)))
             }
+            Self::RequiredEventFieldNotProvided {
+                event_index, field, ..
+            } => Some(Cow::Owned(format!(
+                "$.event_kinds[{}].payload_schema.properties.{}",
+                event_index, field
+            ))),
+            Self::RequiredEventFieldTypeMismatch {
+                event_index, field, ..
+            } => Some(Cow::Owned(format!(
+                "$.event_kinds[{}].payload_schema.properties.{}",
+                event_index, field
+            ))),
+            Self::EventPayloadSchemaNotObject { event_index, .. } => Some(Cow::Owned(format!(
+                "$.event_kinds[{}].payload_schema",
+                event_index
+            ))),
+            Self::UnsupportedEventFieldType {
+                event_index, field, ..
+            } => Some(Cow::Owned(format!(
+                "$.event_kinds[{}].payload_schema.properties.{}",
+                event_index, field
+            ))),
         }
     }
 
@@ -295,6 +379,22 @@ impl ErrorInfo for InvalidAdapter {
                 "Set 'required: false' on writable key '{}'",
                 key
             ))),
+            Self::RequiredEventFieldNotProvided { field, .. } => Some(Cow::Owned(format!(
+                "Add context key '{}' to context_keys with matching type",
+                field
+            ))),
+            Self::RequiredEventFieldTypeMismatch {
+                field, expected, ..
+            } => Some(Cow::Owned(format!(
+                "Change context key '{}' type to '{}'",
+                field, expected
+            ))),
+            Self::EventPayloadSchemaNotObject { .. } => Some(Cow::Borrowed(
+                "Set event payload_schema.type to 'object' and declare properties",
+            )),
+            Self::UnsupportedEventFieldType { .. } => Some(Cow::Borrowed(
+                "Use field types that map to runtime values: number/integer, boolean, string, or array of numbers",
+            )),
         }
     }
 }

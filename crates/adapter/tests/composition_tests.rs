@@ -26,6 +26,9 @@ fn make_adapter_provides(keys: Vec<(&str, &str)>) -> AdapterProvides {
         context,
         events: HashSet::new(),
         effects: HashSet::new(),
+        event_schemas: HashMap::new(),
+        capture_format_version: "1".to_string(),
+        adapter_fingerprint: "adapter:test@1.0.0;sha256:test".to_string(),
     }
 }
 
@@ -53,6 +56,9 @@ fn make_adapter_provides_with_effects(
         context,
         events: HashSet::new(),
         effects,
+        event_schemas: HashMap::new(),
+        capture_format_version: "1".to_string(),
+        adapter_fingerprint: "adapter:test@1.0.0;sha256:test".to_string(),
     }
 }
 

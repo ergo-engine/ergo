@@ -1,10 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use crate::adapter_manifest_io::parse_adapter_manifest;
+use crate::error_format::render_error_info;
 use ergo_adapter::{
-    validate_action_adapter_composition, validate_source_adapter_composition, AdapterManifest,
-    AdapterProvides,
+    bind_semantic_event, fixture, validate_action_adapter_composition, validate_capture_format,
+    validate_source_adapter_composition, AdapterProvides, EventId, EventPayload, EventTime,
+    ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
 };
 use ergo_runtime::catalog::{
     build_core_catalog, core_registries, CorePrimitiveCatalog, CoreRegistries,
@@ -13,13 +17,22 @@ use ergo_runtime::cluster::{
     expand, BoundaryKind, Cardinality, ClusterDefinition, ClusterLoader, Edge,
     GraphInputPlaceholder, InputPortSpec, InputRef, NodeInstance, NodeKind, OutputPortSpec,
     OutputRef, ParameterBinding, ParameterSpec, ParameterType, ParameterValue, PortSpec,
-    PrimitiveCatalog, Signature, ValueType, Version,
+    PrimitiveCatalog, PrimitiveKind, Signature, ValueType, Version,
 };
-use ergo_runtime::common::ErrorInfo;
 use ergo_runtime::runtime::{
     ExecutionContext, Registries, RuntimeError, RuntimeEvent, RuntimeValue,
 };
+use ergo_supervisor::{
+    CaptureBundle, CapturingSession, Constraints, Decision, DecisionLog, DecisionLogEntry,
+    NO_ADAPTER_PROVENANCE,
+};
 use serde::Deserialize;
+
+struct NullLog;
+
+impl DecisionLog for NullLog {
+    fn log(&self, _entry: DecisionLogEntry) {}
+}
 
 pub fn run_graph_command(graph_path: &Path, args: &[String]) -> Result<(), String> {
     let opts = parse_run_options(args)?;
@@ -32,14 +45,27 @@ pub fn run_graph_command(graph_path: &Path, args: &[String]) -> Result<(), Strin
     let expanded = expand(&root, &loader, &catalog)
         .map_err(|err| format!("graph expansion failed: {}", render_error_info(&err)))?;
 
-    if let Some(adapter_path) = &opts.adapter_path {
-        let adapter = parse_adapter_manifest(adapter_path)?;
-        ergo_adapter::validate_adapter(&adapter)
-            .map_err(|err| format!("adapter invalid: {}", render_error_info(&err)))?;
-        let provides = AdapterProvides::from_manifest(&adapter);
-        validate_adapter_composition(&expanded, &catalog, &registries, &provides)?;
+    if opts.direct {
+        return run_direct(&expanded, &catalog, &registries);
     }
 
+    let dependency_summary = scan_adapter_dependencies(&expanded, &catalog, &registries)?;
+    run_canonical(
+        graph_path,
+        &root.id,
+        opts,
+        dependency_summary,
+        expanded,
+        catalog,
+        registries,
+    )
+}
+
+fn run_direct(
+    expanded: &ergo_runtime::cluster::ExpandedGraph,
+    catalog: &CorePrimitiveCatalog,
+    registries: &CoreRegistries,
+) -> Result<(), String> {
     let refs = Registries {
         sources: &registries.sources,
         computes: &registries.computes,
@@ -47,22 +73,243 @@ pub fn run_graph_command(graph_path: &Path, args: &[String]) -> Result<(), Strin
         actions: &registries.actions,
     };
     let ctx = ExecutionContext::default();
-    let report = ergo_runtime::runtime::run(&expanded, &catalog, &refs, &ctx)
-        .map_err(format_runtime_error)?;
+    let report =
+        ergo_runtime::runtime::run(expanded, catalog, &refs, &ctx).map_err(format_runtime_error)?;
 
     print_outputs(&report.outputs);
     Ok(())
 }
 
+fn run_canonical(
+    graph_path: &Path,
+    graph_id: &str,
+    opts: RunGraphOptions,
+    dependency_summary: AdapterDependencySummary,
+    expanded: ergo_runtime::cluster::ExpandedGraph,
+    catalog: CorePrimitiveCatalog,
+    registries: CoreRegistries,
+) -> Result<(), String> {
+    let fixture_path = opts
+        .fixture_path
+        .as_ref()
+        .ok_or_else(|| "canonical run requires --fixture <events.jsonl>".to_string())?;
+
+    let mut adapter_bound = false;
+    let mut adapter_provides = AdapterProvides::default();
+
+    if let Some(adapter_path) = &opts.adapter_path {
+        let adapter = parse_adapter_manifest(adapter_path)?;
+        ergo_adapter::validate_adapter(&adapter)
+            .map_err(|err| format!("adapter invalid: {}", render_error_info(&err)))?;
+        adapter_provides = AdapterProvides::from_manifest(&adapter);
+        validate_adapter_composition(&expanded, &catalog, &registries, &adapter_provides)?;
+        adapter_bound = true;
+    } else if dependency_summary.requires_adapter {
+        return Err(format_missing_adapter_error(&dependency_summary));
+    }
+
+    let binder_provides = adapter_provides.clone();
+    let adapter_provenance = if adapter_bound {
+        adapter_provides.adapter_fingerprint.clone()
+    } else {
+        NO_ADAPTER_PROVENANCE.to_string()
+    };
+
+    let runtime = RuntimeHandle::new(
+        Arc::new(expanded),
+        Arc::new(catalog),
+        Arc::new(registries),
+        adapter_provides,
+    );
+
+    let mut session = CapturingSession::new_with_provenance(
+        GraphId::new(graph_id.to_string()),
+        Constraints::default(),
+        NullLog,
+        runtime,
+        adapter_provenance,
+    );
+
+    let items = fixture::parse_fixture(fixture_path).map_err(|err| {
+        format!(
+            "Failed to parse fixture '{}': {err}",
+            fixture_path.display()
+        )
+    })?;
+
+    let mut episodes: Vec<(String, usize)> = Vec::new();
+    let mut current_episode: Option<usize> = None;
+    let mut event_counter = 0usize;
+
+    for item in items {
+        match item {
+            fixture::FixtureItem::EpisodeStart { label } => {
+                episodes.push((label, 0));
+                current_episode = Some(episodes.len() - 1);
+            }
+            fixture::FixtureItem::Event {
+                id,
+                kind,
+                payload,
+                semantic_kind,
+            } => {
+                if current_episode.is_none() {
+                    let label = format!("E{}", episodes.len() + 1);
+                    episodes.push((label, 0));
+                    current_episode = Some(episodes.len() - 1);
+                }
+
+                event_counter += 1;
+                let event_id = id.unwrap_or_else(|| format!("fixture_evt_{}", event_counter));
+                let event = if adapter_bound {
+                    let semantic = semantic_kind.ok_or_else(|| {
+                        format!(
+                            "fixture event '{}' is missing semantic_kind in adapter-bound canonical run",
+                            event_id
+                        )
+                    })?;
+                    let payload_value = payload
+                        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+
+                    bind_semantic_event(
+                        &binder_provides,
+                        EventId::new(event_id.clone()),
+                        kind,
+                        EventTime::default(),
+                        &semantic,
+                        payload_value,
+                    )
+                    .map_err(|err| format!("fixture event '{}' binding failed: {err}", event_id))?
+                } else {
+                    if semantic_kind.is_some() {
+                        return Err(format!(
+                            "fixture event '{}' set semantic_kind but canonical run is not adapter-bound; remove semantic_kind or run with --adapter <adapter.yaml>",
+                            event_id
+                        ));
+                    }
+                    event_from_fixture_payload(&event_id, kind, payload)?
+                };
+
+                session.on_event(event);
+                let episode_index = current_episode.expect("episode index set");
+                episodes[episode_index].1 += 1;
+            }
+        }
+    }
+
+    if episodes.is_empty() {
+        return Err("fixture contained no episodes".to_string());
+    }
+
+    if event_counter == 0 {
+        return Err("fixture contained no events".to_string());
+    }
+
+    if let Some((label, _)) = episodes.iter().find(|(_, count)| *count == 0) {
+        return Err(format!("episode '{}' has no events", label));
+    }
+
+    let bundle = session.into_bundle();
+    let capture_path = opts
+        .capture_output
+        .clone()
+        .unwrap_or_else(|| default_capture_output_path(graph_path));
+    write_capture_bundle(&capture_path, &bundle)?;
+
+    let invoked = bundle
+        .decisions
+        .iter()
+        .filter(|record| record.decision == Decision::Invoke)
+        .count();
+    let deferred = bundle
+        .decisions
+        .iter()
+        .filter(|record| record.decision == Decision::Defer)
+        .count();
+
+    println!(
+        "episodes={} events={} invoked={} deferred={}",
+        episodes.len(),
+        event_counter,
+        invoked,
+        deferred
+    );
+    println!("capture artifact: {}", capture_path.display());
+    Ok(())
+}
+
+fn event_from_fixture_payload(
+    event_id: &str,
+    kind: ExternalEventKind,
+    payload: Option<serde_json::Value>,
+) -> Result<ExternalEvent, String> {
+    let event_id_value = EventId::new(event_id.to_string());
+    if let Some(payload) = payload {
+        let data = serde_json::to_vec(&payload)
+            .map_err(|err| format!("fixture payload encode error for event '{event_id}': {err}"))?;
+        Ok(ExternalEvent::with_payload(
+            event_id_value,
+            kind,
+            EventTime::default(),
+            EventPayload { data },
+        ))
+    } else {
+        Ok(ExternalEvent::mechanical(event_id_value, kind))
+    }
+}
+
+fn write_capture_bundle(path: &Path, bundle: &CaptureBundle) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("create capture output directory: {err}"))?;
+    }
+
+    let data = serde_json::to_string_pretty(bundle)
+        .map_err(|err| format!("serialize capture bundle: {err}"))?;
+    fs::write(path, format!("{data}\n"))
+        .map_err(|err| format!("write capture bundle '{}': {err}", path.display()))
+}
+
+fn default_capture_output_path(graph_path: &Path) -> PathBuf {
+    let stem = graph_path
+        .file_stem()
+        .map(|part| part.to_string_lossy().to_string())
+        .filter(|part| !part.is_empty())
+        .unwrap_or_else(|| "graph".to_string());
+    let sanitized = sanitize_filename_component(&stem);
+    PathBuf::from("target").join(format!("{sanitized}-capture.json"))
+}
+
+fn sanitize_filename_component(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+
+    if out.is_empty() {
+        "graph".to_string()
+    } else {
+        out
+    }
+}
+
 #[derive(Debug, Default)]
 struct RunGraphOptions {
     adapter_path: Option<PathBuf>,
+    fixture_path: Option<PathBuf>,
+    capture_output: Option<PathBuf>,
     cluster_paths: Vec<PathBuf>,
+    direct: bool,
 }
 
 fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
     let mut options = RunGraphOptions::default();
     let mut i = 0;
+
     while i < args.len() {
         match args[i].as_str() {
             "--adapter" => {
@@ -71,6 +318,24 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
                     .ok_or_else(|| "--adapter requires a path".to_string())?;
                 options.adapter_path = Some(PathBuf::from(value));
                 i += 2;
+            }
+            "--fixture" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--fixture requires a path".to_string())?;
+                options.fixture_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--capture-output" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--capture-output requires a path".to_string())?;
+                options.capture_output = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--direct" => {
+                options.direct = true;
+                i += 1;
             }
             "--cluster-path" | "--search-path" => {
                 let value = args
@@ -81,21 +346,128 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
             }
             other => {
                 return Err(format!(
-                    "unknown run option '{other}'. expected --adapter, --cluster-path, or --search-path"
+                    "unknown run option '{other}'. expected --adapter, --fixture, --capture-output, --direct, --cluster-path, or --search-path"
                 ))
             }
         }
     }
+
+    if options.direct {
+        if options.fixture_path.is_some() {
+            return Err("--direct cannot be combined with --fixture".to_string());
+        }
+        if options.adapter_path.is_some() {
+            return Err("--direct cannot be combined with --adapter".to_string());
+        }
+        if options.capture_output.is_some() {
+            return Err("--direct cannot be combined with --capture-output".to_string());
+        }
+        return Ok(options);
+    }
+
+    if options.fixture_path.is_none() {
+        return Err(
+            "canonical run requires --fixture <events.jsonl>; use --direct for one-shot debug execution"
+                .to_string(),
+        );
+    }
+
     Ok(options)
 }
 
-fn parse_adapter_manifest(path: &Path) -> Result<AdapterManifest, String> {
-    let data = fs::read_to_string(path)
-        .map_err(|err| format!("read adapter manifest '{}': {err}", path.display()))?;
-    let value = serde_yaml::from_str::<serde_json::Value>(&data)
-        .map_err(|err| format!("parse adapter manifest '{}': {err}", path.display()))?;
-    serde_json::from_value::<AdapterManifest>(value)
-        .map_err(|err| format!("decode adapter manifest '{}': {err}", path.display()))
+#[derive(Debug, Default)]
+struct AdapterDependencySummary {
+    requires_adapter: bool,
+    required_context_nodes: Vec<String>,
+    write_nodes: Vec<String>,
+}
+
+fn scan_adapter_dependencies(
+    expanded: &ergo_runtime::cluster::ExpandedGraph,
+    catalog: &CorePrimitiveCatalog,
+    registries: &CoreRegistries,
+) -> Result<AdapterDependencySummary, String> {
+    let mut summary = AdapterDependencySummary::default();
+
+    for (runtime_id, node) in &expanded.nodes {
+        let meta = catalog
+            .get(&node.implementation.impl_id, &node.implementation.version)
+            .ok_or_else(|| {
+                format!(
+                    "missing catalog metadata for primitive '{}@{}'",
+                    node.implementation.impl_id, node.implementation.version
+                )
+            })?;
+
+        match meta.kind {
+            PrimitiveKind::Source => {
+                let source = registries
+                    .sources
+                    .get(&node.implementation.impl_id)
+                    .ok_or_else(|| {
+                        format!(
+                            "source '{}' missing in core registry",
+                            node.implementation.impl_id
+                        )
+                    })?;
+                if source
+                    .manifest()
+                    .requires
+                    .context
+                    .iter()
+                    .any(|req| req.required)
+                {
+                    summary.required_context_nodes.push(runtime_id.clone());
+                }
+            }
+            PrimitiveKind::Action => {
+                let action = registries
+                    .actions
+                    .get(&node.implementation.impl_id)
+                    .ok_or_else(|| {
+                        format!(
+                            "action '{}' missing in core registry",
+                            node.implementation.impl_id
+                        )
+                    })?;
+                if !action.manifest().effects.writes.is_empty() {
+                    summary.write_nodes.push(runtime_id.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    summary.requires_adapter =
+        !summary.required_context_nodes.is_empty() || !summary.write_nodes.is_empty();
+    Ok(summary)
+}
+
+fn format_missing_adapter_error(summary: &AdapterDependencySummary) -> String {
+    let mut details = Vec::new();
+
+    if !summary.required_context_nodes.is_empty() {
+        details.push(format!(
+            "required source context at node(s): {}",
+            summary.required_context_nodes.join(", ")
+        ));
+    }
+
+    if !summary.write_nodes.is_empty() {
+        details.push(format!(
+            "action writes at node(s): {}",
+            summary.write_nodes.join(", ")
+        ));
+    }
+
+    if details.is_empty() {
+        "graph requires adapter capabilities but no --adapter was provided".to_string()
+    } else {
+        format!(
+            "graph requires adapter capabilities but no --adapter was provided ({})",
+            details.join("; ")
+        )
+    }
 }
 
 fn validate_adapter_composition(
@@ -104,6 +476,9 @@ fn validate_adapter_composition(
     registries: &CoreRegistries,
     provides: &AdapterProvides,
 ) -> Result<(), String> {
+    validate_capture_format(&provides.capture_format_version)
+        .map_err(|err| format!("adapter composition failed: {}", render_error_info(&err)))?;
+
     for (runtime_id, node) in &expanded.nodes {
         let meta = catalog
             .get(&node.implementation.impl_id, &node.implementation.version)
@@ -114,7 +489,7 @@ fn validate_adapter_composition(
                 )
             })?;
         match meta.kind {
-            ergo_runtime::cluster::PrimitiveKind::Source => {
+            PrimitiveKind::Source => {
                 let source = registries
                     .sources
                     .get(&node.implementation.impl_id)
@@ -133,7 +508,7 @@ fn validate_adapter_composition(
                         )
                     })?;
             }
-            ergo_runtime::cluster::PrimitiveKind::Action => {
+            PrimitiveKind::Action => {
                 let action = registries
                     .actions
                     .get(&node.implementation.impl_id)
@@ -158,7 +533,6 @@ fn validate_adapter_composition(
     }
     Ok(())
 }
-
 fn print_outputs(outputs: &HashMap<String, RuntimeValue>) {
     if outputs.is_empty() {
         println!("outputs: {{}}");
@@ -195,17 +569,6 @@ fn format_runtime_error(err: RuntimeError) -> String {
             format!("runtime execution failed: {}", render_error_info(&err))
         }
     }
-}
-
-fn render_error_info(err: &impl ErrorInfo) -> String {
-    let mut msg = format!("[{}] {}", err.rule_id(), err.summary());
-    if let Some(path) = err.path() {
-        msg.push_str(&format!(" (path: {path})"));
-    }
-    if let Some(fix) = err.fix() {
-        msg.push_str(&format!("; fix: {fix}"));
-    }
-    msg
 }
 
 #[derive(Clone)]
@@ -1035,6 +1398,19 @@ mod tests {
         root
     }
 
+    fn write_temp_fixture(name: &str, contents: &str) -> PathBuf {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "ergo-graph-fixture-test-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&dir).expect("create temp fixture dir");
+        let path = dir.join(name);
+        fs::write(&path, contents).expect("write temp fixture");
+        path
+    }
+
     #[test]
     fn parses_graph_with_external_input_edge() {
         let yaml = r#"
@@ -1150,6 +1526,215 @@ outputs:
     }
 
     #[test]
+    fn canonical_run_requires_fixture() {
+        let graph = r#"
+kind: cluster
+id: basic
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 1
+edges: []
+outputs:
+  value_out: src.value
+"#;
+        let graph_path = write_temp_yaml("basic_no_fixture.yaml", graph);
+        let err = run_graph_command(&graph_path, &[]).expect_err("fixture should be required");
+        assert!(
+            err.contains("canonical run requires --fixture"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn direct_mode_rejects_fixture_and_adapter_flags() {
+        let graph = r#"
+kind: cluster
+id: basic
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 1
+edges: []
+outputs:
+  value_out: src.value
+"#;
+        let graph_path = write_temp_yaml("basic_direct_flags.yaml", graph);
+
+        let args_with_fixture = vec![
+            "--direct".to_string(),
+            "--fixture".to_string(),
+            "fixture.jsonl".to_string(),
+        ];
+        let err = run_graph_command(&graph_path, &args_with_fixture)
+            .expect_err("fixture must be rejected");
+        assert!(
+            err.contains("--direct cannot be combined with --fixture"),
+            "unexpected error: {err}"
+        );
+
+        let args_with_adapter = vec![
+            "--direct".to_string(),
+            "--adapter".to_string(),
+            "adapter.yaml".to_string(),
+        ];
+        let err = run_graph_command(&graph_path, &args_with_adapter)
+            .expect_err("adapter must be rejected");
+        assert!(
+            err.contains("--direct cannot be combined with --adapter"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn canonical_adapter_independent_graph_runs_without_adapter() {
+        let graph = r#"
+kind: cluster
+id: basic
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#;
+        let graph_path = write_temp_yaml("basic_canonical.yaml", graph);
+        let fixture_path = write_temp_fixture(
+            "basic.fixture.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+        let args = vec![
+            "--fixture".to_string(),
+            fixture_path.to_string_lossy().to_string(),
+        ];
+        run_graph_command(&graph_path, &args)
+            .expect("adapter-independent canonical graph should run");
+    }
+
+    #[test]
+    fn canonical_no_adapter_rejects_semantic_kind_in_fixture() {
+        let graph = r#"
+kind: cluster
+id: basic
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#;
+        let graph_path = write_temp_yaml("basic_semantic_kind_reject.yaml", graph);
+        let fixture_path = write_temp_fixture(
+            "basic_semantic_kind_reject.fixture.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\",\"semantic_kind\":\"PriceTick\"}}\n",
+        );
+        let args = vec![
+            "--fixture".to_string(),
+            fixture_path.to_string_lossy().to_string(),
+        ];
+
+        let err = run_graph_command(&graph_path, &args)
+            .expect_err("semantic_kind should be rejected when no adapter is bound");
+        assert!(
+            err.contains("semantic_kind") && err.contains("run with --adapter"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn adapter_dependent_graph_without_adapter_errors() {
+        let graph = r#"
+kind: cluster
+id: basic
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#;
+        let graph_path = write_temp_yaml("basic_requires_adapter.yaml", graph);
+        let root = parse_graph_file(&graph_path).expect("parse graph");
+        let loader = PreloadedClusterLoader::new(HashMap::new());
+        let catalog = build_core_catalog();
+        let registries = core_registries().expect("core registries");
+        let expanded = expand(&root, &loader, &catalog).expect("expand graph");
+
+        let opts = RunGraphOptions {
+            fixture_path: Some(PathBuf::from("unused.fixture.jsonl")),
+            ..RunGraphOptions::default()
+        };
+        let dependency = AdapterDependencySummary {
+            requires_adapter: true,
+            required_context_nodes: vec!["src".to_string()],
+            write_nodes: Vec::new(),
+        };
+
+        let err = run_canonical(
+            &graph_path,
+            &root.id,
+            opts,
+            dependency,
+            expanded,
+            catalog,
+            registries,
+        )
+        .expect_err("missing adapter should be rejected");
+        assert!(
+            err.contains("no --adapter was provided"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn canonical_run_writes_capture_with_none_provenance() {
+        let graph = r#"
+kind: cluster
+id: basic
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#;
+        let graph_path = write_temp_yaml("basic_capture.yaml", graph);
+        let fixture_path = write_temp_fixture(
+            "basic_capture.fixture.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+        let output_path = write_temp_yaml("capture_output.json", "{}");
+
+        let args = vec![
+            "--fixture".to_string(),
+            fixture_path.to_string_lossy().to_string(),
+            "--capture-output".to_string(),
+            output_path.to_string_lossy().to_string(),
+        ];
+        run_graph_command(&graph_path, &args).expect("canonical run should produce capture");
+
+        let raw = fs::read_to_string(&output_path).expect("capture file should be readable");
+        let bundle: CaptureBundle = serde_json::from_str(&raw).expect("capture bundle parses");
+        assert_eq!(bundle.adapter_provenance, NO_ADAPTER_PROVENANCE);
+    }
+
+    #[test]
     fn run_graph_command_executes_simple_graph() {
         let graph = r#"
 kind: cluster
@@ -1168,7 +1753,8 @@ outputs:
   value_out: src.value
 "#;
         let graph_path = write_temp_yaml("basic.yaml", graph);
-        run_graph_command(&graph_path, &[]).expect("graph should run");
+        let args = vec!["--direct".to_string()];
+        run_graph_command(&graph_path, &args).expect("graph should run");
     }
 
     #[test]
@@ -1210,7 +1796,8 @@ outputs:
             ),
         ]);
         let root_graph = root.join("root.yaml");
-        run_graph_command(&root_graph, &[]).expect("root boundary output through cluster node");
+        let args = vec!["--direct".to_string()];
+        run_graph_command(&root_graph, &args).expect("root boundary output through cluster node");
     }
 
     #[test]
@@ -1373,7 +1960,8 @@ outputs: {}
 "#,
         )]);
         let graph = root.join("root.yaml");
-        let err = run_graph_command(&graph, &[]).expect_err("cycle should be rejected");
+        let args = vec!["--direct".to_string()];
+        let err = run_graph_command(&graph, &args).expect_err("cycle should be rejected");
         assert!(
             err.contains("circular cluster reference"),
             "unexpected error: {err}"
@@ -1497,6 +2085,7 @@ outputs:
         let search_a = root.join("a").to_string_lossy().to_string();
         let search_b = root.join("b").to_string_lossy().to_string();
         let args = vec![
+            "--direct".to_string(),
             "--cluster-path".to_string(),
             search_a,
             "--cluster-path".to_string(),

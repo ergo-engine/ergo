@@ -221,3 +221,90 @@ fn adp_17_writable_key_required_rejected() {
     m.context_keys[0].required = true;
     assert_rule(&m, "ADP-17", Some("$.context_keys[0]"));
 }
+
+#[test]
+fn adp_18_required_event_field_not_provided_rejected() {
+    let mut m = baseline_manifest();
+    m.event_kinds[0].payload_schema = json!({
+        "type": "object",
+        "properties": {
+            "price": {"type": "number"}
+        },
+        "required": ["price"],
+        "additionalProperties": false
+    });
+    assert_rule(
+        &m,
+        "ADP-18",
+        Some("$.event_kinds[0].payload_schema.properties.price"),
+    );
+}
+
+#[test]
+fn adp_18_no_required_fields_vacuously_passes() {
+    let mut m = baseline_manifest();
+    m.context_keys.clear();
+    m.context_keys.push(ContextKeySpec {
+        name: "foo".to_string(),
+        ty: "String".to_string(),
+        required: false,
+        writable: Some(false),
+        description: None,
+    });
+    m.event_kinds[0].payload_schema = json!({
+        "type": "object",
+        "properties": {
+            "price": {"type": "number"}
+        },
+        "additionalProperties": false
+    });
+
+    validate_adapter(&m).expect("ADP-18 should only enforce declared required fields");
+}
+
+#[test]
+fn adp_18_required_event_field_type_mismatch_rejected() {
+    let mut m = baseline_manifest();
+    m.context_keys[0].name = "price".to_string();
+    m.context_keys[0].ty = "String".to_string();
+    m.event_kinds[0].payload_schema = json!({
+        "type": "object",
+        "properties": {
+            "price": {"type": "number"}
+        },
+        "required": ["price"],
+        "additionalProperties": false
+    });
+    assert_rule(
+        &m,
+        "ADP-18",
+        Some("$.event_kinds[0].payload_schema.properties.price"),
+    );
+}
+
+#[test]
+fn adp_19_event_payload_schema_must_be_object() {
+    let mut m = baseline_manifest();
+    m.event_kinds[0].payload_schema = json!({"type":"string"});
+    assert_rule(&m, "ADP-19", Some("$.event_kinds[0].payload_schema"));
+}
+
+#[test]
+fn adp_19_unsupported_event_field_type_rejected() {
+    let mut m = baseline_manifest();
+    m.event_kinds[0].payload_schema = json!({
+        "type": "object",
+        "properties": {
+            "nested": {
+                "type": "object",
+                "additionalProperties": false
+            }
+        },
+        "additionalProperties": false
+    });
+    assert_rule(
+        &m,
+        "ADP-19",
+        Some("$.event_kinds[0].payload_schema.properties.nested"),
+    );
+}

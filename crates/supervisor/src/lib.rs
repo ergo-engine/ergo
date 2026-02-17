@@ -11,7 +11,8 @@ use ergo_runtime::cluster::ExpandedGraph;
 use serde::{Deserialize, Serialize};
 
 /// Capture bundle format version. Used for forward-compatibility checks.
-pub(crate) const CAPTURE_FORMAT_VERSION: &str = "v0";
+pub(crate) const CAPTURE_FORMAT_VERSION: &str = "v1";
+pub const NO_ADAPTER_PROVENANCE: &str = "none";
 
 mod capture;
 #[cfg(any(test, feature = "demo"))]
@@ -119,13 +120,14 @@ impl From<&DecisionLogEntry> for EpisodeInvocationRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CaptureBundle {
     pub capture_version: String,
     pub graph_id: GraphId,
     pub config: Constraints,
     pub events: Vec<ExternalEventRecord>,
     pub decisions: Vec<EpisodeInvocationRecord>,
-    pub adapter_version: Option<String>,
+    pub adapter_provenance: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -34,13 +34,29 @@ pub struct CapturingSession<L: DecisionLog, R: RuntimeInvoker> {
 
 impl<L: DecisionLog, R: RuntimeInvoker> CapturingSession<L, R> {
     pub fn new(graph_id: GraphId, constraints: Constraints, inner_log: L, runtime: R) -> Self {
+        Self::new_with_provenance(
+            graph_id,
+            constraints,
+            inner_log,
+            runtime,
+            crate::NO_ADAPTER_PROVENANCE.to_string(),
+        )
+    }
+
+    pub fn new_with_provenance(
+        graph_id: GraphId,
+        constraints: Constraints,
+        inner_log: L,
+        runtime: R,
+        adapter_provenance: String,
+    ) -> Self {
         let bundle = Arc::new(Mutex::new(CaptureBundle {
             capture_version: crate::CAPTURE_FORMAT_VERSION.to_string(),
             graph_id: graph_id.clone(),
             config: constraints.clone(),
             events: Vec::new(),
             decisions: Vec::new(),
-            adapter_version: None,
+            adapter_provenance,
         }));
 
         let capturing_log = CapturingDecisionLog::new(inner_log, Arc::clone(&bundle));

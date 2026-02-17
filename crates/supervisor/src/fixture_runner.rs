@@ -15,6 +15,7 @@ use ergo_runtime::cluster::ExpandedGraph;
 use crate::demo::demo_1;
 use crate::{
     CaptureBundle, CapturingSession, Constraints, Decision, DecisionLog, DecisionLogEntry,
+    NO_ADAPTER_PROVENANCE,
 };
 
 const DEFAULT_GRAPH_ID: &str = "demo_1";
@@ -57,11 +58,12 @@ pub fn run_fixture(
 ) -> Result<FixtureRunResult, String> {
     ensure_demo_sources_have_no_required_context(&graph, &catalog, &registries)?;
     let runtime = RuntimeHandle::new(graph, catalog, registries, AdapterProvides::default());
-    let mut session = CapturingSession::new(
+    let mut session = CapturingSession::new_with_provenance(
         GraphId::new(DEFAULT_GRAPH_ID),
         Constraints::default(),
         NullLog,
         runtime,
+        NO_ADAPTER_PROVENANCE.to_string(),
     );
 
     let mut episodes: Vec<EpisodeInfo> = Vec::new();
@@ -77,7 +79,9 @@ pub fn run_fixture(
                 });
                 current_episode = Some(episodes.len() - 1);
             }
-            FixtureItem::Event { id, kind, payload } => {
+            FixtureItem::Event {
+                id, kind, payload, ..
+            } => {
                 if current_episode.is_none() {
                     let label = format!("E{}", episodes.len() + 1);
                     episodes.push(EpisodeInfo {

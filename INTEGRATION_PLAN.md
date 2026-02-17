@@ -1,6 +1,22 @@
 # Integration Plan: Wire YAML CLI Through Supervisor
 
-**Status:** Agreed by Claude + Codex. Revised per Grok review (two rounds, 7 findings addressed). Pending final sign-off.
+**Status:** Implemented in code (v1 gap stitch baseline). CLI, adapter, and replay strictness paths now enforce canonical event-source and provenance contracts.
+
+## Implemented Closure Notes (2026-02-16)
+
+- Canonical YAML run now requires explicit `--fixture` unless `--direct` is used.
+- `--direct` is debug-only and mutually exclusive with canonical adapter/capture flags.
+- Adapter requirement is conditional: only adapter-dependent graphs require `--adapter`.
+- Adapter-bound canonical ingestion validates semantic events through adapter event binder.
+- Capture provenance is explicit:
+  - adapter-bound runs capture adapter fingerprint
+  - adapter-independent runs capture sentinel `none`
+- Strict replay validates provenance contract (`replay_checked_strict`).
+- Capture bundle format is strict v1:
+  - `capture_version` is `v1`
+  - `adapter_provenance` is required (non-optional string)
+  - legacy `adapter_version` field is rejected at deserialization
+- `COMP-3` capture format validation is wired in runtime composition and CLI composition preflight.
 
 ---
 
