@@ -18,7 +18,7 @@ use crate::{
 };
 
 const DEFAULT_GRAPH_ID: &str = "demo_1";
-const DEFAULT_ARTIFACT_NAME: &str = "fixture-replay.json";
+const DEFAULT_ARTIFACT_NAME: &str = "fixture-capture.json";
 
 #[derive(Debug, Clone)]
 pub struct EpisodeSummary {

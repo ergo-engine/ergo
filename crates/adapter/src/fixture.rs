@@ -80,5 +80,27 @@ pub fn fixture_output_path(path: &Path) -> PathBuf {
         .map(|s| s.to_string_lossy())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "fixture".into());
-    PathBuf::from("target").join(format!("{stem}-replay.json"))
+    PathBuf::from("target").join(format!("{stem}-capture.json"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fixture_output_path;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn fixture_output_path_uses_capture_suffix() {
+        assert_eq!(
+            fixture_output_path(Path::new("fixtures/demo_1.jsonl")),
+            PathBuf::from("target/demo_1-capture.json")
+        );
+    }
+
+    #[test]
+    fn fixture_output_path_falls_back_to_fixture_when_stem_missing() {
+        assert_eq!(
+            fixture_output_path(Path::new("")),
+            PathBuf::from("target/fixture-capture.json")
+        );
+    }
 }

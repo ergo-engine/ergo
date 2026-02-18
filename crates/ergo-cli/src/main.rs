@@ -32,7 +32,7 @@ use ergo_supervisor::{
 use std::collections::HashMap;
 
 const DEMO_GRAPH_ID: &str = "demo_1";
-const DEFAULT_REPLAY_PATH: &str = "target/demo-1-replay.json";
+const DEFAULT_CAPTURE_PATH: &str = "target/demo-1-capture.json";
 
 struct NullLog;
 
@@ -247,7 +247,7 @@ fn run_demo_1(pretty_capture: bool, output_override: Option<&Path>) -> Result<Pa
 
     let artifact_path = output_override
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_REPLAY_PATH));
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_CAPTURE_PATH));
     let style = if pretty_capture {
         CaptureJsonStyle::Pretty
     } else {
@@ -255,7 +255,7 @@ fn run_demo_1(pretty_capture: bool, output_override: Option<&Path>) -> Result<Pa
     };
     write_capture_bundle(&artifact_path, &bundle, style)?;
 
-    println!("replay artifact: {}", artifact_path.display());
+    println!("capture artifact: {}", artifact_path.display());
     Ok(artifact_path)
 }
 
@@ -300,7 +300,7 @@ fn run_fixture(
         );
     }
 
-    println!("replay artifact: {}", result.artifact_path.display());
+    println!("capture artifact: {}", result.artifact_path.display());
     Ok(result.artifact_path)
 }
 
@@ -553,7 +553,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
 
         let fixture_path = temp_dir.join("fixture.jsonl");
-        let output_path = temp_dir.join("fixture-replay.json");
+        let output_path = temp_dir.join("fixture-capture.json");
         let fixture_data = "\
 {\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
 {\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n\
@@ -564,7 +564,7 @@ mod tests {
 
         let artifact_path = run_fixture(&fixture_path, Some(&output_path), false)?;
         assert_eq!(artifact_path, output_path);
-        assert!(artifact_path.exists(), "expected replay artifact to exist");
+        assert!(artifact_path.exists(), "expected capture artifact to exist");
 
         replay_demo_1(&artifact_path, None)?;
 
@@ -721,7 +721,7 @@ outputs:
             index
         ));
         fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
-        let output_path = temp_dir.join("demo-replay.json");
+        let output_path = temp_dir.join("demo-capture.json");
 
         run_demo_1(true, Some(&output_path))?;
         let raw = fs::read_to_string(&output_path).map_err(|err| format!("read output: {err}"))?;
@@ -745,7 +745,7 @@ outputs:
         fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
 
         let fixture_path = temp_dir.join("fixture.jsonl");
-        let output_path = temp_dir.join("fixture-replay.json");
+        let output_path = temp_dir.join("fixture-capture.json");
         let fixture_data = "\
 {\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
 {\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n";
@@ -756,6 +756,46 @@ outputs:
         assert!(
             raw.matches('\n').count() > 1,
             "pretty capture should be multiline json"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn demo_run_default_output_path_is_capture_named() -> Result<(), String> {
+        let artifact_path = run_demo_1(false, None)?;
+        assert_eq!(artifact_path, PathBuf::from(DEFAULT_CAPTURE_PATH));
+        assert!(
+            artifact_path.ends_with("demo-1-capture.json"),
+            "expected capture-named artifact path"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_run_default_output_path_is_capture_named() -> Result<(), String> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-cli-fixture-default-path-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
+
+        let fixture_name = format!("fixture_{index}.jsonl");
+        let fixture_path = temp_dir.join(fixture_name.clone());
+        let fixture_data = "\
+{\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
+{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n";
+        fs::write(&fixture_path, fixture_data).map_err(|err| format!("write fixture: {err}"))?;
+
+        let expected = PathBuf::from("target").join(format!("fixture_{index}-capture.json"));
+        let artifact_path = run_fixture(&fixture_path, None, false)?;
+        assert_eq!(artifact_path, expected);
+        assert!(
+            artifact_path.ends_with(format!("fixture_{index}-capture.json")),
+            "expected capture-named fixture artifact path"
         );
 
         let _ = fs::remove_dir_all(&temp_dir);
