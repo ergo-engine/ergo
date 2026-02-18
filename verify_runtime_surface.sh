@@ -5,6 +5,24 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
 WINDOWS_TARGET="x86_64-pc-windows-msvc"
+PYTHON_BIN="${PYTHON_BIN:-}"
+
+if [[ -z "$PYTHON_BIN" ]]; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+  elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+  else
+    echo "error: python interpreter not found (tried python3, python)"
+    exit 1
+  fi
+fi
+
+if command -v rg >/dev/null 2>&1; then
+  SEARCH_CMD=(rg -n)
+else
+  SEARCH_CMD=(grep -En)
+fi
 
 echo "[1/8] cargo fmt --check"
 cargo fmt --check
@@ -19,7 +37,7 @@ echo "[4/8] cargo test"
 cargo test
 
 echo "[5/8] replay-naming drift guard"
-if rg -n "demo-1-replay\\.json|fixture-replay\\.json|println!\\(\\\"replay artifact:" \
+if "${SEARCH_CMD[@]}" "demo-1-replay\\.json|fixture-replay\\.json|println!\\(\\\"replay artifact:" \
   crates/ergo-cli/src/main.rs \
   crates/supervisor/src/fixture_runner.rs \
   crates/adapter/src/fixture.rs; then
@@ -28,7 +46,7 @@ if rg -n "demo-1-replay\\.json|fixture-replay\\.json|println!\\(\\\"replay artif
 fi
 
 echo "[6/8] phase-invariants count guard"
-python3 - <<'PY'
+"$PYTHON_BIN" - <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -70,7 +88,7 @@ print(f"phase invariants count check passed ({parsed})")
 PY
 
 echo "[7/8] ergo-mcp invariant parser tests"
-python3 -m unittest discover -s tools/ergo-mcp -p "test_*.py"
+"$PYTHON_BIN" -m unittest discover -s tools/ergo-mcp -p "test_*.py"
 
 echo "[8/8] windows compile guard (${WINDOWS_TARGET})"
 HOST_OS="$(uname -s 2>/dev/null || echo unknown)"
@@ -91,7 +109,7 @@ if ! command -v rustup >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! rustup target list --installed | rg -qx "${WINDOWS_TARGET}"; then
+if ! rustup target list --installed | grep -qx "${WINDOWS_TARGET}"; then
   echo "error: missing rust target '${WINDOWS_TARGET}'"
   echo "install it with: rustup target add ${WINDOWS_TARGET}"
   exit 1
