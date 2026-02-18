@@ -6,7 +6,9 @@ mod adapter_manifest_io;
 mod csv_fixture;
 mod error_format;
 mod gen_docs;
+mod graph_to_dot;
 mod graph_yaml;
+mod render;
 mod validate;
 
 use crate::adapter_manifest_io::parse_adapter_manifest;
@@ -74,19 +76,43 @@ fn run() -> Result<(), String> {
             print!("{out}");
             Ok(())
         }
+        Some("graph-to-dot") => {
+            let rest: Vec<String> = args.collect();
+            let out = graph_to_dot::graph_to_dot_command(&rest)?;
+            print!("{out}");
+            Ok(())
+        }
+        Some("render") => {
+            let target = args.next().ok_or_else(usage)?;
+            match target.as_str() {
+                "graph" => {
+                    let rest: Vec<String> = args.collect();
+                    let out = render::render_graph_command(&rest)?;
+                    print!("{out}");
+                    Ok(())
+                }
+                _ => Err(usage()),
+            }
+        }
         Some("run") => {
             let target = args.next().ok_or_else(usage)?;
             match target.as_str() {
                 "demo-1" => {
                     let rest: Vec<String> = args.collect();
                     let run_opts = parse_run_artifact_options(&rest, "demo-1")?;
-                    run_demo_1(run_opts.pretty_capture, None).map(|_| ())
+                    run_demo_1(run_opts.pretty_capture, run_opts.capture_output.as_deref())
+                        .map(|_| ())
                 }
                 "fixture" => {
                     let path = args.next().ok_or_else(usage)?;
                     let rest: Vec<String> = args.collect();
                     let run_opts = parse_run_artifact_options(&rest, "fixture")?;
-                    run_fixture(Path::new(&path), None, run_opts.pretty_capture).map(|_| ())
+                    run_fixture(
+                        Path::new(&path),
+                        run_opts.capture_output.as_deref(),
+                        run_opts.pretty_capture,
+                    )
+                    .map(|_| ())
                 }
                 _ => {
                     let rest: Vec<String> = args.collect();
@@ -122,14 +148,33 @@ struct ReplayOptions {
 #[derive(Debug, Default)]
 struct RunArtifactOptions {
     pretty_capture: bool,
+    capture_output: Option<PathBuf>,
 }
 
 fn parse_run_artifact_options(args: &[String], target: &str) -> Result<RunArtifactOptions, String> {
     let mut options = RunArtifactOptions::default();
+    let mut i = 0;
 
-    for arg in args {
-        match arg.as_str() {
-            "--pretty-capture" => options.pretty_capture = true,
+    while i < args.len() {
+        match args[i].as_str() {
+            "-p" | "--pretty-capture" => {
+                options.pretty_capture = true;
+                i += 1;
+            }
+            "-o" | "--capture" | "--capture-output" => {
+                let value = args.get(i + 1).ok_or_else(|| {
+                    render_cli_error(
+                        &CliErrorInfo::new(
+                            "cli.missing_option_value",
+                            format!("{} requires a path", args[i]),
+                        )
+                        .with_where(format!("arg '{}'", args[i]))
+                        .with_fix("provide -o <path>"),
+                    )
+                })?;
+                options.capture_output = Some(PathBuf::from(value));
+                i += 2;
+            }
             other => {
                 return Err(render_cli_error(
                     &CliErrorInfo::new(
@@ -138,7 +183,7 @@ fn parse_run_artifact_options(args: &[String], target: &str) -> Result<RunArtifa
                     )
                     .with_where(format!("arg '{other}'"))
                     .with_fix(format!(
-                        "for 'ergo run {target}', remove '{other}' or use --pretty-capture"
+                        "for 'ergo run {target}', use -p|--pretty-capture and -o|--capture|--capture-output"
                     )),
                 ));
             }
@@ -154,23 +199,29 @@ fn parse_replay_options(args: &[String]) -> Result<ReplayOptions, String> {
 
     while i < args.len() {
         match args[i].as_str() {
-            "--graph" => {
+            "-g" | "--graph" => {
                 let value = args.get(i + 1).ok_or_else(|| {
                     render_cli_error(
-                        &CliErrorInfo::new("cli.missing_option_value", "--graph requires a path")
-                            .with_where("arg '--graph'")
-                            .with_fix("provide --graph <graph.yaml>"),
+                        &CliErrorInfo::new(
+                            "cli.missing_option_value",
+                            format!("{} requires a path", args[i]),
+                        )
+                        .with_where(format!("arg '{}'", args[i]))
+                        .with_fix("provide -g <graph.yaml>"),
                     )
                 })?;
                 options.graph_path = Some(PathBuf::from(value));
                 i += 2;
             }
-            "--adapter" => {
+            "-a" | "--adapter" => {
                 let value = args.get(i + 1).ok_or_else(|| {
                     render_cli_error(
-                        &CliErrorInfo::new("cli.missing_option_value", "--adapter requires a path")
-                            .with_where("arg '--adapter'")
-                            .with_fix("provide --adapter <adapter.yaml>"),
+                        &CliErrorInfo::new(
+                            "cli.missing_option_value",
+                            format!("{} requires a path", args[i]),
+                        )
+                        .with_where(format!("arg '{}'", args[i]))
+                        .with_fix("provide -a <adapter.yaml>"),
                     )
                 })?;
                 options.adapter_path = Some(PathBuf::from(value));
@@ -198,7 +249,7 @@ fn parse_replay_options(args: &[String]) -> Result<ReplayOptions, String> {
                     )
                     .with_where(format!("arg '{other}'"))
                     .with_fix(
-                        "use --graph, --adapter, --cluster-path, or --search-path for replay",
+                        "use -g|--graph, -a|--adapter, --cluster-path, or --search-path for replay",
                     ),
                 ))
             }
@@ -209,10 +260,10 @@ fn parse_replay_options(args: &[String]) -> Result<ReplayOptions, String> {
         return Err(render_cli_error(
             &CliErrorInfo::new(
                 "cli.missing_required_option",
-                "replay requires --graph <graph.yaml>",
+                "replay requires -g|--graph <graph.yaml>",
             )
             .with_where("replay command options")
-            .with_fix("rerun with --graph <graph.yaml>"),
+            .with_fix("rerun with -g <graph.yaml>"),
         ));
     }
 
@@ -226,11 +277,13 @@ fn usage() -> String {
         "  ergo validate <manifest.yaml> [--format json]",
         "  ergo csv-to-fixture <prices.csv> <events.jsonl> [--semantic-kind <name>] [--event-kind <Pump|DataAvailable|Command>] [--episode-id <id>]",
         "  ergo check-compose <adapter.yaml> <source|action>.yaml [--format json]",
-        "  ergo run demo-1 [--pretty-capture]",
-        "  ergo run fixture <path> [--pretty-capture]",
-        "  ergo run <graph.yaml> --fixture <events.jsonl> [--adapter <adapter.yaml>] [--capture-output <path>] [--pretty-capture] [--cluster-path <path> ...]",
-        "  ergo run <graph.yaml> --direct [--cluster-path <path> ...]",
-        "  ergo replay <path> --graph <graph.yaml> [--adapter <adapter.yaml>] [--cluster-path <path> ...]",
+        "  ergo graph-to-dot <graph.yaml> [-o out.dot|--output out.dot] [--show-ports] [--show-impl] [--show-runtime-id] [--cluster-path <path> ...]",
+        "  ergo render graph <graph.yaml> [-o out.svg|--output out.svg] [--show-ports] [--show-impl] [--show-runtime-id] [--cluster-path <path> ...]",
+        "  ergo run demo-1 [-o|--capture|--capture-output <path>] [-p|--pretty-capture]",
+        "  ergo run fixture <path> [-o|--capture|--capture-output <path>] [-p|--pretty-capture]",
+        "  ergo run <graph.yaml> -f|--fixture <events.jsonl> [-a|--adapter <adapter.yaml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path <path> ...]",
+        "  ergo run <graph.yaml> -d|--direct [--cluster-path <path> ...]",
+        "  ergo replay <path> -g|--graph <graph.yaml> [-a|--adapter <adapter.yaml>] [--cluster-path <path> ...]",
     ]
     .join("\n")
 }
@@ -816,14 +869,52 @@ outputs:
         let err = parse_replay_options(&["--adapter".to_string(), "adapter.yaml".to_string()])
             .expect_err("missing graph should fail");
         assert!(
-            err.contains("replay requires --graph"),
+            err.contains("replay requires -g|--graph"),
             "unexpected err: {err}"
         );
         assert!(
             err.contains("code: cli.missing_required_option")
                 && err.contains("where: replay command options")
-                && err.contains("fix: rerun with --graph <graph.yaml>"),
+                && err.contains("fix: rerun with -g <graph.yaml>"),
             "unexpected err: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_replay_options_accepts_short_graph_and_adapter_flags() {
+        let opts = parse_replay_options(&[
+            "-g".to_string(),
+            "graph.yaml".to_string(),
+            "-a".to_string(),
+            "adapter.yaml".to_string(),
+        ])
+        .expect("short replay flags should parse");
+        assert_eq!(
+            opts.graph_path.as_ref().map(|v| v.as_path()),
+            Some(Path::new("graph.yaml"))
+        );
+        assert_eq!(
+            opts.adapter_path.as_ref().map(|v| v.as_path()),
+            Some(Path::new("adapter.yaml"))
+        );
+    }
+
+    #[test]
+    fn parse_replay_options_keeps_long_flag_compatibility() {
+        let opts = parse_replay_options(&[
+            "--graph".to_string(),
+            "graph.yaml".to_string(),
+            "--adapter".to_string(),
+            "adapter.yaml".to_string(),
+        ])
+        .expect("long replay flags should parse");
+        assert_eq!(
+            opts.graph_path.as_ref().map(|v| v.as_path()),
+            Some(Path::new("graph.yaml"))
+        );
+        assert_eq!(
+            opts.adapter_path.as_ref().map(|v| v.as_path()),
+            Some(Path::new("adapter.yaml"))
         );
     }
 
@@ -842,7 +933,70 @@ outputs:
         assert!(
             err.contains("code: cli.invalid_option")
                 && err.contains("where: arg '--pretty-capture'")
-                && err.contains("fix: use --graph, --adapter"),
+                && err.contains("fix: use -g|--graph, -a|--adapter"),
+            "unexpected err: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_run_artifact_options_supports_short_flags_and_capture_alias() -> Result<(), String> {
+        let opts = parse_run_artifact_options(
+            &[
+                "-p".to_string(),
+                "-o".to_string(),
+                "demo-short.json".to_string(),
+            ],
+            "demo-1",
+        )?;
+        assert!(opts.pretty_capture);
+        assert_eq!(
+            opts.capture_output.as_ref().map(|v| v.as_path()),
+            Some(Path::new("demo-short.json"))
+        );
+
+        let alias_opts = parse_run_artifact_options(
+            &[
+                "--capture".to_string(),
+                "demo-alias.json".to_string(),
+                "--pretty-capture".to_string(),
+            ],
+            "demo-1",
+        )?;
+        assert!(alias_opts.pretty_capture);
+        assert_eq!(
+            alias_opts.capture_output.as_ref().map(|v| v.as_path()),
+            Some(Path::new("demo-alias.json"))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn parse_run_artifact_options_keeps_long_flag_compatibility() -> Result<(), String> {
+        let opts = parse_run_artifact_options(
+            &[
+                "--capture-output".to_string(),
+                "demo-long.json".to_string(),
+                "--pretty-capture".to_string(),
+            ],
+            "demo-1",
+        )?;
+        assert!(opts.pretty_capture);
+        assert_eq!(
+            opts.capture_output.as_ref().map(|v| v.as_path()),
+            Some(Path::new("demo-long.json"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parse_run_artifact_options_unknown_flag_is_actionable() {
+        let err = parse_run_artifact_options(&["--wat".to_string()], "demo-1")
+            .expect_err("unknown run option should fail");
+        assert!(
+            err.contains("code: cli.invalid_option")
+                && err.contains("where: arg '--wat'")
+                && err.contains("fix: for 'ergo run demo-1'"),
             "unexpected err: {err}"
         );
     }
@@ -882,6 +1036,36 @@ outputs:
     }
 
     #[test]
+    fn demo_run_short_o_overrides_output_path() -> Result<(), String> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-cli-demo-short-o-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
+        let output_path = temp_dir.join("demo-short-output.json");
+
+        let opts = parse_run_artifact_options(
+            &[
+                "-o".to_string(),
+                output_path.to_string_lossy().to_string(),
+                "-p".to_string(),
+            ],
+            "demo-1",
+        )?;
+        let artifact_path = run_demo_1(opts.pretty_capture, opts.capture_output.as_deref())?;
+        assert_eq!(artifact_path, output_path);
+        assert!(
+            artifact_path.exists(),
+            "expected demo output override to exist"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
     fn fixture_run_pretty_capture_writes_multiline_json() -> Result<(), String> {
         let index = COUNTER.fetch_add(1, Ordering::SeqCst);
         let temp_dir = std::env::temp_dir().join(format!(
@@ -903,6 +1087,46 @@ outputs:
         assert!(
             raw.matches('\n').count() > 1,
             "pretty capture should be multiline json"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_run_short_o_overrides_output_path() -> Result<(), String> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-cli-fixture-short-o-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
+
+        let fixture_path = temp_dir.join("fixture.jsonl");
+        let output_path = temp_dir.join("fixture-short-output.json");
+        let fixture_data = "\
+{\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
+{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n";
+        fs::write(&fixture_path, fixture_data).map_err(|err| format!("write fixture: {err}"))?;
+
+        let opts = parse_run_artifact_options(
+            &[
+                "-o".to_string(),
+                output_path.to_string_lossy().to_string(),
+                "-p".to_string(),
+            ],
+            "fixture",
+        )?;
+        let artifact_path = run_fixture(
+            &fixture_path,
+            opts.capture_output.as_deref(),
+            opts.pretty_capture,
+        )?;
+        assert_eq!(artifact_path, output_path);
+        assert!(
+            artifact_path.exists(),
+            "expected fixture output override to exist"
         );
 
         let _ = fs::remove_dir_all(&temp_dir);

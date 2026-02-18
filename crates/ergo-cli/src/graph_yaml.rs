@@ -386,59 +386,59 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
 
     while i < args.len() {
         match args[i].as_str() {
-            "--adapter" => {
+            "-a" | "--adapter" => {
                 let value = args
                     .get(i + 1)
                     .ok_or_else(|| {
                         render_cli_error(
                             &CliErrorInfo::new(
                                 "cli.missing_option_value",
-                                "--adapter requires a path",
+                                format!("{} requires a path", args[i]),
                             )
-                            .with_where("arg '--adapter'")
-                            .with_fix("provide --adapter <adapter.yaml>"),
+                            .with_where(format!("arg '{}'", args[i]))
+                            .with_fix("provide -a <adapter.yaml>"),
                         )
                     })?;
                 options.adapter_path = Some(PathBuf::from(value));
                 i += 2;
             }
-            "--fixture" => {
+            "-f" | "--fixture" => {
                 let value = args
                     .get(i + 1)
                     .ok_or_else(|| {
                         render_cli_error(
                             &CliErrorInfo::new(
                                 "cli.missing_option_value",
-                                "--fixture requires a path",
+                                format!("{} requires a path", args[i]),
                             )
-                            .with_where("arg '--fixture'")
-                            .with_fix("provide --fixture <events.jsonl>"),
+                            .with_where(format!("arg '{}'", args[i]))
+                            .with_fix("provide -f <events.jsonl>"),
                         )
                     })?;
                 options.fixture_path = Some(PathBuf::from(value));
                 i += 2;
             }
-            "--capture-output" => {
+            "-o" | "--capture" | "--capture-output" => {
                 let value = args
                     .get(i + 1)
                     .ok_or_else(|| {
                         render_cli_error(
                             &CliErrorInfo::new(
                                 "cli.missing_option_value",
-                                "--capture-output requires a path",
+                                format!("{} requires a path", args[i]),
                             )
-                            .with_where("arg '--capture-output'")
-                            .with_fix("provide --capture-output <path>"),
+                            .with_where(format!("arg '{}'", args[i]))
+                            .with_fix("provide -o <path>"),
                         )
                     })?;
                 options.capture_output = Some(PathBuf::from(value));
                 i += 2;
             }
-            "--pretty-capture" => {
+            "-p" | "--pretty-capture" => {
                 options.pretty_capture = true;
                 i += 1;
             }
-            "--direct" => {
+            "-d" | "--direct" => {
                 options.direct = true;
                 i += 1;
             }
@@ -462,7 +462,7 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
                 return Err(render_cli_error(
                     &CliErrorInfo::new("cli.invalid_option", format!("unknown run option '{other}'"))
                         .with_where(format!("arg '{other}'"))
-                        .with_fix("use --adapter, --fixture, --capture-output, --pretty-capture, --direct, --cluster-path, or --search-path"),
+                        .with_fix("use -a|--adapter, -f|--fixture, -o|--capture|--capture-output, -p|--pretty-capture, -d|--direct, --cluster-path, or --search-path"),
                 ))
             }
         }
@@ -1573,6 +1573,90 @@ mod tests {
         let path = dir.join(name);
         fs::write(&path, contents).expect("write temp fixture");
         path
+    }
+
+    #[test]
+    fn parse_run_options_supports_short_flags_and_capture_alias() -> Result<(), String> {
+        let opts = parse_run_options(&[
+            "-f".to_string(),
+            "fixture.jsonl".to_string(),
+            "-a".to_string(),
+            "adapter.yaml".to_string(),
+            "-o".to_string(),
+            "capture-short.json".to_string(),
+            "-p".to_string(),
+            "--cluster-path".to_string(),
+            "clusters".to_string(),
+        ])?;
+        assert_eq!(
+            opts.fixture_path.as_deref(),
+            Some(Path::new("fixture.jsonl"))
+        );
+        assert_eq!(
+            opts.adapter_path.as_deref(),
+            Some(Path::new("adapter.yaml"))
+        );
+        assert_eq!(
+            opts.capture_output.as_deref(),
+            Some(Path::new("capture-short.json"))
+        );
+        assert!(opts.pretty_capture);
+        assert_eq!(opts.cluster_paths, vec![PathBuf::from("clusters")]);
+        assert!(!opts.direct);
+
+        let alias_opts = parse_run_options(&[
+            "-f".to_string(),
+            "fixture.jsonl".to_string(),
+            "--capture".to_string(),
+            "capture-alias.json".to_string(),
+        ])?;
+        assert_eq!(
+            alias_opts.capture_output.as_deref(),
+            Some(Path::new("capture-alias.json"))
+        );
+
+        let direct_opts = parse_run_options(&["-d".to_string()])?;
+        assert!(direct_opts.direct);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_run_options_keeps_long_flag_compatibility() -> Result<(), String> {
+        let opts = parse_run_options(&[
+            "--fixture".to_string(),
+            "fixture.jsonl".to_string(),
+            "--adapter".to_string(),
+            "adapter.yaml".to_string(),
+            "--capture-output".to_string(),
+            "capture-long.json".to_string(),
+            "--pretty-capture".to_string(),
+        ])?;
+        assert_eq!(
+            opts.fixture_path.as_deref(),
+            Some(Path::new("fixture.jsonl"))
+        );
+        assert_eq!(
+            opts.adapter_path.as_deref(),
+            Some(Path::new("adapter.yaml"))
+        );
+        assert_eq!(
+            opts.capture_output.as_deref(),
+            Some(Path::new("capture-long.json"))
+        );
+        assert!(opts.pretty_capture);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_run_options_unknown_flag_is_actionable() {
+        let err =
+            parse_run_options(&["--bogus".to_string()]).expect_err("unknown run flag should fail");
+        assert!(
+            err.contains("code: cli.invalid_option")
+                && err.contains("where: arg '--bogus'")
+                && err.contains("fix: use -a|--adapter, -f|--fixture"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
