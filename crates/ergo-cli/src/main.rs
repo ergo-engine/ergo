@@ -10,7 +10,7 @@ mod graph_yaml;
 mod validate;
 
 use crate::adapter_manifest_io::parse_adapter_manifest;
-use crate::error_format::render_error_info;
+use crate::error_format::{cli_error_from_error_info, render_cli_error, CliErrorInfo};
 use ergo_adapter::fixture;
 #[cfg(test)]
 use ergo_adapter::EventPayload;
@@ -131,8 +131,15 @@ fn parse_run_artifact_options(args: &[String], target: &str) -> Result<RunArtifa
         match arg.as_str() {
             "--pretty-capture" => options.pretty_capture = true,
             other => {
-                return Err(format!(
-                    "unknown run {target} option '{other}'. expected --pretty-capture"
+                return Err(render_cli_error(
+                    &CliErrorInfo::new(
+                        "cli.invalid_option",
+                        format!("unknown run {target} option '{other}'"),
+                    )
+                    .with_where(format!("arg '{other}'"))
+                    .with_fix(format!(
+                        "for 'ergo run {target}', remove '{other}' or use --pretty-capture"
+                    )),
                 ));
             }
         }
@@ -148,36 +155,65 @@ fn parse_replay_options(args: &[String]) -> Result<ReplayOptions, String> {
     while i < args.len() {
         match args[i].as_str() {
             "--graph" => {
-                let value = args
-                    .get(i + 1)
-                    .ok_or_else(|| "--graph requires a path".to_string())?;
+                let value = args.get(i + 1).ok_or_else(|| {
+                    render_cli_error(
+                        &CliErrorInfo::new("cli.missing_option_value", "--graph requires a path")
+                            .with_where("arg '--graph'")
+                            .with_fix("provide --graph <graph.yaml>"),
+                    )
+                })?;
                 options.graph_path = Some(PathBuf::from(value));
                 i += 2;
             }
             "--adapter" => {
-                let value = args
-                    .get(i + 1)
-                    .ok_or_else(|| "--adapter requires a path".to_string())?;
+                let value = args.get(i + 1).ok_or_else(|| {
+                    render_cli_error(
+                        &CliErrorInfo::new("cli.missing_option_value", "--adapter requires a path")
+                            .with_where("arg '--adapter'")
+                            .with_fix("provide --adapter <adapter.yaml>"),
+                    )
+                })?;
                 options.adapter_path = Some(PathBuf::from(value));
                 i += 2;
             }
             "--cluster-path" | "--search-path" => {
-                let value = args
-                    .get(i + 1)
-                    .ok_or_else(|| format!("{} requires a path", args[i]))?;
+                let value = args.get(i + 1).ok_or_else(|| {
+                    render_cli_error(
+                        &CliErrorInfo::new(
+                            "cli.missing_option_value",
+                            format!("{} requires a path", args[i]),
+                        )
+                        .with_where(format!("arg '{}'", args[i]))
+                        .with_fix("provide a directory path"),
+                    )
+                })?;
                 options.cluster_paths.push(PathBuf::from(value));
                 i += 2;
             }
             other => {
-                return Err(format!(
-                    "unknown replay option '{other}'. expected --graph, --adapter, --cluster-path, or --search-path"
+                return Err(render_cli_error(
+                    &CliErrorInfo::new(
+                        "cli.invalid_option",
+                        format!("unknown replay option '{other}'"),
+                    )
+                    .with_where(format!("arg '{other}'"))
+                    .with_fix(
+                        "use --graph, --adapter, --cluster-path, or --search-path for replay",
+                    ),
                 ))
             }
         }
     }
 
     if options.graph_path.is_none() {
-        return Err("replay requires --graph <graph.yaml>".to_string());
+        return Err(render_cli_error(
+            &CliErrorInfo::new(
+                "cli.missing_required_option",
+                "replay requires --graph <graph.yaml>",
+            )
+            .with_where("replay command options")
+            .with_fix("rerun with --graph <graph.yaml>"),
+        ));
     }
 
     Ok(options)
@@ -200,8 +236,28 @@ fn usage() -> String {
 }
 
 fn load_bundle(path: &Path) -> Result<CaptureBundle, String> {
-    let data = fs::read_to_string(path).map_err(|err| format!("read replay artifact: {err}"))?;
-    serde_json::from_str(&data).map_err(|err| format!("parse replay artifact: {err}"))
+    let data = fs::read_to_string(path).map_err(|err| {
+        render_cli_error(
+            &CliErrorInfo::new(
+                "replay.capture_read_failed",
+                "failed to read capture artifact",
+            )
+            .with_where(format!("path '{}'", path.display()))
+            .with_fix("verify the file path and permissions")
+            .with_detail(err.to_string()),
+        )
+    })?;
+    serde_json::from_str(&data).map_err(|err| {
+        render_cli_error(
+            &CliErrorInfo::new(
+                "replay.capture_parse_failed",
+                "failed to parse capture artifact",
+            )
+            .with_where(format!("path '{}'", path.display()))
+            .with_fix("ensure the file is a valid Ergo capture bundle JSON")
+            .with_detail(err.to_string()),
+        )
+    })
 }
 
 fn run_demo_1(pretty_capture: bool, output_override: Option<&Path>) -> Result<PathBuf, String> {
@@ -342,21 +398,48 @@ fn context_value_from_payload(payload: &EventPayload) -> Option<f64> {
 
 fn format_replay_error(err: &ReplayError) -> String {
     match err {
-        ReplayError::UnsupportedVersion { capture_version } => {
-            format!("unsupported capture version '{capture_version}'")
-        }
-        ReplayError::HashMismatch { event_id } => {
-            format!("payload hash mismatch for event '{}'", event_id.as_str())
-        }
-        ReplayError::AdapterProvenanceMismatch { expected, got } => {
-            format!("adapter provenance mismatch: expected '{expected}', got '{got}'")
-        }
-        ReplayError::UnexpectedAdapterProvidedForNoAdapterCapture => {
-            "bundle provenance is 'none'; do not pass --adapter".to_string()
-        }
-        ReplayError::AdapterRequiredForProvenancedCapture => {
-            "bundle is adapter-provenanced; provide --adapter <adapter.yaml>".to_string()
-        }
+        ReplayError::UnsupportedVersion { capture_version } => render_cli_error(
+            &CliErrorInfo::new(
+                "replay.unsupported_capture_version",
+                format!("unsupported capture version '{capture_version}'"),
+            )
+            .with_where("capture_version")
+            .with_fix("regenerate capture with a supported runtime version"),
+        ),
+        ReplayError::HashMismatch { event_id } => render_cli_error(
+            &CliErrorInfo::new(
+                "replay.hash_mismatch",
+                format!("payload hash mismatch for event '{}'", event_id.as_str()),
+            )
+            .with_where(format!("event '{}'", event_id.as_str()))
+            .with_fix("re-run canonical capture to produce an uncorrupted bundle"),
+        ),
+        ReplayError::AdapterProvenanceMismatch { expected, got } => render_cli_error(
+            &CliErrorInfo::new(
+                "replay.adapter_provenance_mismatch",
+                "adapter provenance mismatch",
+            )
+            .with_where("capture provenance vs replay adapter")
+            .with_fix("replay with the adapter used to produce the capture")
+            .with_detail(format!("expected: '{expected}'"))
+            .with_detail(format!("got: '{got}'")),
+        ),
+        ReplayError::UnexpectedAdapterProvidedForNoAdapterCapture => render_cli_error(
+            &CliErrorInfo::new(
+                "replay.unexpected_adapter",
+                "bundle provenance is 'none'; adapter must not be provided",
+            )
+            .with_where("replay option '--adapter'")
+            .with_fix("remove --adapter and replay without adapter"),
+        ),
+        ReplayError::AdapterRequiredForProvenancedCapture => render_cli_error(
+            &CliErrorInfo::new(
+                "replay.adapter_required",
+                "bundle is adapter-provenanced; adapter is required",
+            )
+            .with_where("replay option '--adapter'")
+            .with_fix("provide --adapter <adapter.yaml> that matches capture provenance"),
+        ),
     }
 }
 
@@ -370,17 +453,29 @@ fn replay_graph(
     let prepared = graph_yaml::prepare_graph_runtime(graph_path, cluster_paths)?;
 
     if bundle.graph_id.as_str() != prepared.graph_id {
-        return Err(format!(
-            "expected graph_id '{}', got '{}'",
-            prepared.graph_id,
-            bundle.graph_id.as_str()
+        return Err(render_cli_error(
+            &CliErrorInfo::new("replay.graph_id_mismatch", "graph_id mismatch")
+                .with_where(format!(
+                    "capture graph_id '{}' vs replay graph '{}'",
+                    bundle.graph_id.as_str(),
+                    prepared.graph_id
+                ))
+                .with_fix("replay with --graph matching the original capture graph")
+                .with_detail(format!("expected: '{}'", prepared.graph_id))
+                .with_detail(format!("got: '{}'", bundle.graph_id.as_str())),
         ));
     }
 
     let (adapter_provides, replay_fingerprint) = if let Some(path) = adapter_path {
         let manifest = parse_adapter_manifest(path)?;
-        ergo_adapter::validate_adapter(&manifest)
-            .map_err(|err| format!("adapter invalid: {}", render_error_info(&err)))?;
+        ergo_adapter::validate_adapter(&manifest).map_err(|err| {
+            cli_error_from_error_info(
+                "adapter.invalid_manifest",
+                "adapter manifest validation failed",
+                format!("path '{}'", path.display()),
+                &err,
+            )
+        })?;
         let provides = AdapterProvides::from_manifest(&manifest);
         graph_yaml::validate_adapter_composition(
             &prepared.expanded,
@@ -401,7 +496,7 @@ fn replay_graph(
     );
 
     let replayed = replay_checked_strict(&bundle, runtime, replay_fingerprint.as_deref())
-        .map_err(|err| format!("strict replay failed: {}", format_replay_error(&err)))?;
+        .map_err(|err| format_replay_error(&err))?;
     let replay_matches = replayed == bundle.decisions;
 
     let invoke_count = replayed
@@ -431,7 +526,14 @@ fn replay_graph(
     );
 
     if !replay_matches {
-        return Err("replay decisions must match capture".to_string());
+        return Err(render_cli_error(
+            &CliErrorInfo::new(
+                "replay.decision_mismatch",
+                "replay decisions do not match capture decisions",
+            )
+            .with_where("decision stream comparison")
+            .with_fix("inspect runtime/adapter drift and regenerate capture if needed"),
+        ));
     }
 
     Ok(())
@@ -455,8 +557,14 @@ fn replay_demo_1(path: &Path, adapter_path: Option<&Path>) -> Result<(), String>
 
     let (adapter_provides, replay_fingerprint) = if let Some(path) = adapter_path {
         let manifest = parse_adapter_manifest(path)?;
-        ergo_adapter::validate_adapter(&manifest)
-            .map_err(|err| format!("adapter invalid: {}", render_error_info(&err)))?;
+        ergo_adapter::validate_adapter(&manifest).map_err(|err| {
+            cli_error_from_error_info(
+                "adapter.invalid_manifest",
+                "adapter manifest validation failed",
+                format!("path '{}'", path.display()),
+                &err,
+            )
+        })?;
         (
             AdapterProvides::from_manifest(&manifest),
             Some(adapter_fingerprint(&manifest)),
@@ -521,15 +629,19 @@ fn replay_demo_1(path: &Path, adapter_path: Option<&Path>) -> Result<(), String>
     }
 
     if let Err(err) = replay_result {
-        return Err(format!(
-            "strict replay failed: {}",
-            format_replay_error(&err)
-        ));
+        return Err(format_replay_error(&err));
     }
 
     println!("{}", demo_1::format_replay_identity(replay_matches));
     if !replay_matches {
-        return Err("replay decisions must match capture".to_string());
+        return Err(render_cli_error(
+            &CliErrorInfo::new(
+                "replay.decision_mismatch",
+                "replay decisions do not match capture decisions",
+            )
+            .with_where("decision stream comparison")
+            .with_fix("inspect runtime/adapter drift and regenerate capture if needed"),
+        ));
     }
 
     Ok(())
@@ -682,7 +794,18 @@ outputs:
 
         let err = replay_graph(&capture_path, &other_graph_path, &[], None)
             .expect_err("graph id mismatch should fail");
-        assert!(err.contains("expected graph_id"), "unexpected err: {err}");
+        assert!(
+            err.contains("error: graph_id mismatch"),
+            "unexpected err: {err}"
+        );
+        assert!(
+            err.contains("where: capture graph_id"),
+            "unexpected err: {err}"
+        );
+        assert!(
+            err.contains("fix: replay with --graph"),
+            "unexpected err: {err}"
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
@@ -694,6 +817,12 @@ outputs:
             .expect_err("missing graph should fail");
         assert!(
             err.contains("replay requires --graph"),
+            "unexpected err: {err}"
+        );
+        assert!(
+            err.contains("code: cli.missing_required_option")
+                && err.contains("where: replay command options")
+                && err.contains("fix: rerun with --graph <graph.yaml>"),
             "unexpected err: {err}"
         );
     }
@@ -708,6 +837,24 @@ outputs:
         .expect_err("unknown replay flag should fail");
         assert!(
             err.contains("unknown replay option '--pretty-capture'"),
+            "unexpected err: {err}"
+        );
+        assert!(
+            err.contains("code: cli.invalid_option")
+                && err.contains("where: arg '--pretty-capture'")
+                && err.contains("fix: use --graph, --adapter"),
+            "unexpected err: {err}"
+        );
+    }
+
+    #[test]
+    fn format_replay_error_includes_rule_like_fields() {
+        let err = format_replay_error(&ReplayError::AdapterRequiredForProvenancedCapture);
+        assert!(
+            err.contains("error:")
+                && err.contains("code: replay.adapter_required")
+                && err.contains("where:")
+                && err.contains("fix:"),
             "unexpected err: {err}"
         );
     }

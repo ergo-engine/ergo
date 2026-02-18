@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::adapter_manifest_io::parse_adapter_manifest;
-use crate::error_format::render_error_info;
+use crate::error_format::{
+    cli_error_from_error_info, render_cli_error, render_error_info, CliErrorInfo,
+};
 use ergo_adapter::{
     bind_semantic_event_with_binder, compile_event_binder, fixture,
     validate_action_adapter_composition, validate_capture_format,
@@ -112,10 +114,17 @@ fn run_canonical(
     catalog: CorePrimitiveCatalog,
     registries: CoreRegistries,
 ) -> Result<(), String> {
-    let fixture_path = opts
-        .fixture_path
-        .as_ref()
-        .ok_or_else(|| "canonical run requires --fixture <events.jsonl>".to_string())?;
+    let fixture_path = opts.fixture_path.as_ref().ok_or_else(|| {
+        render_cli_error(
+            &CliErrorInfo::new(
+                "cli.missing_required_option",
+                "canonical run requires --fixture <events.jsonl>",
+            )
+            .with_rule_id("RUN-CANON-1")
+            .with_where("run options")
+            .with_fix("provide --fixture <events.jsonl> or use --direct for debug mode"),
+        )
+    })?;
 
     let mut adapter_bound = false;
     let mut adapter_provides = AdapterProvides::default();
@@ -123,14 +132,27 @@ fn run_canonical(
 
     if let Some(adapter_path) = &opts.adapter_path {
         let adapter = parse_adapter_manifest(adapter_path)?;
-        ergo_adapter::validate_adapter(&adapter)
-            .map_err(|err| format!("adapter invalid: {}", render_error_info(&err)))?;
+        ergo_adapter::validate_adapter(&adapter).map_err(|err| {
+            cli_error_from_error_info(
+                "adapter.invalid_manifest",
+                "adapter manifest validation failed",
+                format!("path '{}'", adapter_path.display()),
+                &err,
+            )
+        })?;
         adapter_provides = AdapterProvides::from_manifest(&adapter);
         validate_adapter_composition(&expanded, &catalog, &registries, &adapter_provides)?;
-        event_binder = Some(
-            compile_event_binder(&adapter_provides)
-                .map_err(|err| format!("adapter event binder compilation failed: {err}"))?,
-        );
+        event_binder = Some(compile_event_binder(&adapter_provides).map_err(|err| {
+            render_cli_error(
+                &CliErrorInfo::new(
+                    "adapter.binder_compile_failed",
+                    "adapter event binder compilation failed",
+                )
+                .with_where(format!("path '{}'", adapter_path.display()))
+                .with_fix("fix adapter event schema/mapping and retry")
+                .with_detail(err.to_string()),
+            )
+        })?);
         adapter_bound = true;
     } else if dependency_summary.requires_adapter {
         return Err(format_missing_adapter_error(&dependency_summary));
@@ -193,9 +215,18 @@ fn run_canonical(
                         .as_ref()
                         .expect("event binder must exist when adapter is bound");
                     let semantic = semantic_kind.ok_or_else(|| {
-                        format!(
-                            "fixture event '{}' is missing semantic_kind in adapter-bound canonical run",
-                            event_id
+                        render_cli_error(
+                            &CliErrorInfo::new(
+                                "fixture.semantic_kind_missing",
+                                format!(
+                                    "fixture event '{}' is missing semantic_kind in adapter-bound canonical run",
+                                    event_id
+                                ),
+                            )
+                            .with_where(format!("fixture event '{}'", event_id))
+                            .with_fix(
+                                "add semantic_kind to each fixture event when running with --adapter",
+                            ),
                         )
                     })?;
                     let payload_value = payload
@@ -209,12 +240,31 @@ fn run_canonical(
                         &semantic,
                         payload_value,
                     )
-                    .map_err(|err| format!("fixture event '{}' binding failed: {err}", event_id))?
+                    .map_err(|err| {
+                        render_cli_error(
+                            &CliErrorInfo::new(
+                                "fixture.semantic_binding_failed",
+                                format!("fixture event '{}' binding failed", event_id),
+                            )
+                            .with_where(format!("fixture event '{}'", event_id))
+                            .with_fix(
+                                "fix fixture payload/semantic_kind to match adapter event schema",
+                            )
+                            .with_detail(err.to_string()),
+                        )
+                    })?
                 } else {
                     if semantic_kind.is_some() {
-                        return Err(format!(
-                            "fixture event '{}' set semantic_kind but canonical run is not adapter-bound; remove semantic_kind or run with --adapter <adapter.yaml>",
-                            event_id
+                        return Err(render_cli_error(
+                            &CliErrorInfo::new(
+                                "fixture.unexpected_semantic_kind",
+                                format!(
+                                    "fixture event '{}' set semantic_kind but canonical run is not adapter-bound",
+                                    event_id
+                                ),
+                            )
+                            .with_where(format!("fixture event '{}'", event_id))
+                            .with_fix("remove semantic_kind or run with --adapter <adapter.yaml>"),
                         ));
                     }
                     event_from_fixture_payload(&event_id, kind, payload)?
@@ -339,21 +389,48 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
             "--adapter" => {
                 let value = args
                     .get(i + 1)
-                    .ok_or_else(|| "--adapter requires a path".to_string())?;
+                    .ok_or_else(|| {
+                        render_cli_error(
+                            &CliErrorInfo::new(
+                                "cli.missing_option_value",
+                                "--adapter requires a path",
+                            )
+                            .with_where("arg '--adapter'")
+                            .with_fix("provide --adapter <adapter.yaml>"),
+                        )
+                    })?;
                 options.adapter_path = Some(PathBuf::from(value));
                 i += 2;
             }
             "--fixture" => {
                 let value = args
                     .get(i + 1)
-                    .ok_or_else(|| "--fixture requires a path".to_string())?;
+                    .ok_or_else(|| {
+                        render_cli_error(
+                            &CliErrorInfo::new(
+                                "cli.missing_option_value",
+                                "--fixture requires a path",
+                            )
+                            .with_where("arg '--fixture'")
+                            .with_fix("provide --fixture <events.jsonl>"),
+                        )
+                    })?;
                 options.fixture_path = Some(PathBuf::from(value));
                 i += 2;
             }
             "--capture-output" => {
                 let value = args
                     .get(i + 1)
-                    .ok_or_else(|| "--capture-output requires a path".to_string())?;
+                    .ok_or_else(|| {
+                        render_cli_error(
+                            &CliErrorInfo::new(
+                                "cli.missing_option_value",
+                                "--capture-output requires a path",
+                            )
+                            .with_where("arg '--capture-output'")
+                            .with_fix("provide --capture-output <path>"),
+                        )
+                    })?;
                 options.capture_output = Some(PathBuf::from(value));
                 i += 2;
             }
@@ -368,13 +445,24 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
             "--cluster-path" | "--search-path" => {
                 let value = args
                     .get(i + 1)
-                    .ok_or_else(|| format!("{} requires a path", args[i]))?;
+                    .ok_or_else(|| {
+                        render_cli_error(
+                            &CliErrorInfo::new(
+                                "cli.missing_option_value",
+                                format!("{} requires a path", args[i]),
+                            )
+                            .with_where(format!("arg '{}'", args[i]))
+                            .with_fix("provide a directory path"),
+                        )
+                    })?;
                 options.cluster_paths.push(PathBuf::from(value));
                 i += 2;
             }
             other => {
-                return Err(format!(
-                    "unknown run option '{other}'. expected --adapter, --fixture, --capture-output, --pretty-capture, --direct, --cluster-path, or --search-path"
+                return Err(render_cli_error(
+                    &CliErrorInfo::new("cli.invalid_option", format!("unknown run option '{other}'"))
+                        .with_where(format!("arg '{other}'"))
+                        .with_fix("use --adapter, --fixture, --capture-output, --pretty-capture, --direct, --cluster-path, or --search-path"),
                 ))
             }
         }
@@ -382,25 +470,60 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
 
     if options.direct {
         if options.fixture_path.is_some() {
-            return Err("--direct cannot be combined with --fixture".to_string());
+            return Err(render_cli_error(
+                &CliErrorInfo::new(
+                    "cli.conflicting_options",
+                    "--direct cannot be combined with --fixture",
+                )
+                .with_where("arg '--direct' and arg '--fixture'")
+                .with_fix("remove --direct for canonical mode or remove --fixture for direct mode"),
+            ));
         }
         if options.adapter_path.is_some() {
-            return Err("--direct cannot be combined with --adapter".to_string());
+            return Err(render_cli_error(
+                &CliErrorInfo::new(
+                    "cli.conflicting_options",
+                    "--direct cannot be combined with --adapter",
+                )
+                .with_where("arg '--direct' and arg '--adapter'")
+                .with_fix("remove --direct for canonical mode or remove --adapter for direct mode"),
+            ));
         }
         if options.capture_output.is_some() {
-            return Err("--direct cannot be combined with --capture-output".to_string());
+            return Err(render_cli_error(
+                &CliErrorInfo::new(
+                    "cli.conflicting_options",
+                    "--direct cannot be combined with --capture-output",
+                )
+                .with_where("arg '--direct' and arg '--capture-output'")
+                .with_fix("remove --direct or remove --capture-output"),
+            ));
         }
         if options.pretty_capture {
-            return Err("--direct cannot be combined with --pretty-capture".to_string());
+            return Err(render_cli_error(
+                &CliErrorInfo::new(
+                    "cli.conflicting_options",
+                    "--direct cannot be combined with --pretty-capture",
+                )
+                .with_where("arg '--direct' and arg '--pretty-capture'")
+                .with_fix("remove --direct or remove --pretty-capture"),
+            ));
         }
         return Ok(options);
     }
 
     if options.fixture_path.is_none() {
-        return Err(
-            "canonical run requires --fixture <events.jsonl>; use --direct for one-shot debug execution"
-                .to_string(),
-        );
+        return Err(render_cli_error(
+            &CliErrorInfo::new(
+                "cli.missing_required_option",
+                "canonical run requires --fixture <events.jsonl>",
+            )
+            .with_rule_id("RUN-CANON-1")
+            .with_where("run options")
+            .with_fix(
+                "provide --fixture <events.jsonl> or use --direct for one-shot debug execution",
+            ),
+        ));
     }
 
     Ok(options)
@@ -475,30 +598,39 @@ fn scan_adapter_dependencies(
 }
 
 fn format_missing_adapter_error(summary: &AdapterDependencySummary) -> String {
-    let mut details = Vec::new();
+    let where_field = if let Some(node) = summary
+        .required_context_nodes
+        .first()
+        .or_else(|| summary.write_nodes.first())
+    {
+        format!("node '{}'", node)
+    } else {
+        "graph dependency scan".to_string()
+    };
+
+    let mut info = CliErrorInfo::new(
+        "adapter.required_for_graph",
+        "graph requires adapter capabilities but no --adapter was provided",
+    )
+    .with_rule_id("RUN-CANON-2")
+    .with_where(where_field)
+    .with_fix("provide --adapter <adapter.yaml> for canonical run");
 
     if !summary.required_context_nodes.is_empty() {
-        details.push(format!(
+        info = info.with_detail(format!(
             "required source context at node(s): {}",
             summary.required_context_nodes.join(", ")
         ));
     }
 
     if !summary.write_nodes.is_empty() {
-        details.push(format!(
+        info = info.with_detail(format!(
             "action writes at node(s): {}",
             summary.write_nodes.join(", ")
         ));
     }
 
-    if details.is_empty() {
-        "graph requires adapter capabilities but no --adapter was provided".to_string()
-    } else {
-        format!(
-            "graph requires adapter capabilities but no --adapter was provided ({})",
-            details.join("; ")
-        )
-    }
+    render_cli_error(&info)
 }
 
 pub(crate) fn validate_adapter_composition(
@@ -1578,6 +1710,13 @@ outputs:
             err.contains("canonical run requires --fixture"),
             "unexpected error: {err}"
         );
+        assert!(
+            err.contains("code: cli.missing_required_option")
+                && err.contains("rule: RUN-CANON-1")
+                && err.contains("where: run options")
+                && err.contains("fix: provide --fixture"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -1606,6 +1745,12 @@ outputs:
             .expect_err("fixture must be rejected");
         assert!(
             err.contains("--direct cannot be combined with --fixture"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.contains("code: cli.conflicting_options")
+                && err.contains("where: arg '--direct' and arg '--fixture'")
+                && err.contains("fix: remove --direct"),
             "unexpected error: {err}"
         );
 
@@ -1689,6 +1834,11 @@ outputs:
             err.contains("semantic_kind") && err.contains("run with --adapter"),
             "unexpected error: {err}"
         );
+        assert!(
+            err.contains("code: fixture.unexpected_semantic_kind")
+                && err.contains("where: fixture event"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -1735,6 +1885,12 @@ outputs:
         .expect_err("missing adapter should be rejected");
         assert!(
             err.contains("no --adapter was provided"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.contains("rule: RUN-CANON-2")
+                && err.contains("fix: provide --adapter <adapter.yaml>")
+                && err.contains("detail: required source context"),
             "unexpected error: {err}"
         );
     }
