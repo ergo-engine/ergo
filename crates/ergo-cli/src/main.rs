@@ -5,6 +5,7 @@ use std::sync::Arc;
 mod adapter_manifest_io;
 mod csv_fixture;
 mod error_format;
+mod fixture_ops;
 mod gen_docs;
 mod graph_to_dot;
 mod graph_yaml;
@@ -51,90 +52,157 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
-    match args.next().as_deref() {
-        Some("gen-docs") => {
-            let rest: Vec<String> = args.collect();
-            let out = gen_docs::gen_docs_command(&rest)?;
-            print!("{out}");
+    match args.next() {
+        None => {
+            print!("{}", usage());
             Ok(())
         }
-        Some("validate") => {
-            let rest: Vec<String> = args.collect();
-            let out = validate::validate_command(&rest)?;
-            print!("{out}");
-            Ok(())
-        }
-        Some("csv-to-fixture") => {
-            let rest: Vec<String> = args.collect();
-            let out = csv_fixture::csv_to_fixture_command(&rest)?;
-            print!("{out}");
-            Ok(())
-        }
-        Some("check-compose") => {
-            let rest: Vec<String> = args.collect();
-            let out = validate::check_compose_command(&rest)?;
-            print!("{out}");
-            Ok(())
-        }
-        Some("graph-to-dot") => {
-            let rest: Vec<String> = args.collect();
-            let out = graph_to_dot::graph_to_dot_command(&rest)?;
-            print!("{out}");
-            Ok(())
-        }
-        Some("render") => {
-            let target = args.next().ok_or_else(usage)?;
-            match target.as_str() {
-                "graph" => {
-                    let rest: Vec<String> = args.collect();
-                    let out = render::render_graph_command(&rest)?;
-                    print!("{out}");
+        Some(command) => match command.as_str() {
+            "help" => {
+                let topic_parts: Vec<String> = args.collect();
+                if topic_parts.is_empty() {
+                    print!("{}", usage());
+                    return Ok(());
+                }
+                let topic = topic_parts.join(" ").to_ascii_lowercase();
+                if let Some(help_text) = help_topic(&topic) {
+                    print!("{help_text}");
                     Ok(())
+                } else {
+                    Err(render_cli_error(
+                        &CliErrorInfo::new(
+                            "cli.unknown_help_topic",
+                            format!("unknown help topic '{}'", topic_parts.join(" ")),
+                        )
+                        .with_where("help topic")
+                        .with_fix("run 'ergo help' to list available topics"),
+                    ))
                 }
-                _ => Err(usage()),
             }
-        }
-        Some("run") => {
-            let target = args.next().ok_or_else(usage)?;
-            match target.as_str() {
-                "demo-1" => {
-                    let rest: Vec<String> = args.collect();
-                    let run_opts = parse_run_artifact_options(&rest, "demo-1")?;
-                    run_demo_1(run_opts.pretty_capture, run_opts.capture_output.as_deref())
+            "fixture" => {
+                let target = args.next().ok_or_else(fixture_ops::fixture_usage)?;
+                match target.as_str() {
+                    "run" => {
+                        let path = args.next().ok_or_else(fixture_ops::fixture_usage)?;
+                        let rest: Vec<String> = args.collect();
+                        let run_opts = parse_run_artifact_options(&rest, "fixture run")?;
+                        run_fixture(
+                            Path::new(&path),
+                            run_opts.capture_output.as_deref(),
+                            run_opts.pretty_capture,
+                        )
                         .map(|_| ())
-                }
-                "fixture" => {
-                    let path = args.next().ok_or_else(usage)?;
-                    let rest: Vec<String> = args.collect();
-                    let run_opts = parse_run_artifact_options(&rest, "fixture")?;
-                    run_fixture(
-                        Path::new(&path),
-                        run_opts.capture_output.as_deref(),
-                        run_opts.pretty_capture,
-                    )
-                    .map(|_| ())
-                }
-                _ => {
-                    let rest: Vec<String> = args.collect();
-                    graph_yaml::run_graph_command(Path::new(&target), &rest)
+                    }
+                    "inspect" => {
+                        let rest: Vec<String> = args.collect();
+                        let out = fixture_ops::fixture_inspect_command(&rest)?;
+                        print!("{out}");
+                        Ok(())
+                    }
+                    "validate" => {
+                        let rest: Vec<String> = args.collect();
+                        let out = fixture_ops::fixture_validate_command(&rest)?;
+                        print!("{out}");
+                        Ok(())
+                    }
+                    _ => Err(render_cli_error(
+                        &CliErrorInfo::new(
+                            "cli.invalid_subcommand",
+                            format!("unknown fixture subcommand '{target}'"),
+                        )
+                        .with_where("fixture subcommand")
+                        .with_fix(fixture_ops::fixture_usage()),
+                    )),
                 }
             }
-        }
-        Some("replay") => {
-            let path = args.next().ok_or_else(usage)?;
-            let rest: Vec<String> = args.collect();
-            let replay_opts = parse_replay_options(&rest)?;
-            replay_graph(
-                Path::new(&path),
-                replay_opts
-                    .graph_path
-                    .as_ref()
-                    .expect("replay options enforce graph path"),
-                &replay_opts.cluster_paths,
-                replay_opts.adapter_path.as_deref(),
-            )
-        }
-        _ => Err(usage()),
+            "gen-docs" => {
+                let rest: Vec<String> = args.collect();
+                let out = gen_docs::gen_docs_command(&rest)?;
+                print!("{out}");
+                Ok(())
+            }
+            "validate" => {
+                let rest: Vec<String> = args.collect();
+                let out = validate::validate_command(&rest)?;
+                print!("{out}");
+                Ok(())
+            }
+            "csv-to-fixture" => {
+                let rest: Vec<String> = args.collect();
+                let out = csv_fixture::csv_to_fixture_command(&rest)?;
+                print!("{out}");
+                Ok(())
+            }
+            "check-compose" => {
+                let rest: Vec<String> = args.collect();
+                let out = validate::check_compose_command(&rest)?;
+                print!("{out}");
+                Ok(())
+            }
+            "graph-to-dot" => {
+                let rest: Vec<String> = args.collect();
+                let out = graph_to_dot::graph_to_dot_command(&rest)?;
+                print!("{out}");
+                Ok(())
+            }
+            "render" => {
+                let target = args.next().ok_or_else(usage)?;
+                match target.as_str() {
+                    "graph" => {
+                        let rest: Vec<String> = args.collect();
+                        let out = render::render_graph_command(&rest)?;
+                        print!("{out}");
+                        Ok(())
+                    }
+                    _ => Err(usage()),
+                }
+            }
+            "run" => {
+                let target = args.next().ok_or_else(usage)?;
+                match target.as_str() {
+                    "demo-1" => {
+                        let rest: Vec<String> = args.collect();
+                        let run_opts = parse_run_artifact_options(&rest, "demo-1")?;
+                        run_demo_1(run_opts.pretty_capture, run_opts.capture_output.as_deref())
+                            .map(|_| ())
+                    }
+                    "fixture" => Err(render_cli_error(
+                        &CliErrorInfo::new(
+                            "cli.command_removed",
+                            "'ergo run fixture' was removed in v1",
+                        )
+                        .with_where("command 'run fixture'")
+                        .with_fix("use 'ergo fixture run <events.jsonl>'"),
+                    )),
+                    _ => {
+                        let rest: Vec<String> = args.collect();
+                        graph_yaml::run_graph_command(Path::new(&target), &rest)
+                    }
+                }
+            }
+            "replay" => {
+                let path = args.next().ok_or_else(usage)?;
+                let rest: Vec<String> = args.collect();
+                let replay_opts = parse_replay_options(&rest)?;
+                replay_graph(
+                    Path::new(&path),
+                    replay_opts
+                        .graph_path
+                        .as_ref()
+                        .expect("replay options enforce graph path"),
+                    &replay_opts.cluster_paths,
+                    replay_opts.adapter_path.as_deref(),
+                )
+            }
+            _ => Err(render_cli_error(
+                &CliErrorInfo::new(
+                    "cli.unknown_command",
+                    format!("unknown command '{command}'"),
+                )
+                .with_where("command")
+                .with_fix("run 'ergo help' to see the v1 command map"),
+            )),
+        },
     }
 }
 
@@ -272,20 +340,81 @@ fn parse_replay_options(args: &[String]) -> Result<ReplayOptions, String> {
 
 fn usage() -> String {
     [
-        "usage:",
-        "  ergo gen-docs [--check]",
-        "  ergo validate <manifest.yaml> [--format json]",
-        "  ergo csv-to-fixture <prices.csv> <events.jsonl> [--semantic-kind <name>] [--event-kind <Pump|DataAvailable|Command>] [--episode-id <id>]",
-        "  ergo check-compose <adapter.yaml> <source|action>.yaml [--format json]",
-        "  ergo graph-to-dot <graph.yaml> [-o out.dot|--output out.dot] [--show-ports] [--show-impl] [--show-runtime-id] [--cluster-path <path> ...]",
-        "  ergo render graph <graph.yaml> [-o out.svg|--output out.svg] [--show-ports] [--show-impl] [--show-runtime-id] [--cluster-path <path> ...]",
-        "  ergo run demo-1 [-o|--capture|--capture-output <path>] [-p|--pretty-capture]",
-        "  ergo run fixture <path> [-o|--capture|--capture-output <path>] [-p|--pretty-capture]",
+        "Ergo CLI (v1)",
+        "",
+        "Core runtime",
         "  ergo run <graph.yaml> -f|--fixture <events.jsonl> [-a|--adapter <adapter.yaml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path <path> ...]",
         "  ergo run <graph.yaml> -d|--direct [--cluster-path <path> ...]",
-        "  ergo replay <path> -g|--graph <graph.yaml> [-a|--adapter <adapter.yaml>] [--cluster-path <path> ...]",
+        "  ergo replay <capture.json> -g|--graph <graph.yaml> [-a|--adapter <adapter.yaml>] [--cluster-path <path> ...]",
+        "",
+        "Fixture operability",
+        "  ergo fixture run <events.jsonl> [-o|--capture|--capture-output <path>] [-p|--pretty-capture]",
+        "  ergo fixture inspect <events.jsonl> [--format text|json]",
+        "  ergo fixture validate <events.jsonl> [--format text|json]",
+        "",
+        "Graph visualization",
+        "  ergo graph-to-dot <graph.yaml> [-o out.dot|--output out.dot] [--show-ports] [--show-impl] [--show-runtime-id] [--cluster-path <path> ...]",
+        "  ergo render graph <graph.yaml> [-o out.svg|--output out.svg] [--show-ports] [--show-impl] [--show-runtime-id] [--cluster-path <path> ...]",
+        "",
+        "Validation and tools",
+        "  ergo validate <manifest.yaml> [--format json]",
+        "  ergo check-compose <adapter.yaml> <source|action>.yaml [--format json]",
+        "  ergo csv-to-fixture <prices.csv> <events.jsonl> [--semantic-kind <name>] [--event-kind <Pump|DataAvailable|Command>] [--episode-id <id>]",
+        "  ergo gen-docs [--check]",
+        "",
+        "Help",
+        "  ergo help",
+        "  ergo help run|replay|fixture|render graph|graph-to-dot|validate|check-compose|csv-to-fixture|gen-docs",
     ]
     .join("\n")
+}
+
+fn help_topic(topic: &str) -> Option<String> {
+    match topic {
+        "run" => Some(
+            [
+                "usage:",
+                "  ergo run <graph.yaml> -f|--fixture <events.jsonl> [-a|--adapter <adapter.yaml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path <path> ...]",
+                "  ergo run <graph.yaml> -d|--direct [--cluster-path <path> ...]",
+            ]
+            .join("\n"),
+        ),
+        "replay" => Some(
+            [
+                "usage:",
+                "  ergo replay <capture.json> -g|--graph <graph.yaml> [-a|--adapter <adapter.yaml>] [--cluster-path <path> ...]",
+            ]
+            .join("\n"),
+        ),
+        "fixture" | "fixture run" | "fixture inspect" | "fixture validate" => {
+            Some(fixture_ops::fixture_usage())
+        }
+        "render" | "render graph" => Some(
+            [
+                "usage:",
+                "  ergo render graph <graph.yaml> [-o out.svg|--output out.svg] [--show-ports] [--show-impl] [--show-runtime-id] [--cluster-path <path> ...]",
+            ]
+            .join("\n"),
+        ),
+        "graph-to-dot" => Some(
+            [
+                "usage:",
+                "  ergo graph-to-dot <graph.yaml> [-o out.dot|--output out.dot] [--show-ports] [--show-impl] [--show-runtime-id] [--cluster-path <path> ...]",
+            ]
+            .join("\n"),
+        ),
+        "validate" => Some("usage:\n  ergo validate <manifest.yaml> [--format json]".to_string()),
+        "check-compose" => Some(
+            "usage:\n  ergo check-compose <adapter.yaml> <source|action>.yaml [--format json]"
+                .to_string(),
+        ),
+        "csv-to-fixture" => Some(
+            "usage:\n  ergo csv-to-fixture <prices.csv> <events.jsonl> [--semantic-kind <name>] [--event-kind <Pump|DataAvailable|Command>] [--episode-id <id>]"
+                .to_string(),
+        ),
+        "gen-docs" => Some("usage:\n  ergo gen-docs [--check]".to_string()),
+        _ => None,
+    }
 }
 
 fn load_bundle(path: &Path) -> Result<CaptureBundle, String> {
@@ -999,6 +1128,30 @@ outputs:
                 && err.contains("fix: for 'ergo run demo-1'"),
             "unexpected err: {err}"
         );
+    }
+
+    #[test]
+    fn usage_moves_fixture_to_top_level_subcommand() {
+        let help = usage();
+        assert!(
+            help.contains("ergo fixture run <events.jsonl>"),
+            "expected fixture run in top-level help: {help}"
+        );
+        assert!(
+            !help.contains("ergo run fixture"),
+            "run fixture should be removed in v1 help: {help}"
+        );
+    }
+
+    #[test]
+    fn help_topic_fixture_matches_fixture_usage() {
+        let topic = help_topic("fixture").expect("fixture help should exist");
+        assert_eq!(topic, fixture_ops::fixture_usage());
+    }
+
+    #[test]
+    fn help_topic_unknown_returns_none() {
+        assert!(help_topic("does-not-exist").is_none());
     }
 
     #[test]
