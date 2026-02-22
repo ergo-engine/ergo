@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use crate::common::{ErrorInfo, Phase};
+use semver::{Version as SemverVersion, VersionReq};
 
 pub type Version = String;
 pub type NodeId = String;
@@ -213,6 +214,9 @@ pub struct ExpandedNode {
 pub struct ImplementationInstance {
     // Identity-only; no semantic or configuration fields.
     pub impl_id: String,
+    /// Authoring selector as written in the graph (exact semver or constraint).
+    pub requested_version: Version,
+    /// Resolved concrete semver used for expansion/runtime.
     pub version: Version,
 }
 
@@ -232,6 +236,25 @@ pub enum ExpandedEndpoint {
 pub enum ExpandError {
     EmptyCluster,
     MissingCluster {
+        id: String,
+        version: Version,
+    },
+    /// I.6: Node version selector is not valid semver or semver constraint syntax.
+    InvalidVersionSelector {
+        target_kind: VersionTargetKind,
+        id: String,
+        selector: Version,
+    },
+    /// I.6: No available version satisfies the selector.
+    UnsatisfiedVersionConstraint {
+        target_kind: VersionTargetKind,
+        id: String,
+        selector: Version,
+        available_versions: Vec<Version>,
+    },
+    /// I.6: Registered available version is not strict semver.
+    InvalidAvailableVersion {
+        target_kind: VersionTargetKind,
         id: String,
         version: Version,
     },
@@ -311,6 +334,21 @@ pub enum SignatureInferenceError {
         version: Version,
         output: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionTargetKind {
+    Primitive,
+    Cluster,
+}
+
+impl VersionTargetKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Primitive => "primitive",
+            Self::Cluster => "cluster",
+        }
+    }
 }
 
 /// D.11: Errors arising from declared signature validation
@@ -407,6 +445,9 @@ impl ErrorInfo for ExpandError {
             Self::SignatureInferenceFailed(_) => "D.4",
             Self::DeclaredSignatureInvalid(_) => "D.10",
             Self::MissingCluster { .. } => "E.9",
+            Self::InvalidVersionSelector { .. }
+            | Self::UnsatisfiedVersionConstraint { .. }
+            | Self::InvalidAvailableVersion { .. } => "I.6",
             Self::MissingRequiredParameter { .. } | Self::UnresolvedExposedBinding { .. } => "I.3",
             Self::ParameterBindingTypeMismatch { .. }
             | Self::ExposedParameterTypeMismatch { .. } => "I.4",
@@ -433,6 +474,7 @@ impl ErrorInfo for ExpandError {
             "I.3" => "STABLE/CLUSTER_SPEC.md#I.3",
             "I.4" => "STABLE/CLUSTER_SPEC.md#I.4",
             "I.5" => "STABLE/CLUSTER_SPEC.md#I.5",
+            "I.6" => "STABLE/CLUSTER_SPEC.md#I.6",
             "I.7" => "STABLE/CLUSTER_SPEC.md#I.7",
             "E.9" => "STABLE/CLUSTER_SPEC.md#E.9",
             _ => "CANONICAL/PHASE_INVARIANTS.md",
@@ -445,6 +487,42 @@ impl ErrorInfo for ExpandError {
             Self::MissingCluster { id, version } => {
                 Cow::Owned(format!("Missing cluster '{}@{}'", id, version))
             }
+            Self::InvalidVersionSelector {
+                target_kind,
+                id,
+                selector,
+            } => Cow::Owned(format!(
+                "Invalid {} version selector '{}@{}' (expected exact semver or semver constraint)",
+                target_kind.label(),
+                id,
+                selector
+            )),
+            Self::UnsatisfiedVersionConstraint {
+                target_kind,
+                id,
+                selector,
+                available_versions,
+            } => Cow::Owned(format!(
+                "No available {} version for '{}' satisfies selector '{}' (available: {})",
+                target_kind.label(),
+                id,
+                selector,
+                if available_versions.is_empty() {
+                    "<none>".to_string()
+                } else {
+                    available_versions.join(", ")
+                }
+            )),
+            Self::InvalidAvailableVersion {
+                target_kind,
+                id,
+                version,
+            } => Cow::Owned(format!(
+                "Registered {} version '{}@{}' is not valid semver",
+                target_kind.label(),
+                id,
+                version
+            )),
             Self::DuplicateInputPort { name } => {
                 Cow::Owned(format!("Duplicate input port name: '{}'", name))
             }
@@ -532,6 +610,9 @@ impl ErrorInfo for ExpandError {
             Self::ParameterDefaultTypeMismatch { .. } => Some(Cow::Borrowed("$.parameters")),
             Self::SignatureInferenceFailed(_) => Some(Cow::Borrowed("$.output_ports")),
             Self::DeclaredSignatureInvalid(_) => Some(Cow::Borrowed("$.declared_signature")),
+            Self::InvalidVersionSelector { .. }
+            | Self::UnsatisfiedVersionConstraint { .. }
+            | Self::InvalidAvailableVersion { .. } => Some(Cow::Borrowed("$.nodes")),
             Self::MissingRequiredParameter { .. }
             | Self::ParameterBindingTypeMismatch { .. }
             | Self::ExposedParameterNotFound { .. }
@@ -549,6 +630,15 @@ impl ErrorInfo for ExpandError {
             Self::EmptyCluster => Some(Cow::Borrowed("Add at least one node to the cluster")),
             Self::MissingCluster { .. } => Some(Cow::Borrowed(
                 "Ensure referenced cluster ID and version exist",
+            )),
+            Self::InvalidVersionSelector { .. } => Some(Cow::Borrowed(
+                "Use strict semver (e.g. '1.2.3') or a semver constraint (e.g. '^1.2')",
+            )),
+            Self::UnsatisfiedVersionConstraint { .. } => Some(Cow::Borrowed(
+                "Publish or reference a version that satisfies the selector",
+            )),
+            Self::InvalidAvailableVersion { .. } => Some(Cow::Borrowed(
+                "Register only strict semver versions in the catalog/cluster loader",
             )),
             Self::DuplicateInputPort { name } => Some(Cow::Owned(format!(
                 "Rename input port '{}' to a unique name",
@@ -620,15 +710,27 @@ pub trait ClusterLoader {
     fn load(&self, id: &str, version: &Version) -> Option<ClusterDefinition>;
 }
 
+pub trait ClusterVersionIndex {
+    fn available_versions(&self, id: &str) -> Vec<Version>;
+}
+
 pub trait PrimitiveCatalog {
     fn get(&self, id: &str, version: &Version) -> Option<PrimitiveMetadata>;
 }
 
-pub fn expand<L: ClusterLoader>(
+pub trait PrimitiveVersionIndex {
+    fn available_versions(&self, id: &str) -> Vec<Version>;
+}
+
+pub fn expand<L, C>(
     cluster_def: &ClusterDefinition,
     loader: &L,
-    catalog: &impl PrimitiveCatalog,
-) -> Result<ExpandedGraph, ExpandError> {
+    catalog: &C,
+) -> Result<ExpandedGraph, ExpandError>
+where
+    L: ClusterLoader + ClusterVersionIndex,
+    C: PrimitiveCatalog + PrimitiveVersionIndex,
+{
     validate_cluster_definition(cluster_def)?;
 
     let mut ctx = ExpandContext::new();
@@ -662,6 +764,103 @@ pub fn expand<L: ClusterLoader>(
     }
 
     Ok(graph)
+}
+
+fn parse_available_versions(
+    target_kind: VersionTargetKind,
+    id: &str,
+    available_versions: Vec<Version>,
+) -> Result<Vec<(SemverVersion, Version)>, ExpandError> {
+    let mut parsed = Vec::with_capacity(available_versions.len());
+    for version in available_versions {
+        let semver =
+            SemverVersion::parse(&version).map_err(|_| ExpandError::InvalidAvailableVersion {
+                target_kind,
+                id: id.to_string(),
+                version: version.clone(),
+            })?;
+        parsed.push((semver, version));
+    }
+    parsed.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(parsed)
+}
+
+fn normalize_available_versions(parsed: &[(SemverVersion, Version)]) -> Vec<Version> {
+    parsed.iter().map(|(_, raw)| raw.clone()).collect()
+}
+
+fn resolve_version_selector(
+    target_kind: VersionTargetKind,
+    id: &str,
+    selector: &Version,
+    available_versions: Vec<Version>,
+) -> Result<Version, ExpandError> {
+    if let Ok(exact) = SemverVersion::parse(selector) {
+        if available_versions.is_empty() {
+            // Preserve legacy topology-only expansion when no catalog/index entries exist.
+            return Ok(exact.to_string());
+        }
+
+        let parsed = parse_available_versions(target_kind, id, available_versions)?;
+        if let Some((matched, _)) = parsed.iter().find(|(candidate, _)| *candidate == exact) {
+            return Ok(matched.to_string());
+        }
+
+        return Err(ExpandError::UnsatisfiedVersionConstraint {
+            target_kind,
+            id: id.to_string(),
+            selector: selector.clone(),
+            available_versions: normalize_available_versions(&parsed),
+        });
+    }
+
+    let req = VersionReq::parse(selector).map_err(|_| ExpandError::InvalidVersionSelector {
+        target_kind,
+        id: id.to_string(),
+        selector: selector.clone(),
+    })?;
+
+    let parsed = parse_available_versions(target_kind, id, available_versions)?;
+    if let Some((matched, _)) = parsed
+        .iter()
+        .rev()
+        .find(|(candidate, _)| req.matches(candidate))
+    {
+        return Ok(matched.to_string());
+    }
+
+    Err(ExpandError::UnsatisfiedVersionConstraint {
+        target_kind,
+        id: id.to_string(),
+        selector: selector.clone(),
+        available_versions: normalize_available_versions(&parsed),
+    })
+}
+
+fn resolve_primitive_version<C: PrimitiveVersionIndex>(
+    catalog: &C,
+    impl_id: &str,
+    selector: &Version,
+) -> Result<Version, ExpandError> {
+    resolve_version_selector(
+        VersionTargetKind::Primitive,
+        impl_id,
+        selector,
+        catalog.available_versions(impl_id),
+    )
+}
+
+fn resolve_cluster_version<L: ClusterVersionIndex>(
+    loader: &L,
+    cluster_id: &str,
+    selector: &Version,
+) -> Result<Version, ExpandError> {
+    resolve_version_selector(
+        VersionTargetKind::Cluster,
+        cluster_id,
+        selector,
+        loader.available_versions(cluster_id),
+    )
 }
 
 fn validate_cluster_definition(cluster_def: &ClusterDefinition) -> Result<(), ExpandError> {
@@ -998,14 +1197,18 @@ struct ExpandBuild {
     cluster_output_map: HashMap<NodeId, HashMap<String, ExpandedEndpoint>>,
 }
 
-fn expand_with_context<L: ClusterLoader>(
+fn expand_with_context<L, C>(
     cluster_def: &ClusterDefinition,
     loader: &L,
-    catalog: &impl PrimitiveCatalog,
+    catalog: &C,
     ctx: &mut ExpandContext,
     authoring_prefix: &[(String, NodeId)],
     resolved_params: &HashMap<String, ParameterValue>,
-) -> Result<ExpandBuild, ExpandError> {
+) -> Result<ExpandBuild, ExpandError>
+where
+    L: ClusterLoader + ClusterVersionIndex,
+    C: PrimitiveCatalog + PrimitiveVersionIndex,
+{
     if cluster_def.nodes.is_empty() {
         return Err(ExpandError::EmptyCluster);
     }
@@ -1034,11 +1237,9 @@ fn expand_with_context<L: ClusterLoader>(
                 let mut authoring_path = authoring_prefix.to_vec();
                 authoring_path.push((cluster_def.id.clone(), node.id.clone()));
 
-                // A.1: Look up primitive specs to get parameter defaults
-                // TODO(I.6): Exact-match lookup only; no constraint parsing/resolution.
-                // Future: parse version as constraint (e.g., ">=1.0.0, <2.0.0") and
-                // find satisfying version from catalog.
-                let primitive_meta = catalog.get(impl_id, version);
+                let resolved_version = resolve_primitive_version(catalog, impl_id, version)?;
+                // A.1: Look up primitive specs to get parameter defaults using resolved semver.
+                let primitive_meta = catalog.get(impl_id, &resolved_version);
 
                 // A.1: Resolve parameters:
                 // - If catalog has metadata, use specs to apply defaults
@@ -1066,7 +1267,8 @@ fn expand_with_context<L: ClusterLoader>(
                         authoring_path,
                         implementation: ImplementationInstance {
                             impl_id: impl_id.clone(),
-                            version: version.clone(),
+                            requested_version: version.clone(),
+                            version: resolved_version,
                         },
                         parameters: resolved_bindings,
                     },
@@ -1078,14 +1280,14 @@ fn expand_with_context<L: ClusterLoader>(
                 cluster_id,
                 version,
             } => {
-                // TODO(I.6): Exact-match lookup only; no constraint parsing/resolution.
-                // Future: resolve constraint to concrete version before loading.
-                let nested_def = loader.load(cluster_id, version).ok_or_else(|| {
-                    ExpandError::MissingCluster {
+                let resolved_cluster_version =
+                    resolve_cluster_version(loader, cluster_id, version)?;
+                let nested_def = loader
+                    .load(cluster_id, &resolved_cluster_version)
+                    .ok_or_else(|| ExpandError::MissingCluster {
                         id: cluster_id.clone(),
-                        version: version.clone(),
-                    }
-                })?;
+                        version: resolved_cluster_version.clone(),
+                    })?;
 
                 // I.3/I.4/I.5: Validate parameter bindings before expansion
                 validate_parameter_bindings(
@@ -1544,6 +1746,24 @@ mod tests {
         }
     }
 
+    impl ClusterVersionIndex for TestLoader {
+        fn available_versions(&self, id: &str) -> Vec<Version> {
+            let mut versions = self
+                .clusters
+                .keys()
+                .filter_map(|(candidate_id, version)| {
+                    if candidate_id == id {
+                        Some(version.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            versions.sort();
+            versions
+        }
+    }
+
     fn empty_parameters() -> Vec<ParameterSpec> {
         Vec::new()
     }
@@ -1616,6 +1836,24 @@ mod tests {
         }
     }
 
+    impl PrimitiveVersionIndex for TestCatalog {
+        fn available_versions(&self, id: &str) -> Vec<Version> {
+            let mut versions = self
+                .metadata
+                .keys()
+                .filter_map(|(candidate_id, version)| {
+                    if candidate_id == id {
+                        Some(version.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            versions.sort();
+            versions
+        }
+    }
+
     #[test]
     fn expands_primitive_cluster() {
         let mut nodes = HashMap::new();
@@ -1625,7 +1863,7 @@ mod tests {
                 id: "p1".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -1633,7 +1871,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "root".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -1666,7 +1904,7 @@ mod tests {
                 id: "leaf".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "leaf_prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -1674,7 +1912,7 @@ mod tests {
 
         let inner = ClusterDefinition {
             id: "inner".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: inner_nodes,
             edges: vec![Edge {
                 from: OutputRef {
@@ -1712,7 +1950,7 @@ mod tests {
                 id: "src".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "src_prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -1723,7 +1961,7 @@ mod tests {
                 id: "nested".to_string(),
                 kind: NodeKind::Cluster {
                     cluster_id: "inner".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -1734,7 +1972,7 @@ mod tests {
                 id: "sink".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "sink_prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -1742,7 +1980,7 @@ mod tests {
 
         let outer = ClusterDefinition {
             id: "outer".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: outer_nodes,
             edges: vec![
                 Edge {
@@ -1801,7 +2039,7 @@ mod tests {
                 id: "s".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "source".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -1809,7 +2047,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "root".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -1830,7 +2068,7 @@ mod tests {
 
         let catalog = TestCatalog::default().with_metadata(
             "source",
-            "v1",
+            "1.0.0",
             meta(PrimitiveKind::Source, &[("value", ValueType::Number)]),
         );
 
@@ -1852,7 +2090,7 @@ mod tests {
                 id: "a".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "action".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -1860,7 +2098,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "root".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -1881,7 +2119,7 @@ mod tests {
 
         let catalog = TestCatalog::default().with_metadata(
             "action",
-            "v1",
+            "1.0.0",
             meta(PrimitiveKind::Action, &[("outcome", ValueType::Event)]),
         );
 
@@ -1901,7 +2139,7 @@ mod tests {
                 id: "t".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "trigger".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -1909,7 +2147,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "root".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: vec![InputPortSpec {
@@ -1937,7 +2175,7 @@ mod tests {
 
         let catalog = TestCatalog::default().with_metadata(
             "trigger",
-            "v1",
+            "1.0.0",
             meta(PrimitiveKind::Trigger, &[("emitted", ValueType::Event)]),
         );
 
@@ -1957,7 +2195,7 @@ mod tests {
                 id: "c".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "compute".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -1965,7 +2203,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "root".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: vec![InputPortSpec {
@@ -1993,7 +2231,7 @@ mod tests {
 
         let catalog = TestCatalog::default().with_metadata(
             "compute",
-            "v1",
+            "1.0.0",
             meta(PrimitiveKind::Compute, &[("value", ValueType::Number)]),
         );
 
@@ -2015,7 +2253,7 @@ mod tests {
                 id: "c".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "compute".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -2023,7 +2261,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "root".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: vec![
@@ -2061,7 +2299,7 @@ mod tests {
 
         let catalog = TestCatalog::default().with_metadata(
             "compute",
-            "v1",
+            "1.0.0",
             meta(PrimitiveKind::Compute, &[("value", ValueType::Number)]),
         );
 
@@ -2094,7 +2332,7 @@ mod tests {
                 id: "source_node".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "source".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -2104,7 +2342,7 @@ mod tests {
         // This will resolve to ExternalInput as the sink, violating E.3
         let cluster = ClusterDefinition {
             id: "malformed".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: vec![Edge {
                 from: OutputRef {
@@ -2139,7 +2377,7 @@ mod tests {
                 id: "action_node".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "action".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -2147,7 +2385,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "root".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2176,7 +2414,7 @@ mod tests {
         let loader = TestLoader::new();
         let catalog = TestCatalog::default().with_metadata(
             "action",
-            "v1",
+            "1.0.0",
             meta(PrimitiveKind::Action, &[("outcome", ValueType::Event)]),
         );
 
@@ -2240,7 +2478,7 @@ mod tests {
                 id: "impl".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "compute".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -2248,7 +2486,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "dup_inputs".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: vec![
@@ -2294,7 +2532,7 @@ mod tests {
                 id: "impl".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "compute".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -2302,7 +2540,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "dup_outputs".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2346,7 +2584,7 @@ mod tests {
                 id: "impl".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "compute".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -2354,7 +2592,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "dup_params".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2396,7 +2634,7 @@ mod tests {
                 id: "impl".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "compute".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -2404,7 +2642,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "bad_default".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2444,7 +2682,7 @@ mod tests {
                 id: "leaf".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -2452,7 +2690,7 @@ mod tests {
 
         let inner = ClusterDefinition {
             id: "inner".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: inner_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2474,7 +2712,7 @@ mod tests {
                 id: "nested".to_string(),
                 kind: NodeKind::Cluster {
                     cluster_id: "inner".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(), // No binding provided
             },
@@ -2482,7 +2720,7 @@ mod tests {
 
         let outer = ClusterDefinition {
             id: "outer".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: outer_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2516,7 +2754,7 @@ mod tests {
                 id: "leaf".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -2524,7 +2762,7 @@ mod tests {
 
         let inner = ClusterDefinition {
             id: "inner".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: inner_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2546,7 +2784,7 @@ mod tests {
                 id: "nested".to_string(),
                 kind: NodeKind::Cluster {
                     cluster_id: "inner".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::from([(
                     "num_param".to_string(),
@@ -2559,7 +2797,7 @@ mod tests {
 
         let outer = ClusterDefinition {
             id: "outer".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: outer_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2598,7 +2836,7 @@ mod tests {
                 id: "leaf".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -2606,7 +2844,7 @@ mod tests {
 
         let inner = ClusterDefinition {
             id: "inner".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: inner_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2628,7 +2866,7 @@ mod tests {
                 id: "nested".to_string(),
                 kind: NodeKind::Cluster {
                     cluster_id: "inner".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::from([(
                     "inner_param".to_string(),
@@ -2641,7 +2879,7 @@ mod tests {
 
         let outer = ClusterDefinition {
             id: "outer".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: outer_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2678,7 +2916,7 @@ mod tests {
                 id: "leaf".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -2686,7 +2924,7 @@ mod tests {
 
         let inner = ClusterDefinition {
             id: "inner".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: inner_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2708,7 +2946,7 @@ mod tests {
                 id: "nested".to_string(),
                 kind: NodeKind::Cluster {
                     cluster_id: "inner".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::from([(
                     "threshold".to_string(),
@@ -2721,7 +2959,7 @@ mod tests {
 
         let outer = ClusterDefinition {
             id: "outer".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: outer_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2773,7 +3011,7 @@ mod tests {
                 id: "leaf".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::from([(
                     "leaf_t".to_string(),
@@ -2786,7 +3024,7 @@ mod tests {
 
         let inner = ClusterDefinition {
             id: "inner".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: inner_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2808,7 +3046,7 @@ mod tests {
                 id: "nested_inner".to_string(),
                 kind: NodeKind::Cluster {
                     cluster_id: "inner".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::from([(
                     "inner_t".to_string(),
@@ -2821,7 +3059,7 @@ mod tests {
 
         let middle = ClusterDefinition {
             id: "middle".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: middle_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2843,7 +3081,7 @@ mod tests {
                 id: "nested_middle".to_string(),
                 kind: NodeKind::Cluster {
                     cluster_id: "middle".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::from([(
                     "middle_t".to_string(),
@@ -2856,7 +3094,7 @@ mod tests {
 
         let outer = ClusterDefinition {
             id: "outer".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: outer_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2895,7 +3133,7 @@ mod tests {
                 id: "leaf".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::from([(
                     "x".to_string(),
@@ -2908,7 +3146,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "root".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2950,7 +3188,7 @@ mod tests {
                 id: "leaf".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(), // No binding provided
             },
@@ -2958,7 +3196,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "root".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -2972,7 +3210,7 @@ mod tests {
         // Catalog with primitive that has a default parameter
         let catalog = TestCatalog::default().with_metadata(
             "prim",
-            "v1",
+            "1.0.0",
             meta_with_params(
                 PrimitiveKind::Compute,
                 &[("out", ValueType::Number)],
@@ -3012,7 +3250,7 @@ mod tests {
                 id: "leaf".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::from([(
                     "threshold".to_string(),
@@ -3025,7 +3263,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "root".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -3039,7 +3277,7 @@ mod tests {
         // Catalog with primitive that has a default parameter
         let catalog = TestCatalog::default().with_metadata(
             "prim",
-            "v1",
+            "1.0.0",
             meta_with_params(
                 PrimitiveKind::Compute,
                 &[("out", ValueType::Number)],
@@ -3079,7 +3317,7 @@ mod tests {
                 id: "leaf".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(), // No binding provided
             },
@@ -3087,7 +3325,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "root".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -3101,7 +3339,7 @@ mod tests {
         // Catalog with primitive that has a required parameter (no default)
         let catalog = TestCatalog::default().with_metadata(
             "prim",
-            "v1",
+            "1.0.0",
             meta_with_params(
                 PrimitiveKind::Compute,
                 &[("out", ValueType::Number)],
@@ -3145,7 +3383,7 @@ mod tests {
                 id: "leaf".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::from([(
                     "leaf_t".to_string(),
@@ -3158,7 +3396,7 @@ mod tests {
 
         let inner = ClusterDefinition {
             id: "inner".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: inner_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -3180,7 +3418,7 @@ mod tests {
                 id: "nested".to_string(),
                 kind: NodeKind::Cluster {
                     cluster_id: "inner".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(), // No binding - should use default
             },
@@ -3188,7 +3426,7 @@ mod tests {
 
         let outer = ClusterDefinition {
             id: "outer".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: outer_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -3223,7 +3461,7 @@ mod tests {
                     id: name.to_string(),
                     kind: NodeKind::Impl {
                         impl_id: "prim".to_string(),
-                        version: "v1".to_string(),
+                        version: "1.0.0".to_string(),
                     },
                     parameter_bindings: HashMap::new(),
                 },
@@ -3232,7 +3470,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "test".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -3301,7 +3539,7 @@ mod tests {
                 id: "real_node".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -3309,7 +3547,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "test".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -3350,7 +3588,7 @@ mod tests {
                 id: "leaf".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -3358,7 +3596,7 @@ mod tests {
 
         let inner = ClusterDefinition {
             id: "inner".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: inner_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -3381,7 +3619,7 @@ mod tests {
                 id: "nested".to_string(),
                 kind: NodeKind::Cluster {
                     cluster_id: "inner".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -3389,7 +3627,7 @@ mod tests {
 
         let outer = ClusterDefinition {
             id: "outer".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: outer_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -3424,7 +3662,7 @@ mod tests {
                 id: "leaf".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::from([(
                     "valeu".to_string(), // Typo!
@@ -3437,7 +3675,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "root".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -3449,7 +3687,7 @@ mod tests {
         let loader = TestLoader::new();
         let catalog = TestCatalog::default().with_metadata(
             "prim",
-            "v1",
+            "1.0.0",
             meta_with_params(
                 PrimitiveKind::Compute,
                 &[("out", ValueType::Number)],
@@ -3485,7 +3723,7 @@ mod tests {
                 id: "leaf".to_string(),
                 kind: NodeKind::Impl {
                     impl_id: "prim".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -3493,7 +3731,7 @@ mod tests {
 
         let inner = ClusterDefinition {
             id: "inner".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: inner_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -3514,7 +3752,7 @@ mod tests {
                 id: "nested".to_string(),
                 kind: NodeKind::Cluster {
                     cluster_id: "inner".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::from([(
                     "threshhold".to_string(), // Typo!
@@ -3527,7 +3765,7 @@ mod tests {
 
         let outer = ClusterDefinition {
             id: "outer".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes: outer_nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -3559,7 +3797,7 @@ mod tests {
                 id: "nested".to_string(),
                 kind: NodeKind::Cluster {
                     cluster_id: "missing".to_string(),
-                    version: "v1".to_string(),
+                    version: "1.0.0".to_string(),
                 },
                 parameter_bindings: HashMap::new(),
             },
@@ -3567,7 +3805,7 @@ mod tests {
 
         let cluster = ClusterDefinition {
             id: "root".to_string(),
-            version: "v1".to_string(),
+            version: "1.0.0".to_string(),
             nodes,
             edges: Vec::new(),
             input_ports: Vec::new(),
@@ -3584,7 +3822,200 @@ mod tests {
         assert_eq!(err.path().as_deref(), Some("$.nodes"));
         assert!(matches!(
             err,
-            ExpandError::MissingCluster { id, version } if id == "missing" && version == "v1"
+            ExpandError::MissingCluster { id, version } if id == "missing" && version == "1.0.0"
+        ));
+    }
+
+    #[test]
+    fn resolves_primitive_semver_constraint_to_highest_satisfying() {
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "p1".to_string(),
+            NodeInstance {
+                id: "p1".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "^1.0".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+
+        let cluster = ClusterDefinition {
+            id: "root".to_string(),
+            version: "1.0.0".to_string(),
+            nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+        let catalog = TestCatalog::default()
+            .with_metadata(
+                "prim",
+                "1.0.0",
+                meta(PrimitiveKind::Compute, &[("out", ValueType::Number)]),
+            )
+            .with_metadata(
+                "prim",
+                "1.3.0",
+                meta(PrimitiveKind::Compute, &[("out", ValueType::Number)]),
+            )
+            .with_metadata(
+                "prim",
+                "2.0.0",
+                meta(PrimitiveKind::Compute, &[("out", ValueType::Number)]),
+            );
+
+        let expanded = expand(&cluster, &loader, &catalog).expect("constraint should resolve");
+        let node = expanded.nodes.values().next().expect("expanded node");
+        assert_eq!(node.implementation.requested_version, "^1.0");
+        assert_eq!(node.implementation.version, "1.3.0");
+    }
+
+    #[test]
+    fn rejects_invalid_version_selector_with_i6_error() {
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "p1".to_string(),
+            NodeInstance {
+                id: "p1".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "not-a-semver".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+
+        let cluster = ClusterDefinition {
+            id: "root".to_string(),
+            version: "1.0.0".to_string(),
+            nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+        let catalog = TestCatalog::default();
+        let err = expand(&cluster, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "I.6");
+        assert!(matches!(
+            err,
+            ExpandError::InvalidVersionSelector {
+                target_kind: VersionTargetKind::Primitive,
+                id,
+                selector,
+            } if id == "prim" && selector == "not-a-semver"
+        ));
+    }
+
+    #[test]
+    fn rejects_unsatisfied_cluster_constraint_with_i6_error() {
+        let inner = ClusterDefinition {
+            id: "inner".to_string(),
+            version: "2.0.0".to_string(),
+            nodes: HashMap::from([(
+                "leaf".to_string(),
+                NodeInstance {
+                    id: "leaf".to_string(),
+                    kind: NodeKind::Impl {
+                        impl_id: "leaf".to_string(),
+                        version: "1.0.0".to_string(),
+                    },
+                    parameter_bindings: HashMap::new(),
+                },
+            )]),
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let outer = ClusterDefinition {
+            id: "outer".to_string(),
+            version: "1.0.0".to_string(),
+            nodes: HashMap::from([(
+                "nested".to_string(),
+                NodeInstance {
+                    id: "nested".to_string(),
+                    kind: NodeKind::Cluster {
+                        cluster_id: "inner".to_string(),
+                        version: "^1.0".to_string(),
+                    },
+                    parameter_bindings: HashMap::new(),
+                },
+            )]),
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new().with_cluster(inner);
+        let catalog = TestCatalog::default();
+        let err = expand(&outer, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "I.6");
+        assert!(matches!(
+            err,
+            ExpandError::UnsatisfiedVersionConstraint {
+                target_kind: VersionTargetKind::Cluster,
+                id,
+                selector,
+                ..
+            } if id == "inner" && selector == "^1.0"
+        ));
+    }
+
+    #[test]
+    fn rejects_non_semver_available_versions_with_i6_error() {
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "p1".to_string(),
+            NodeInstance {
+                id: "p1".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "^1.0".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+
+        let cluster = ClusterDefinition {
+            id: "root".to_string(),
+            version: "1.0.0".to_string(),
+            nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+        let catalog = TestCatalog::default().with_metadata(
+            "prim",
+            "legacy",
+            meta(PrimitiveKind::Compute, &[("out", ValueType::Number)]),
+        );
+        let err = expand(&cluster, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "I.6");
+        assert!(matches!(
+            err,
+            ExpandError::InvalidAvailableVersion {
+                target_kind: VersionTargetKind::Primitive,
+                id,
+                version,
+            } if id == "prim" && version == "legacy"
         ));
     }
 }

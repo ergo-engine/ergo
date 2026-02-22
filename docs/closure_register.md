@@ -536,3 +536,22 @@ Adopted Option C after stress-testing with ChatGPT:
 
 ### PR/Commit
 PR #35, commit 7baa74c
+
+---
+
+## I.6 Resolver + Replay Runtime Provenance (v2-only capture policy)
+
+### Resolution
+
+- I.6 is enforced in `crates/runtime/src/cluster.rs` via strict semver selector parsing and deterministic highest-satisfying resolution for primitive and nested cluster references.
+- Canonical captures now require `runtime_provenance` (runtime surface fingerprint) in v2 bundles; strict replay checks both adapter provenance and runtime provenance.
+- Repo policy is explicit: capture bundles and checked-in capture fixtures are ephemeral artifacts and may be migrated in lockstep with code (no schema backward-compat guarantee inside this repo).
+
+### Notes
+
+- `replay_checked` remains non-strict (bundle validation + hash validation + replay only).
+- `replay_checked_strict` requires explicit adapter provenance (`NO_ADAPTER_PROVENANCE` for no-adapter captures) and runtime provenance.
+- v1 capture support is intentionally removed in the final state.
+
+### PR/Commit
+commit ea9d94f

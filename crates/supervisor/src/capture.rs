@@ -50,13 +50,20 @@ pub struct CapturingSession<L: DecisionLog, R: RuntimeInvoker> {
 }
 
 impl<L: DecisionLog, R: RuntimeInvoker> CapturingSession<L, R> {
-    pub fn new(graph_id: GraphId, constraints: Constraints, inner_log: L, runtime: R) -> Self {
+    pub fn new(
+        graph_id: GraphId,
+        constraints: Constraints,
+        inner_log: L,
+        runtime: R,
+        runtime_provenance: String,
+    ) -> Self {
         Self::new_with_provenance(
             graph_id,
             constraints,
             inner_log,
             runtime,
             crate::NO_ADAPTER_PROVENANCE.to_string(),
+            runtime_provenance,
         )
     }
 
@@ -66,6 +73,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> CapturingSession<L, R> {
         inner_log: L,
         runtime: R,
         adapter_provenance: String,
+        runtime_provenance: String,
     ) -> Self {
         let bundle = Arc::new(Mutex::new(CaptureBundle {
             capture_version: crate::CAPTURE_FORMAT_VERSION.to_string(),
@@ -74,6 +82,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> CapturingSession<L, R> {
             events: Vec::new(),
             decisions: Vec::new(),
             adapter_provenance,
+            runtime_provenance,
         }));
 
         let capturing_log = CapturingDecisionLog::new(inner_log, Arc::clone(&bundle));
@@ -308,12 +317,13 @@ mod tests {
 
     fn sample_bundle() -> CaptureBundle {
         CaptureBundle {
-            capture_version: "v1".to_string(),
+            capture_version: "v2".to_string(),
             graph_id: GraphId::new("capture_test"),
             config: Constraints::default(),
             events: Vec::new(),
             decisions: Vec::new(),
             adapter_provenance: crate::NO_ADAPTER_PROVENANCE.to_string(),
+            runtime_provenance: "rpv1:sha256:test".to_string(),
         }
     }
 

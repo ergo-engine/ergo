@@ -10,6 +10,7 @@ use ergo_adapter::{
 use ergo_runtime::action::ActionOutcome;
 use ergo_runtime::catalog::{CorePrimitiveCatalog, CoreRegistries};
 use ergo_runtime::cluster::ExpandedGraph;
+use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceScheme};
 
 use crate::demo::demo_1;
 use crate::{
@@ -57,6 +58,13 @@ pub fn run_fixture(
     capture_style: CaptureJsonStyle,
 ) -> Result<FixtureRunResult, String> {
     ensure_demo_sources_have_no_required_context(&graph, &catalog, &registries)?;
+    let runtime_provenance = compute_runtime_provenance(
+        RuntimeProvenanceScheme::Rpv1,
+        DEFAULT_GRAPH_ID,
+        graph.as_ref(),
+        catalog.as_ref(),
+    )
+    .map_err(|err| format!("runtime provenance compute failed: {err}"))?;
     let runtime = RuntimeHandle::new(graph, catalog, registries, AdapterProvides::default());
     let mut session = CapturingSession::new_with_provenance(
         GraphId::new(DEFAULT_GRAPH_ID),
@@ -64,6 +72,7 @@ pub fn run_fixture(
         NullLog,
         runtime,
         NO_ADAPTER_PROVENANCE.to_string(),
+        runtime_provenance,
     );
 
     let mut episodes: Vec<EpisodeInfo> = Vec::new();

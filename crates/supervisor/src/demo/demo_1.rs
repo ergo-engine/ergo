@@ -37,6 +37,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "number_source".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([("value".to_string(), ParameterValue::Number(LEFT_A))]),
@@ -50,6 +51,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "number_source".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([("value".to_string(), ParameterValue::Number(LEFT_B))]),
@@ -63,6 +65,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "number_source".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([("value".to_string(), ParameterValue::Number(RIGHT_A))]),
@@ -76,6 +79,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "number_source".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([("value".to_string(), ParameterValue::Number(RIGHT_B))]),
@@ -89,6 +93,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "context_number_source".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -102,6 +107,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "add".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -115,6 +121,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "add".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -128,6 +135,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "add".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -141,6 +149,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "add".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -154,6 +163,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "gt".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -167,6 +177,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "gt".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -180,6 +191,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "emit_if_true".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -193,6 +205,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "emit_if_true".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -206,6 +219,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "ack_action".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([("accept".to_string(), ParameterValue::Bool(true))]),
@@ -219,6 +233,7 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "ack_action".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([("accept".to_string(), ParameterValue::Bool(true))]),

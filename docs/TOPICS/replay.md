@@ -20,14 +20,16 @@ Replay determinism covers **supervisor scheduling decisions only**.
 
 ### Canonical Capture Bundle
 
-Canonical capture and strict replay use a v1 bundle shape:
+Canonical capture and replay use a v2 bundle shape:
 
-- `capture_version: "v1"`
+- `capture_version: "v2"`
 - Required `adapter_provenance` field (adapter fingerprint or `none`)
+- Required `runtime_provenance` field (`rpv1:sha256:<hex>`)
 - Unknown fields rejected at deserialization (`deny_unknown_fields`)
 - Legacy `adapter_version` bundles rejected during deserialization in strict paths
+- This repo treats capture bundles/fixtures as ephemeral artifacts; schema compatibility can be intentionally broken when fixtures are migrated in the same change
 
-**Source:** [PHASE_INVARIANTS.md](../CANONICAL/PHASE_INVARIANTS.md) Canonical Run / Replay Strictness (v1)
+**Source:** [PHASE_INVARIANTS.md](../CANONICAL/PHASE_INVARIANTS.md) Canonical Run / Replay Strictness (v2)
 
 ---
 
@@ -40,9 +42,9 @@ Canonical capture and strict replay use a v1 bundle shape:
 | REP-3 | Fault injection keys on EventId only | Type enforcement |
 | REP-4 | Capture/runtime type separation | Separate serde types |
 | REP-5 | No wall-clock time in supervisor | grep test |
-| REP-7 | Strict replay provenance contract match | `replay_checked_strict` |
+| REP-7 | Strict replay provenance contract match (adapter + runtime surface) | `replay_checked_strict` |
 
-**Source:** [PHASE_INVARIANTS.md](../CANONICAL/PHASE_INVARIANTS.md) §8 + Canonical Run / Replay Strictness (v1)
+**Source:** [PHASE_INVARIANTS.md](../CANONICAL/PHASE_INVARIANTS.md) §8 + Canonical Run / Replay Strictness (v2)
 
 ---
 

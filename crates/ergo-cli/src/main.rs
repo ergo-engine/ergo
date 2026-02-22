@@ -24,9 +24,10 @@ use ergo_adapter::{
 #[cfg(test)]
 use ergo_runtime::action::ActionOutcome;
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
+use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceScheme};
 use ergo_supervisor::demo::demo_1;
 use ergo_supervisor::fixture_runner;
-use ergo_supervisor::replay::{replay_checked_strict, ReplayError};
+use ergo_supervisor::replay::{replay_checked_strict, ReplayError, StrictReplayExpectations};
 use ergo_supervisor::{
     write_capture_bundle, CaptureBundle, CaptureJsonStyle, CapturingSession, Constraints, Decision,
     DecisionLog, DecisionLogEntry, NO_ADAPTER_PROVENANCE,
@@ -456,12 +457,20 @@ fn run_demo_1(pretty_capture: bool, output_override: Option<&Path>) -> Result<Pa
         core_registries.clone(),
         AdapterProvides::default(),
     );
+    let runtime_provenance = compute_runtime_provenance(
+        RuntimeProvenanceScheme::Rpv1,
+        DEMO_GRAPH_ID,
+        graph.as_ref(),
+        catalog.as_ref(),
+    )
+    .map_err(|err| format!("runtime provenance compute failed: {err}"))?;
     let mut session = CapturingSession::new_with_provenance(
         GraphId::new(DEMO_GRAPH_ID),
         Constraints::default(),
         NullLog,
         runtime,
         NO_ADAPTER_PROVENANCE.to_string(),
+        runtime_provenance,
     );
 
     let events = [
@@ -606,6 +615,16 @@ fn format_replay_error(err: &ReplayError) -> String {
             .with_detail(format!("expected: '{expected}'"))
             .with_detail(format!("got: '{got}'")),
         ),
+        ReplayError::RuntimeProvenanceMismatch { expected, got } => render_cli_error(
+            &CliErrorInfo::new(
+                "replay.runtime_provenance_mismatch",
+                "runtime provenance mismatch",
+            )
+            .with_where("capture provenance vs replay runtime surface")
+            .with_fix("replay against the graph/runtime used to produce the capture or recapture")
+            .with_detail(format!("expected: '{expected}'"))
+            .with_detail(format!("got: '{got}'")),
+        ),
         ReplayError::UnexpectedAdapterProvidedForNoAdapterCapture => render_cli_error(
             &CliErrorInfo::new(
                 "replay.unexpected_adapter",
@@ -677,8 +696,18 @@ fn replay_graph(
         adapter_provides,
     );
 
-    let replayed = replay_checked_strict(&bundle, runtime, replay_fingerprint.as_deref())
-        .map_err(|err| format_replay_error(&err))?;
+    let expected_adapter_provenance = replay_fingerprint
+        .as_deref()
+        .unwrap_or(NO_ADAPTER_PROVENANCE);
+    let replayed = replay_checked_strict(
+        &bundle,
+        runtime,
+        StrictReplayExpectations {
+            expected_adapter_provenance,
+            expected_runtime_provenance: &prepared.runtime_provenance,
+        },
+    )
+    .map_err(|err| format_replay_error(&err))?;
     let replay_matches = replayed == bundle.decisions;
 
     let invoke_count = replayed
@@ -761,7 +790,24 @@ fn replay_demo_1(path: &Path, adapter_path: Option<&Path>) -> Result<(), String>
         core_registries.clone(),
         adapter_provides,
     );
-    let replay_result = replay_checked_strict(&bundle, runtime, replay_fingerprint.as_deref());
+    let expected_runtime_provenance = compute_runtime_provenance(
+        RuntimeProvenanceScheme::Rpv1,
+        DEMO_GRAPH_ID,
+        graph.as_ref(),
+        catalog.as_ref(),
+    )
+    .map_err(|err| format!("runtime provenance compute failed: {err}"))?;
+    let expected_adapter_provenance = replay_fingerprint
+        .as_deref()
+        .unwrap_or(NO_ADAPTER_PROVENANCE);
+    let replay_result = replay_checked_strict(
+        &bundle,
+        runtime,
+        StrictReplayExpectations {
+            expected_adapter_provenance,
+            expected_runtime_provenance: &expected_runtime_provenance,
+        },
+    );
     let replay_matches = match &replay_result {
         Ok(records) => records == &bundle.decisions,
         Err(_) => false,

@@ -10,8 +10,8 @@ use ergo_runtime::catalog::{CorePrimitiveCatalog, CoreRegistries};
 use ergo_runtime::cluster::ExpandedGraph;
 use serde::{Deserialize, Serialize};
 
-/// Capture bundle format version. Used for forward-compatibility checks.
-pub(crate) const CAPTURE_FORMAT_VERSION: &str = "v1";
+/// Capture bundle format version. This repo treats captures as ephemeral artifacts.
+pub(crate) const CAPTURE_FORMAT_VERSION: &str = "v2";
 pub const NO_ADAPTER_PROVENANCE: &str = "none";
 
 mod capture;
@@ -128,6 +128,7 @@ pub struct CaptureBundle {
     pub events: Vec<ExternalEventRecord>,
     pub decisions: Vec<EpisodeInvocationRecord>,
     pub adapter_provenance: String,
+    pub runtime_provenance: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

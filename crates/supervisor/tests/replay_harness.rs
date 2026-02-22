@@ -5,7 +5,9 @@ use ergo_adapter::{
     EventId, EventPayload, EventTime, ExternalEvent, ExternalEventKind, FaultRuntimeHandle,
     RunTermination,
 };
-use ergo_supervisor::replay::{replay, replay_checked, replay_checked_strict, ReplayError};
+use ergo_supervisor::replay::{
+    replay, replay_checked, replay_checked_strict, ReplayError, StrictReplayExpectations,
+};
 use ergo_supervisor::{
     CaptureBundle, Constraints, Decision, EpisodeInvocationRecord, NO_ADAPTER_PROVENANCE,
 };
@@ -35,12 +37,22 @@ fn make_payload_record(id: &str, at: Duration, payload: &[u8]) -> ExternalEventR
 
 fn baseline_bundle(events: Vec<ExternalEventRecord>, constraints: Constraints) -> CaptureBundle {
     CaptureBundle {
-        capture_version: "v1".to_string(),
+        capture_version: "v2".to_string(),
         graph_id: ergo_adapter::GraphId::new("g"),
         config: constraints,
         events,
         decisions: Vec::new(),
         adapter_provenance: NO_ADAPTER_PROVENANCE.to_string(),
+        // Unit-test fixture value: this harness validates replay semantics, not runtime
+        // provenance computation. End-to-end provenance computation is exercised in CLI/runtime tests.
+        runtime_provenance: "rpv1:sha256:test".to_string(),
+    }
+}
+
+fn strict_expectations<'a>(adapter: &'a str, runtime: &'a str) -> StrictReplayExpectations<'a> {
+    StrictReplayExpectations {
+        expected_adapter_provenance: adapter,
+        expected_runtime_provenance: runtime,
     }
 }
 
@@ -195,7 +207,7 @@ fn no_wall_clock_usage() {
 
 #[test]
 fn sample_bundle_deserializes() {
-    let data = include_str!("data/capture_v1_sample.json");
+    let data = include_str!("data/capture_v2_sample.json");
     let bundle: CaptureBundle = serde_json::from_str(data).expect("sample bundle should parse");
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
     let records = replay(&bundle, runtime);
@@ -205,11 +217,13 @@ fn sample_bundle_deserializes() {
 #[test]
 fn legacy_adapter_version_field_fails_deserialization() {
     let legacy = r#"{
-        "capture_version":"v1",
+        "capture_version":"v2",
         "graph_id":"g",
         "config":{"max_in_flight":null,"max_per_window":null,"rate_window":null,"deadline":null,"max_retries":0},
         "events":[],
         "decisions":[],
+        "adapter_provenance":"none",
+        "runtime_provenance":"rpv1:sha256:test",
         "adapter_version":"1.2.3"
     }"#;
 
@@ -260,7 +274,12 @@ fn strict_replay_requires_adapter_for_provenanced_capture() {
     bundle.adapter_provenance = "adapter:oanda@1.0.0;sha256:abc".to_string();
 
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
-    let err = replay_checked_strict(&bundle, runtime, None).unwrap_err();
+    let err = replay_checked_strict(
+        &bundle,
+        runtime,
+        strict_expectations(NO_ADAPTER_PROVENANCE, "rpv1:sha256:test"),
+    )
+    .unwrap_err();
     assert!(matches!(
         err,
         ReplayError::AdapterRequiredForProvenancedCapture
@@ -274,8 +293,12 @@ fn strict_replay_rejects_provenance_mismatch() {
     bundle.adapter_provenance = "adapter:oanda@1.0.0;sha256:abc".to_string();
 
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
-    let err = replay_checked_strict(&bundle, runtime, Some("adapter:oanda@1.0.0;sha256:def"))
-        .unwrap_err();
+    let err = replay_checked_strict(
+        &bundle,
+        runtime,
+        strict_expectations("adapter:oanda@1.0.0;sha256:def", "rpv1:sha256:test"),
+    )
+    .unwrap_err();
     assert!(matches!(err, ReplayError::AdapterProvenanceMismatch { .. }));
 }
 
@@ -286,7 +309,11 @@ fn strict_replay_accepts_matching_provenance() {
     bundle.adapter_provenance = "adapter:oanda@1.0.0;sha256:abc".to_string();
 
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
-    let result = replay_checked_strict(&bundle, runtime, Some("adapter:oanda@1.0.0;sha256:abc"));
+    let result = replay_checked_strict(
+        &bundle,
+        runtime,
+        strict_expectations("adapter:oanda@1.0.0;sha256:abc", "rpv1:sha256:test"),
+    );
     assert!(result.is_ok());
 }
 
@@ -296,8 +323,12 @@ fn strict_replay_rejects_adapter_for_no_adapter_capture() {
     let bundle = baseline_bundle(events, Constraints::default());
 
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
-    let err = replay_checked_strict(&bundle, runtime, Some("adapter:oanda@1.0.0;sha256:abc"))
-        .unwrap_err();
+    let err = replay_checked_strict(
+        &bundle,
+        runtime,
+        strict_expectations("adapter:oanda@1.0.0;sha256:abc", "rpv1:sha256:test"),
+    )
+    .unwrap_err();
     assert!(matches!(
         err,
         ReplayError::UnexpectedAdapterProvidedForNoAdapterCapture
@@ -310,8 +341,26 @@ fn strict_replay_accepts_none_provenance_without_adapter() {
     let bundle = baseline_bundle(events, Constraints::default());
 
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
-    let result = replay_checked_strict(&bundle, runtime, None);
+    let result = replay_checked_strict(
+        &bundle,
+        runtime,
+        strict_expectations(NO_ADAPTER_PROVENANCE, "rpv1:sha256:test"),
+    );
     assert!(result.is_ok());
+}
+
+#[test]
+fn strict_replay_rejects_runtime_provenance_mismatch() {
+    let events = vec![make_event_record("e1", Duration::from_secs(0))];
+    let bundle = baseline_bundle(events, Constraints::default());
+    let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
+    let err = replay_checked_strict(
+        &bundle,
+        runtime,
+        strict_expectations(NO_ADAPTER_PROVENANCE, "rpv1:sha256:other"),
+    )
+    .unwrap_err();
+    assert!(matches!(err, ReplayError::RuntimeProvenanceMismatch { .. }));
 }
 
 /// REP-1b: Point-of-use hash verification catches mid-stream corruption.

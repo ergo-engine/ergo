@@ -218,6 +218,7 @@ fn unified_runtime_executes_compute_graph() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "const1".to_string(),
+                requested_version: "v1".to_string(),
                 version: "v1".to_string(),
             },
             parameters: HashMap::new(),
@@ -230,6 +231,7 @@ fn unified_runtime_executes_compute_graph() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "const2".to_string(),
+                requested_version: "v1".to_string(),
                 version: "v1".to_string(),
             },
             parameters: HashMap::new(),
@@ -242,6 +244,7 @@ fn unified_runtime_executes_compute_graph() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "add".to_string(),
+                requested_version: "v1".to_string(),
                 version: "v1".to_string(),
             },
             parameters: HashMap::new(),
@@ -329,6 +332,7 @@ fn parameters_flow_into_compute_execution() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "const_number".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([(
@@ -396,6 +400,7 @@ fn hello_world_graph_executes_with_core_catalog_and_registries() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "number_source".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([(
@@ -411,6 +416,7 @@ fn hello_world_graph_executes_with_core_catalog_and_registries() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "number_source".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([(
@@ -426,6 +432,7 @@ fn hello_world_graph_executes_with_core_catalog_and_registries() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "gt".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -438,6 +445,7 @@ fn hello_world_graph_executes_with_core_catalog_and_registries() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "emit_if_true".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -450,6 +458,7 @@ fn hello_world_graph_executes_with_core_catalog_and_registries() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "ack_action".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([(
@@ -547,6 +556,7 @@ fn validation_fails_on_missing_required_input() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "number_source".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([(
@@ -562,6 +572,7 @@ fn validation_fails_on_missing_required_input() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "number_source".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([(
@@ -577,6 +588,7 @@ fn validation_fails_on_missing_required_input() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "gt".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -589,6 +601,7 @@ fn validation_fails_on_missing_required_input() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "emit_if_true".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -601,6 +614,7 @@ fn validation_fails_on_missing_required_input() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "ack_action".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([(
@@ -688,6 +702,7 @@ fn r7_action_skipped_when_trigger_not_emitted() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "number_source".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([(
@@ -703,6 +718,7 @@ fn r7_action_skipped_when_trigger_not_emitted() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "number_source".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([(
@@ -718,6 +734,7 @@ fn r7_action_skipped_when_trigger_not_emitted() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "gt".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -730,6 +747,7 @@ fn r7_action_skipped_when_trigger_not_emitted() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "emit_if_true".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -742,6 +760,7 @@ fn r7_action_skipped_when_trigger_not_emitted() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "ack_action".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([(
@@ -840,6 +859,7 @@ fn validate_returns_error_when_edge_references_unknown_node() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "const1".to_string(),
+                requested_version: "v1".to_string(),
                 version: "v1".to_string(),
             },
             parameters: HashMap::new(),
@@ -888,6 +908,7 @@ fn validate_rejects_invalid_boundary_output_port() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "const1".to_string(),
+                requested_version: "v1".to_string(),
                 version: "v1".to_string(),
             },
             parameters: HashMap::new(),
@@ -934,6 +955,7 @@ fn validate_rejects_cycle_detected() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "c1".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -946,6 +968,7 @@ fn validate_rejects_cycle_detected() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "c2".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -1009,6 +1032,7 @@ fn validate_rejects_invalid_edge_kind() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "src".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -1021,6 +1045,7 @@ fn validate_rejects_invalid_edge_kind() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "act".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -1087,6 +1112,7 @@ fn validate_rejects_external_input_endpoint() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "compute".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -1135,6 +1161,7 @@ fn validate_rejects_missing_primitive_metadata() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "missing_compute".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -1171,6 +1198,7 @@ fn act_12_action_not_gated_rejected() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "test_action".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -1224,6 +1252,7 @@ fn comp_4_source_output_type_mismatch_rejected() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "source".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -1236,6 +1265,7 @@ fn comp_4_source_output_type_mismatch_rejected() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "compute".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -1323,6 +1353,7 @@ fn int_parameter_within_f64_exact_range_allowed() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "const_number".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             // X.11: Use Int at exact boundary (2^53)
@@ -1396,6 +1427,7 @@ fn int_parameter_out_of_range_rejected() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "const_number".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             // X.11: Use Int beyond exact range (2^53 + 1)
@@ -1481,6 +1513,7 @@ fn int_parameter_i64_min_rejected() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "const_number".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             // X.11: i64::MIN would panic with .abs(), must reject gracefully
@@ -1564,6 +1597,7 @@ fn validate_rejects_multiple_edges_to_same_input() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "const1".to_string(),
+                requested_version: "v1".to_string(),
                 version: "v1".to_string(),
             },
             parameters: HashMap::new(),
@@ -1576,6 +1610,7 @@ fn validate_rejects_multiple_edges_to_same_input() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "const2".to_string(),
+                requested_version: "v1".to_string(),
                 version: "v1".to_string(),
             },
             parameters: HashMap::new(),
@@ -1588,6 +1623,7 @@ fn validate_rejects_multiple_edges_to_same_input() {
             authoring_path: vec![],
             implementation: crate::cluster::ImplementationInstance {
                 impl_id: "add".to_string(),
+                requested_version: "v1".to_string(),
                 version: "v1".to_string(),
             },
             parameters: HashMap::new(),
