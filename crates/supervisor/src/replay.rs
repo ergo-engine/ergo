@@ -32,8 +32,15 @@ pub enum ReplayError {
     UnsupportedVersion { capture_version: String },
     HashMismatch { event_id: EventId },
     AdapterProvenanceMismatch { expected: String, got: String },
+    RuntimeProvenanceMismatch { expected: String, got: String },
     UnexpectedAdapterProvidedForNoAdapterCapture,
     AdapterRequiredForProvenancedCapture,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct StrictReplayExpectations<'a> {
+    pub expected_adapter_provenance: &'a str,
+    pub expected_runtime_provenance: &'a str,
 }
 
 pub fn validate_bundle(bundle: &CaptureBundle) -> Result<(), ReplayError> {
@@ -65,10 +72,10 @@ pub fn replay_checked<R: RuntimeInvoker + Clone>(
 pub fn replay_checked_strict<R: RuntimeInvoker + Clone>(
     bundle: &CaptureBundle,
     runtime: R,
-    adapter_fingerprint: Option<&str>,
+    expectations: StrictReplayExpectations<'_>,
 ) -> Result<Vec<EpisodeInvocationRecord>, ReplayError> {
     validate_bundle(bundle)?;
-    validate_replay_provenance(bundle, adapter_fingerprint)?;
+    validate_replay_provenance(bundle, expectations)?;
     replay_inner(bundle, runtime)
 }
 
@@ -100,24 +107,26 @@ fn replay_inner<R: RuntimeInvoker + Clone>(
 
 fn validate_replay_provenance(
     bundle: &CaptureBundle,
-    adapter_fingerprint: Option<&str>,
+    expectations: StrictReplayExpectations<'_>,
 ) -> Result<(), ReplayError> {
     let provenance = bundle.adapter_provenance.as_str();
     if provenance == NO_ADAPTER_PROVENANCE {
-        if adapter_fingerprint.is_some() {
+        if expectations.expected_adapter_provenance != NO_ADAPTER_PROVENANCE {
             return Err(ReplayError::UnexpectedAdapterProvidedForNoAdapterCapture);
         }
-        return Ok(());
-    }
-
-    let Some(got) = adapter_fingerprint else {
+    } else if expectations.expected_adapter_provenance == NO_ADAPTER_PROVENANCE {
         return Err(ReplayError::AdapterRequiredForProvenancedCapture);
-    };
-
-    if got != provenance {
+    } else if expectations.expected_adapter_provenance != provenance {
         return Err(ReplayError::AdapterProvenanceMismatch {
             expected: provenance.to_string(),
-            got: got.to_string(),
+            got: expectations.expected_adapter_provenance.to_string(),
+        });
+    }
+
+    if expectations.expected_runtime_provenance != bundle.runtime_provenance {
+        return Err(ReplayError::RuntimeProvenanceMismatch {
+            expected: expectations.expected_runtime_provenance.to_string(),
+            got: bundle.runtime_provenance.clone(),
         });
     }
 

@@ -17,11 +17,12 @@ use ergo_runtime::catalog::{
     build_core_catalog, core_registries, CorePrimitiveCatalog, CoreRegistries,
 };
 use ergo_runtime::cluster::{
-    expand, BoundaryKind, Cardinality, ClusterDefinition, ClusterLoader, Edge, ExpandedGraph,
-    GraphInputPlaceholder, InputPortSpec, InputRef, NodeInstance, NodeKind, OutputPortSpec,
-    OutputRef, ParameterBinding, ParameterSpec, ParameterType, ParameterValue, PortSpec,
-    PrimitiveCatalog, PrimitiveKind, Signature, ValueType, Version,
+    expand, BoundaryKind, Cardinality, ClusterDefinition, ClusterLoader, ClusterVersionIndex, Edge,
+    ExpandedGraph, GraphInputPlaceholder, InputPortSpec, InputRef, NodeInstance, NodeKind,
+    OutputPortSpec, OutputRef, ParameterBinding, ParameterSpec, ParameterType, ParameterValue,
+    PortSpec, PrimitiveCatalog, PrimitiveKind, Signature, ValueType, Version,
 };
+use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceScheme};
 use ergo_runtime::runtime::{
     ExecutionContext, Registries, RuntimeError, RuntimeEvent, RuntimeValue,
 };
@@ -29,6 +30,7 @@ use ergo_supervisor::{
     write_capture_bundle, CaptureJsonStyle, CapturingSession, Constraints, Decision, DecisionLog,
     DecisionLogEntry, NO_ADAPTER_PROVENANCE,
 };
+use semver::{Version as SemverVersion, VersionReq};
 use serde::Deserialize;
 
 struct NullLog;
@@ -39,6 +41,7 @@ impl DecisionLog for NullLog {
 
 pub(crate) struct PreparedGraphRuntime {
     pub graph_id: String,
+    pub runtime_provenance: String,
     pub expanded: ExpandedGraph,
     pub catalog: CorePrimitiveCatalog,
     pub registries: CoreRegistries,
@@ -56,9 +59,13 @@ pub(crate) fn prepare_graph_runtime(
     let registries = core_registries().map_err(|err| format!("core registries: {err:?}"))?;
     let expanded = expand(&root, &loader, &catalog)
         .map_err(|err| format!("graph expansion failed: {}", render_error_info(&err)))?;
+    let runtime_provenance =
+        compute_runtime_provenance(RuntimeProvenanceScheme::Rpv1, &root.id, &expanded, &catalog)
+            .map_err(|err| format!("runtime provenance compute failed: {err}"))?;
 
     Ok(PreparedGraphRuntime {
         graph_id: root.id,
+        runtime_provenance,
         expanded,
         catalog,
         registries,
@@ -75,14 +82,22 @@ pub fn run_graph_command(graph_path: &Path, args: &[String]) -> Result<(), Strin
 
     let dependency_summary =
         scan_adapter_dependencies(&prepared.expanded, &prepared.catalog, &prepared.registries)?;
+    let PreparedGraphRuntime {
+        graph_id,
+        runtime_provenance,
+        expanded,
+        catalog,
+        registries,
+    } = prepared;
     run_canonical(
         graph_path,
-        &prepared.graph_id,
+        &graph_id,
+        &runtime_provenance,
         opts,
         dependency_summary,
-        prepared.expanded,
-        prepared.catalog,
-        prepared.registries,
+        expanded,
+        catalog,
+        registries,
     )
 }
 
@@ -108,6 +123,7 @@ fn run_direct(
 fn run_canonical(
     graph_path: &Path,
     graph_id: &str,
+    runtime_provenance: &str,
     opts: RunGraphOptions,
     dependency_summary: AdapterDependencySummary,
     expanded: ergo_runtime::cluster::ExpandedGraph,
@@ -177,6 +193,7 @@ fn run_canonical(
         NullLog,
         runtime,
         adapter_provenance,
+        runtime_provenance.to_string(),
     );
 
     let items = fixture::parse_fixture(fixture_path).map_err(|err| {
@@ -753,6 +770,24 @@ impl ClusterLoader for PreloadedClusterLoader {
     }
 }
 
+impl ClusterVersionIndex for PreloadedClusterLoader {
+    fn available_versions(&self, id: &str) -> Vec<Version> {
+        let mut versions = self
+            .clusters
+            .keys()
+            .filter_map(|(candidate_id, version)| {
+                if candidate_id == id {
+                    Some(version.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        versions.sort();
+        versions
+    }
+}
+
 fn load_cluster_tree(
     root_path: &Path,
     root: &ClusterDefinition,
@@ -825,11 +860,10 @@ impl ClusterTreeBuilder {
             else {
                 continue;
             };
-            let nested_key = (cluster_id.clone(), version.clone());
-
-            if self.visiting_keys.contains(&nested_key) {
+            let cluster_paths = resolve_cluster_paths(base_dir, cluster_id, &self.search_paths);
+            if cluster_paths.is_empty() {
                 return Err(format!(
-                    "circular cluster reference detected for '{}@{}' referenced by node '{}' in '{}'",
+                    "missing cluster file for '{}@{}' referenced by node '{}' in '{}'",
                     cluster_id,
                     version,
                     node.id,
@@ -837,63 +871,32 @@ impl ClusterTreeBuilder {
                 ));
             }
 
-            let cluster_path = resolve_cluster_path(base_dir, cluster_id, &self.search_paths)
-                .ok_or_else(|| {
+            for cluster_path in cluster_paths {
+                let nested = parse_graph_file(&cluster_path).map_err(|err| {
                     format!(
-                        "missing cluster file for '{}@{}' referenced by node '{}' in '{}'",
+                        "failed parsing nested cluster '{}@{}' at '{}': {}",
                         cluster_id,
                         version,
-                        node.id,
-                        path.display()
+                        cluster_path.display(),
+                        err
                     )
                 })?;
-            let canonical_nested_path = canonicalize_or_self(&cluster_path);
 
-            if let Some(existing_path) = self.cluster_sources.get(&nested_key) {
-                if existing_path != &canonical_nested_path {
+                if nested.id != *cluster_id {
                     return Err(format!(
-                        "cluster '{}@{}' is defined by multiple files: '{}' and '{}'",
+                        "cluster id mismatch in '{}': expected '{}', found '{}'",
+                        cluster_path.display(),
                         cluster_id,
-                        version,
-                        existing_path.display(),
-                        canonical_nested_path.display()
+                        nested.id
                     ));
                 }
+
+                if !selector_matches_version(version, &nested.version)? {
+                    continue;
+                }
+
+                self.visit(&cluster_path, nested)?;
             }
-
-            if self.clusters.contains_key(&nested_key) {
-                continue;
-            }
-
-            let nested = parse_graph_file(&cluster_path).map_err(|err| {
-                format!(
-                    "failed parsing nested cluster '{}@{}' at '{}': {}",
-                    cluster_id,
-                    version,
-                    cluster_path.display(),
-                    err
-                )
-            })?;
-
-            if nested.id != *cluster_id {
-                return Err(format!(
-                    "cluster id mismatch in '{}': expected '{}', found '{}'",
-                    cluster_path.display(),
-                    cluster_id,
-                    nested.id
-                ));
-            }
-
-            if nested.version != *version {
-                return Err(format!(
-                    "cluster version mismatch in '{}': expected '{}', found '{}'",
-                    cluster_path.display(),
-                    version,
-                    nested.version
-                ));
-            }
-
-            self.visit(&cluster_path, nested)?;
         }
 
         self.visiting_paths.remove(&canonical);
@@ -902,11 +905,11 @@ impl ClusterTreeBuilder {
     }
 }
 
-fn resolve_cluster_path(
+fn resolve_cluster_paths(
     base_dir: &Path,
     cluster_id: &str,
     search_paths: &[PathBuf],
-) -> Option<PathBuf> {
+) -> Vec<PathBuf> {
     let filename = format!("{cluster_id}.yaml");
 
     let mut candidates = vec![
@@ -919,7 +922,18 @@ fn resolve_cluster_path(
         candidates.push(path.join("clusters").join(&filename));
     }
 
-    candidates.into_iter().find(|candidate| candidate.exists())
+    let mut seen = HashSet::new();
+    let mut resolved = Vec::new();
+    for candidate in candidates {
+        if !candidate.exists() {
+            continue;
+        }
+        let canonical = canonicalize_or_self(&candidate);
+        if seen.insert(canonical) {
+            resolved.push(candidate);
+        }
+    }
+    resolved
 }
 
 fn canonicalize_or_self(path: &Path) -> PathBuf {
@@ -1356,6 +1370,65 @@ impl RawPortSpec {
     }
 }
 
+fn version_migration_guidance() -> &'static str {
+    "use strict semver (e.g. '1.2.3') or a semver constraint (e.g. '^1.2'); migrate legacy tags with tools/migrate_graph_versions.py --check"
+}
+
+fn normalize_numeric_semver(raw: &str) -> Option<String> {
+    let parts: Vec<&str> = raw.split('.').collect();
+    if parts.is_empty() || parts.len() > 2 {
+        return None;
+    }
+    if !parts
+        .iter()
+        .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+    {
+        return None;
+    }
+    match parts.len() {
+        1 => Some(format!("{}.0.0", parts[0])),
+        2 => Some(format!("{}.{}.0", parts[0], parts[1])),
+        _ => None,
+    }
+}
+
+fn parse_exact_semver(value: &str, context: &str) -> Result<String, String> {
+    SemverVersion::parse(value)
+        .map(|version| version.to_string())
+        .map_err(|_| {
+            format!(
+                "invalid {context} '{value}': expected strict semver (x.y.z); {}",
+                version_migration_guidance()
+            )
+        })
+}
+
+fn parse_version_selector(value: &str, context: &str) -> Result<String, String> {
+    if let Ok(version) = SemverVersion::parse(value) {
+        return Ok(version.to_string());
+    }
+    VersionReq::parse(value)
+        .map(|_| value.to_string())
+        .map_err(|_| {
+            format!(
+                "invalid {context} '{value}': expected strict semver or semver constraint; {}",
+                version_migration_guidance()
+            )
+        })
+}
+
+fn selector_matches_version(selector: &str, version: &str) -> Result<bool, String> {
+    let candidate = SemverVersion::parse(version).map_err(|_| {
+        format!("cluster discovery found non-semver version '{version}' in nested cluster file")
+    })?;
+    if let Ok(exact) = SemverVersion::parse(selector) {
+        return Ok(candidate == exact);
+    }
+    let req = VersionReq::parse(selector)
+        .map_err(|_| format!("invalid cluster selector '{selector}' during discovery"))?;
+    Ok(req.matches(&candidate))
+}
+
 fn parse_packed_id_version(value: &str, field: &str) -> Result<(String, String), String> {
     let (id, version) = value.rsplit_once('@').ok_or_else(|| {
         format!(
@@ -1370,7 +1443,8 @@ fn parse_packed_id_version(value: &str, field: &str) -> Result<(String, String),
         ));
     }
     validate_general_identifier(id, &format!("{field} id"), false)?;
-    Ok((id.to_string(), version.to_string()))
+    let version = parse_version_selector(version, &format!("{field} version selector"))?;
+    Ok((id.to_string(), version))
 }
 
 fn parse_node_port_ref(value: &str, label: &str) -> Result<(String, String), String> {
@@ -1387,8 +1461,16 @@ fn parse_node_port_ref(value: &str, label: &str) -> Result<(String, String), Str
 
 fn parse_version_value(value: &serde_yaml::Value) -> Result<String, String> {
     match value {
-        serde_yaml::Value::String(s) => Ok(s.clone()),
-        serde_yaml::Value::Number(n) => Ok(n.to_string()),
+        serde_yaml::Value::String(s) => parse_exact_semver(s, "cluster version"),
+        serde_yaml::Value::Number(n) => {
+            let raw = n.to_string();
+            let normalized = normalize_numeric_semver(&raw).ok_or_else(|| {
+                format!(
+                    "invalid cluster version number '{raw}': expected semver-like number (e.g. 1 or 1.2) or use a quoted semver string"
+                )
+            })?;
+            parse_exact_semver(&normalized, "cluster version")
+        }
         _ => Err(format!(
             "version must be a string or number, got '{value:?}'"
         )),
@@ -1960,6 +2042,7 @@ outputs:
         let err = run_canonical(
             &graph_path,
             &root.id,
+            "rpv1:sha256:test",
             opts,
             dependency,
             expanded,
@@ -2263,7 +2346,49 @@ edges: []
 outputs: {}
 "#;
         let parsed = parse_graph_str(yaml, Path::new("inline.yaml")).expect("parse graph");
-        assert_eq!(parsed.version, "1.0");
+        assert_eq!(parsed.version, "1.0.0");
+    }
+
+    #[test]
+    fn legacy_v_prefix_versions_are_rejected_with_migration_guidance() {
+        let yaml = r#"
+kind: cluster
+id: legacy
+version: "v1"
+nodes: {}
+edges: []
+outputs: {}
+"#;
+        let err =
+            parse_graph_str(yaml, Path::new("legacy.yaml")).expect_err("legacy v-prefix version");
+        assert!(err.contains("strict semver"), "unexpected error: {err}");
+        assert!(
+            err.contains("migrate_graph_versions.py"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn semver_constraint_selector_parses_for_node_refs() {
+        let yaml = r#"
+kind: cluster
+id: root
+version: "1.0.0"
+nodes:
+  child:
+    impl: add@^0.1
+edges: []
+outputs: {}
+"#;
+        let parsed = parse_graph_str(yaml, Path::new("constraint.yaml")).expect("parse graph");
+        let node = parsed.nodes.get("child").expect("child node");
+        match &node.kind {
+            NodeKind::Impl { impl_id, version } => {
+                assert_eq!(impl_id, "add");
+                assert_eq!(version, "^0.1");
+            }
+            other => panic!("expected impl node, got {other:?}"),
+        }
     }
 
     #[test]

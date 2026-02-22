@@ -6,7 +6,7 @@ use crate::action::{
 };
 use crate::cluster::{
     Cardinality, InputMetadata, OutputMetadata, ParameterMetadata, ParameterType, ParameterValue,
-    PrimitiveCatalog, PrimitiveKind, PrimitiveMetadata, ValueType, Version,
+    PrimitiveCatalog, PrimitiveKind, PrimitiveMetadata, PrimitiveVersionIndex, ValueType, Version,
 };
 use crate::common;
 use crate::common::ValidationError;
@@ -384,6 +384,24 @@ impl PrimitiveCatalog for CorePrimitiveCatalog {
         self.metadata
             .get(&(id.to_string(), version.clone()))
             .cloned()
+    }
+}
+
+impl PrimitiveVersionIndex for CorePrimitiveCatalog {
+    fn available_versions(&self, id: &str) -> Vec<Version> {
+        let mut versions = self
+            .metadata
+            .keys()
+            .filter_map(|(candidate_id, version)| {
+                if candidate_id == id {
+                    Some(version.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        versions.sort();
+        versions
     }
 }
 

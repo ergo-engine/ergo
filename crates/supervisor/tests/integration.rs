@@ -14,6 +14,7 @@ use ergo_runtime::cluster::{
     ExpandedEdge, ExpandedEndpoint, ExpandedGraph, ExpandedNode, ImplementationInstance,
     OutputPortSpec, OutputRef, ParameterValue,
 };
+use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceScheme};
 use ergo_supervisor::demo::demo_1;
 use ergo_supervisor::replay::replay;
 use ergo_supervisor::{
@@ -59,6 +60,7 @@ fn build_hello_world_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "number_source".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([("value".to_string(), ParameterValue::Number(3.0))]),
@@ -72,6 +74,7 @@ fn build_hello_world_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "number_source".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([("value".to_string(), ParameterValue::Number(1.0))]),
@@ -85,6 +88,7 @@ fn build_hello_world_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "gt".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -98,6 +102,7 @@ fn build_hello_world_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "emit_if_true".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::new(),
@@ -111,6 +116,7 @@ fn build_hello_world_graph() -> ExpandedGraph {
             authoring_path: vec![],
             implementation: ImplementationInstance {
                 impl_id: "ack_action".to_string(),
+                requested_version: "0.1.0".to_string(),
                 version: "0.1.0".to_string(),
             },
             parameters: HashMap::from([("accept".to_string(), ParameterValue::Bool(true))]),
@@ -242,12 +248,20 @@ fn capturing_session_enables_round_trip_replay() {
         core_registries.clone(),
         AdapterProvides::default(),
     );
+    let runtime_provenance = compute_runtime_provenance(
+        RuntimeProvenanceScheme::Rpv1,
+        "hello_world_capture",
+        graph.as_ref(),
+        catalog.as_ref(),
+    )
+    .expect("runtime provenance should compute");
 
     let mut session = CapturingSession::new(
         GraphId::new("hello_world_capture"),
         Constraints::default(),
         CapturingLog::new(),
         runtime,
+        runtime_provenance,
     );
 
     let event = ExternalEvent::mechanical(EventId::new("capture_event"), ExternalEventKind::Pump);
@@ -300,11 +314,19 @@ fn demo_1_complex_graph_executes_and_replays() {
         core_registries.clone(),
         AdapterProvides::default(),
     );
+    let runtime_provenance = compute_runtime_provenance(
+        RuntimeProvenanceScheme::Rpv1,
+        "demo_1",
+        graph.as_ref(),
+        catalog.as_ref(),
+    )
+    .expect("runtime provenance should compute");
     let mut session = CapturingSession::new(
         GraphId::new("demo_1"),
         Constraints::default(),
         CapturingLog::new(),
         runtime,
+        runtime_provenance,
     );
 
     let event_1 = ExternalEvent::mechanical(EventId::new("demo_evt_1"), ExternalEventKind::Command);

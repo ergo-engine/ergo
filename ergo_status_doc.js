@@ -547,8 +547,8 @@ const doc = new Document({
               cell("Acknowledged", 1800),
             ]}),
             new TableRow({ children: [
-              cellBold("Version constraints are exact-match only", 3200),
-              cell("TODO(I.6) in cluster.rs. No semver parsing, no range resolution. Catalog and cluster loader do literal string match on version.", 4360),
+              cellBold("Version constraints enforced via semver resolution", 3200),
+              cell("I.6 is enforced in cluster.rs via resolve_version_selector() (used by primitive and cluster expansion resolution). Invalid selectors and unsatisfied constraints return typed ExpandError I.6 variants.", 4360),
               cell("Acknowledged", 1800),
             ]}),
             new TableRow({ children: [

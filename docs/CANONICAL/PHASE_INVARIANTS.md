@@ -96,7 +96,7 @@ These tests are permanent. Failure indicates invariant regression.
 
 ---
 
-## Canonical Run / Replay Strictness (v1)
+## Canonical Run / Replay Strictness (v2)
 
 | ID | Invariant | Enforcement Locus | Status |
 |----|-----------|-------------------|--------|
@@ -107,7 +107,8 @@ These tests are permanent. Failure indicates invariant regression.
 Notes:
 - Adapter-dependent graph detection is based on required source context keys and action writes.
 - Adapter-independent canonical captures use explicit provenance sentinel `none`.
-- Capture bundles are strict v1 (`capture_version: "v1"`): `adapter_provenance` is required, unknown fields are rejected, and legacy `adapter_version` bundles fail deserialization.
+- Capture bundles are strict v2 (`capture_version: "v2"`): `adapter_provenance` and `runtime_provenance` are required, unknown fields are rejected, and legacy `adapter_version` bundles fail deserialization.
+- Repo policy: capture bundles and fixtures are ephemeral/regenerated artifacts; backward compatibility across bundle schema revisions is not guaranteed inside this repo.
 
 ---
 
@@ -235,7 +236,7 @@ Division by zero produces `ComputeError::DivisionByZero`, not IEEE 754 inf/NaN.
 | I.3 | All required parameters are either bound or exposed | CLUSTER_SPEC.md §6.2 | — | — | ✓ | ✓ |
 | I.4 | Bound parameter values are type-compatible | CLUSTER_SPEC.md §6.2 | — | — | ✓ | ✓ |
 | I.5 | Exposed parameters reference parameters that exist in parent context | CLUSTER_SPEC.md §6.2 | — | — | ✓ | ✓ |
-| I.6 | Version constraints are satisfied | CLUSTER_SPEC.md §6.2 | — | — | — | — |
+| I.6 | Version constraints are satisfied | CLUSTER_SPEC.md §6.2 | — | — | ✓ | ✓ |
 | I.7 | Parameter bindings reference only declared parameters | CLUSTER_SPEC.md §6.2 | — | — | ✓ | ✓ |
 
 ### Notes
@@ -244,7 +245,7 @@ Division by zero produces `ComputeError::DivisionByZero`, not IEEE 754 inf/NaN.
   - **Strengthened (2025-01-05):** Exposed bindings now propagate through nested cluster hierarchies via `resolve_bindings_with_context()` and `build_resolved_params()`. Prior behavior only validated at immediate cluster boundary; multi-level nesting (Parent → Middle → Inner → Leaf) now correctly receives propagated values. Added `ExpandError::UnresolvedExposedBinding { node_id, parameter, referenced }` for primitives with dangling Exposed bindings. Tests: `exposed_binding_propagates_to_leaf_primitive`, `unresolved_exposed_binding_rejected`. Location: `cluster.rs:expand_with_context()`.
   - **Default application (2025-01-05):** Parameters with `default: Some(value)` in either `ParameterMetadata` (primitives) or `ParameterSpec` (clusters) are automatically applied during expansion when no binding is provided. Enforced by `resolve_impl_parameters()` (primitives, cluster.rs:988-1028) and `build_resolved_params()` (clusters, cluster.rs:1034-1074). Tests: `defaulted_parameter_propagates_to_leaf`, `explicit_binding_overrides_default`, `missing_required_param_no_default_rejected`, `cluster_parameter_default_propagates_to_nested`.
 - **I.7:** Enforced in `cluster.rs` across three functions: `resolve_impl_parameters()` (primitive nodes), `build_resolved_params()` (nested cluster instantiation), and `validate_parameter_bindings()` (nested cluster pre-validation). Each builds a `HashSet` of declared parameter names from the target's spec and rejects any binding key absent from that set. Error: `ExpandError::UndeclaredParameter { node_id, parameter }`. Tests: `undeclared_primitive_parameter_binding_rejected`, `undeclared_cluster_parameter_binding_rejected`. Prior to this fix, undeclared bindings were silently dropped — a typo in a parameter name would cause the primitive to receive its default value with no error. See `ESCALATION_PARAM_SILENT_DROP.md` for the full finding.
-- **I.6:** Version constraint validation **NOT IMPLEMENTED**. Cluster expansion performs exact-match lookup via `ClusterLoader::load()` and `PrimitiveCatalog::get()`. Constraint syntax (e.g., `>=1.0.0, <2.0.0`) is not parsed. See `TODO(I.6)` markers at `NodeKind::Impl` and `NodeKind::Cluster` resolution sites in `crates/runtime/src/cluster.rs`. Tracked in issue #6, deferred to future `version-constraints` branch.
+- **I.6:** Enforced in `crates/runtime/src/cluster.rs` by selector parsing + deterministic resolution (highest satisfying semver) using `ClusterVersionIndex` / `PrimitiveVersionIndex`. Errors: `InvalidVersionSelector`, `UnsatisfiedVersionConstraint`, `InvalidAvailableVersion`. CLI graph parsing in `crates/ergo-cli/src/graph_yaml.rs` also enforces strict semver for cluster definition versions and node selectors (exact semver or semver constraints).
 
 ---
 

@@ -676,6 +676,7 @@ mod tests {
                     authoring_path: vec![],
                     implementation: ImplementationInstance {
                         impl_id: manifest.id.clone(),
+                        requested_version: manifest.version.clone(),
                         version: manifest.version.clone(),
                     },
                     parameters: HashMap::new(),
@@ -717,6 +718,7 @@ mod tests {
                     authoring_path: vec![],
                     implementation: ImplementationInstance {
                         impl_id: "number_source".to_string(),
+                        requested_version: "0.1.0".to_string(),
                         version: "0.1.0".to_string(),
                     },
                     parameters: HashMap::from([(

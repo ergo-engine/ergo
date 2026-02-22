@@ -385,7 +385,7 @@ the phase invariants in `docs/CANONICAL/PHASE_INVARIANTS.md`.
 | I.3 | Required parameters bound or exposed | `cluster.rs::validate_parameter_bindings` / `build_resolved_params` | `ExpandError::MissingRequiredParameter` / `UnresolvedExposedBinding` |
 | I.4 | Bound parameter values type-compatible | `cluster.rs::validate_parameter_bindings` | `ExpandError::ParameterBindingTypeMismatch` / `ExposedParameterTypeMismatch` |
 | I.5 | Exposed parameters exist in parent | `cluster.rs::validate_parameter_bindings` | `ExpandError::ExposedParameterNotFound` |
-| I.6 | Version constraints satisfied | — | **Not implemented** (exact-match only; see `TODO(I.6)`) |
+| I.6 | Version constraints satisfied | `cluster.rs::expand_with_context` (selector resolution) | `ExpandError::InvalidVersionSelector` / `UnsatisfiedVersionConstraint` / `InvalidAvailableVersion` |
 | I.7 | Parameter bindings reference only declared parameters | `cluster.rs::resolve_impl_parameters` / `build_resolved_params` / `validate_parameter_bindings` | `ExpandError::UndeclaredParameter` |
 
 **Expansion-Time (E.*)**
