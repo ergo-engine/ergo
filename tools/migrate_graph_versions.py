@@ -66,6 +66,73 @@ def is_strict_semver(value: str) -> bool:
     return bool(SEMVER_EXACT_RE.fullmatch(value))
 
 
+# A single semver comparator: optional operator + partial version.
+# This intentionally accepts the subset we need to align with Rust `semver`
+# VersionReq syntax for packed selectors, including wildcard forms like
+# `1.*` / `1.x` / `1.2.x`.
+_COMPARATOR_RE = re.compile(
+    r"^(?P<op>\^|~|>=|<=|>|<|=)?\s*"
+    r"(?P<body>"
+    r"[0-9xX*]+(?:\.[0-9xX*]+){0,2}"
+    r"(?:-[0-9A-Za-z.-]+)?"
+    r"(?:\+[0-9A-Za-z.-]+)?"
+    r")$"
+)
+
+
+def _is_valid_req_comparator(part: str) -> bool:
+    if part in {"*", "x", "X"}:
+        return True
+    m = _COMPARATOR_RE.fullmatch(part)
+    if not m:
+        return False
+
+    body = m.group("body")
+    # Split core from optional pre-release/build metadata.
+    core = body
+    if "+" in core:
+        core, _ = core.split("+", 1)
+    if "-" in core:
+        core, _ = core.split("-", 1)
+
+    segs = core.split(".")
+    if not 1 <= len(segs) <= 3:
+        return False
+    wildcard = {"*", "x", "X"}
+    is_wild = [s in wildcard for s in segs]
+
+    # If major is a wildcard, it must be the entire comparator (`*`, `x`, `X`).
+    if is_wild[0]:
+        return len(segs) == 1 and m.group("op") is None
+
+    # Wildcards must be trailing only (e.g. `1.x`, `1.2.*`), and wildcard
+    # comparators do not permit pre-release/build qualifiers.
+    if any(is_wild):
+        first_wild = next(i for i, flag in enumerate(is_wild) if flag)
+        if any(not flag for flag in is_wild[first_wild:]):
+            return False
+        if "-" in body or "+" in body:
+            return False
+
+    return True
+
+
+def is_semver_constraint(value: str) -> bool:
+    """Return True if *value* is a valid semver constraint (not exact version).
+
+    A constraint is a comma-separated list of comparators, where each
+    comparator is an optional operator (^, ~, >=, <=, >, <, =) followed
+    by a partial or full version number.  This mirrors what the Rust
+    ``semver`` crate accepts for ``VersionReq::parse``.
+    """
+    if is_strict_semver(value):
+        return False
+    parts = [p.strip() for p in value.split(",")]
+    if not parts or any(not p for p in parts):
+        return False
+    return all(_is_valid_req_comparator(p) for p in parts)
+
+
 def analyze_file(path: Path, rewrite: bool) -> tuple[list[Finding], str | None]:
     original = path.read_text()
     lines = original.splitlines()
@@ -129,6 +196,11 @@ def analyze_file(path: Path, rewrite: bool) -> tuple[list[Finding], str | None]:
             continue
 
         if is_strict_semver(selector):
+            continue
+
+        # Semver constraints (^0.1, >=1.0,<2.0, etc.) are valid packed
+        # selectors in graph_yaml.rs — don't flag them.
+        if is_semver_constraint(selector):
             continue
 
         replacement_selector = normalize_v_prefixed(selector)
