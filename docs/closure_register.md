@@ -552,3 +552,6 @@ PR #35, commit 7baa74c
 - `replay_checked` remains non-strict (bundle validation + hash validation + replay only).
 - `replay_checked_strict` requires explicit adapter provenance (`NO_ADAPTER_PROVENANCE` for no-adapter captures) and runtime provenance.
 - v1 capture support is intentionally removed in the final state.
+
+### PR/Commit
+commit ea9d94f
