@@ -24,15 +24,17 @@ fn make_event_record(id: &str, at: Duration) -> ExternalEventRecord {
 }
 
 fn make_payload_record(id: &str, at: Duration, payload: &[u8]) -> ExternalEventRecord {
-    let event = ExternalEvent::with_payload(
-        EventId::new(id.to_string()),
-        ExternalEventKind::Command,
-        EventTime::from_duration(at),
-        EventPayload {
-            data: payload.to_vec(),
-        },
-    );
-    ExternalEventRecord::from_event(&event)
+    let payload = EventPayload {
+        data: payload.to_vec(),
+    };
+    let payload_hash = hash_payload(&payload);
+    ExternalEventRecord {
+        event_id: EventId::new(id.to_string()),
+        event_time: EventTime::from_duration(at),
+        kind: ExternalEventKind::Command,
+        payload,
+        payload_hash,
+    }
 }
 
 fn baseline_bundle(events: Vec<ExternalEventRecord>, constraints: Constraints) -> CaptureBundle {
@@ -249,6 +251,25 @@ fn replay_rejects_corrupted_bundle() {
     assert!(matches!(
         err,
         ReplayError::HashMismatch { ref event_id } if event_id == &EventId::new("e_bad")
+    ));
+}
+
+#[test]
+fn replay_rejects_non_object_payload_even_when_hash_matches() {
+    let events = vec![make_payload_record(
+        "e_bad_shape",
+        Duration::from_secs(0),
+        br#""not-an-object""#,
+    )];
+    let bundle = baseline_bundle(events, Constraints::default());
+
+    let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
+    let err = replay_checked(&bundle, runtime).unwrap_err();
+
+    assert!(matches!(
+        err,
+        ReplayError::InvalidPayload { ref event_id, .. }
+            if event_id == &EventId::new("e_bad_shape")
     ));
 }
 

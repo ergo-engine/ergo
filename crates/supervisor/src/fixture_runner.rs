@@ -145,12 +145,13 @@ fn event_from_payload(
     if let Some(payload) = payload {
         let data = serde_json::to_vec(&payload)
             .map_err(|err| format!("fixture payload encode error for event '{event_id}': {err}"))?;
-        Ok(ExternalEvent::with_payload(
+        ExternalEvent::with_payload(
             event_id_value,
             kind,
             EventTime::default(),
             EventPayload { data },
-        ))
+        )
+        .map_err(|err| format!("fixture payload invalid for event '{event_id}': {err}"))
     } else {
         Ok(ExternalEvent::mechanical(event_id_value, kind))
     }

@@ -31,6 +31,7 @@ impl MemoryDecisionLog {
 pub enum ReplayError {
     UnsupportedVersion { capture_version: String },
     HashMismatch { event_id: EventId },
+    InvalidPayload { event_id: EventId, detail: String },
     AdapterProvenanceMismatch { expected: String, got: String },
     RuntimeProvenanceMismatch { expected: String, got: String },
     UnexpectedAdapterProvidedForNoAdapterCapture,
@@ -139,6 +140,10 @@ fn rehydrate_event(
     record.rehydrate_checked().map_err(|err| match err {
         CaptureError::PayloadHashMismatch { .. } => ReplayError::HashMismatch {
             event_id: record.event_id.clone(),
+        },
+        CaptureError::InvalidPayload { detail } => ReplayError::InvalidPayload {
+            event_id: record.event_id.clone(),
+            detail,
         },
     })
 }

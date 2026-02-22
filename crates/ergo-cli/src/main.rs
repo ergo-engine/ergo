@@ -605,6 +605,15 @@ fn format_replay_error(err: &ReplayError) -> String {
             .with_where(format!("event '{}'", event_id.as_str()))
             .with_fix("re-run canonical capture to produce an uncorrupted bundle"),
         ),
+        ReplayError::InvalidPayload { event_id, detail } => render_cli_error(
+            &CliErrorInfo::new(
+                "replay.invalid_payload",
+                format!("invalid payload for event '{}'", event_id.as_str()),
+            )
+            .with_where(format!("event '{}'", event_id.as_str()))
+            .with_fix("re-capture with object payloads or repair the capture bundle payload bytes")
+            .with_detail(detail.clone()),
+        ),
         ReplayError::AdapterProvenanceMismatch { expected, got } => render_cli_error(
             &CliErrorInfo::new(
                 "replay.adapter_provenance_mismatch",

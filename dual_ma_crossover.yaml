@@ -1,0 +1,47 @@
+kind: cluster
+id: dual_ma_crossover
+version: "0.1.0"
+
+nodes:
+  spread:
+    impl: context_number_source@0.1.0
+
+  zero:
+    impl: number_source@0.1.0
+    params:
+      value: 0.0
+
+  is_bullish:
+    impl: gt@0.1.0
+
+  is_bearish:
+    impl: not@0.1.0
+
+  emit_buy:
+    impl: emit_if_true@0.1.0
+
+  emit_sell:
+    impl: emit_if_true@0.1.0
+
+  buy:
+    impl: annotate_action@0.1.0
+    params:
+      note: "BUY: fast SMA crossed above slow SMA"
+
+  sell:
+    impl: annotate_action@0.1.0
+    params:
+      note: "SELL: fast SMA crossed below slow SMA"
+
+edges:
+  - spread.value -> is_bullish.a
+  - zero.value -> is_bullish.b
+  - is_bullish.result -> emit_buy.input
+  - is_bullish.result -> is_bearish.value
+  - is_bearish.result -> emit_sell.input
+  - emit_buy.event -> buy.event
+  - emit_sell.event -> sell.event
+
+outputs:
+  buy_outcome: buy.outcome
+  sell_outcome: sell.outcome
