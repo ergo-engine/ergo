@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -209,6 +210,25 @@ impl Default for EventPayload {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExternalEventPayloadError {
+    InvalidJson { detail: String },
+    PayloadMustBeJsonObject { got: String },
+}
+
+impl fmt::Display for ExternalEventPayloadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidJson { detail } => write!(f, "payload bytes are not valid JSON: {detail}"),
+            Self::PayloadMustBeJsonObject { got } => {
+                write!(f, "payload must be a JSON object, got {got}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ExternalEventPayloadError {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExternalEventKind {
     /// Periodic event for graph evaluation cycles.
@@ -259,9 +279,9 @@ impl ExternalEvent {
         kind: ExternalEventKind,
         at: EventTime,
         payload: EventPayload,
-    ) -> Self {
-        let context = ExecutionContext::new(context_from_payload(&payload));
-        Self::new(event_id, kind, context, at, payload)
+    ) -> Result<Self, ExternalEventPayloadError> {
+        let context = ExecutionContext::new(context_from_payload(&payload)?);
+        Ok(Self::new(event_id, kind, context, at, payload))
     }
 
     pub fn context(&self) -> &ExecutionContext {
@@ -285,23 +305,33 @@ impl ExternalEvent {
     }
 }
 
-fn context_from_payload(payload: &EventPayload) -> RuntimeExecutionContext {
-    let values = payload_values(payload);
-    RuntimeExecutionContext::from_values(values)
+fn context_from_payload(
+    payload: &EventPayload,
+) -> Result<RuntimeExecutionContext, ExternalEventPayloadError> {
+    let values = payload_values(payload)?;
+    Ok(RuntimeExecutionContext::from_values(values))
 }
 
-fn payload_values(payload: &EventPayload) -> HashMap<String, Value> {
+fn payload_values(
+    payload: &EventPayload,
+) -> Result<HashMap<String, Value>, ExternalEventPayloadError> {
     if payload.data.is_empty() {
-        return HashMap::new();
+        return Ok(HashMap::new());
     }
 
     let parsed: serde_json::Value = match serde_json::from_slice(&payload.data) {
         Ok(value) => value,
-        Err(_) => return HashMap::new(),
+        Err(err) => {
+            return Err(ExternalEventPayloadError::InvalidJson {
+                detail: err.to_string(),
+            });
+        }
     };
 
     let Some(object) = parsed.as_object() else {
-        return HashMap::new();
+        return Err(ExternalEventPayloadError::PayloadMustBeJsonObject {
+            got: json_type_name(&parsed).to_string(),
+        });
     };
 
     let mut values = HashMap::new();
@@ -311,7 +341,18 @@ fn payload_values(payload: &EventPayload) -> HashMap<String, Value> {
         }
     }
 
-    values
+    Ok(values)
+}
+
+fn json_type_name(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
 }
 
 fn json_to_value(value: &serde_json::Value) -> Option<Value> {
@@ -604,6 +645,39 @@ mod tests {
         let from_tick: ExternalEventKind = serde_json::from_str("\"Tick\"").unwrap();
         assert_eq!(from_pump, ExternalEventKind::Pump);
         assert_eq!(from_tick, ExternalEventKind::Pump);
+    }
+
+    #[test]
+    fn external_event_with_payload_rejects_non_object_json() {
+        let err = ExternalEvent::with_payload(
+            EventId::new("e1"),
+            ExternalEventKind::Command,
+            EventTime::default(),
+            EventPayload {
+                data: br#"[1,2,3]"#.to_vec(),
+            },
+        )
+        .expect_err("top-level array payload must be rejected");
+
+        assert!(matches!(
+            err,
+            ExternalEventPayloadError::PayloadMustBeJsonObject { ref got } if got == "array"
+        ));
+    }
+
+    #[test]
+    fn external_event_with_payload_rejects_invalid_json_bytes() {
+        let err = ExternalEvent::with_payload(
+            EventId::new("e1"),
+            ExternalEventKind::Command,
+            EventTime::default(),
+            EventPayload {
+                data: b"not-json".to_vec(),
+            },
+        )
+        .expect_err("invalid JSON bytes must be rejected");
+
+        assert!(matches!(err, ExternalEventPayloadError::InvalidJson { .. }));
     }
 
     #[test]

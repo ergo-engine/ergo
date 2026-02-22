@@ -189,10 +189,10 @@ pub fn bind_semantic_event_with_binder(
             detail: err.to_string(),
         })?;
 
-    Ok(ExternalEvent::with_payload(
-        event_id,
-        kind,
-        at,
-        EventPayload { data: bytes },
-    ))
+    ExternalEvent::with_payload(event_id, kind, at, EventPayload { data: bytes }).map_err(|err| {
+        EventBindingError::PayloadSchemaMismatch {
+            kind: semantic_kind.to_string(),
+            detail: err.to_string(),
+        }
+    })
 }

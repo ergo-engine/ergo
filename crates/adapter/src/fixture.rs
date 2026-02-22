@@ -20,13 +20,14 @@ pub enum FixtureItem {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum FixtureRecord {
     EpisodeStart { id: Option<String> },
     Event { event: FixtureEvent },
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FixtureEvent {
     #[serde(rename = "type")]
     kind: ExternalEventKind,
@@ -61,6 +62,16 @@ pub fn parse_fixture(path: &Path) -> Result<Vec<FixtureItem>, String> {
                 items.push(FixtureItem::EpisodeStart { label });
             }
             FixtureRecord::Event { event } => {
+                if let Some(payload) = event.payload.as_ref() {
+                    if !payload.is_object() {
+                        return Err(format!(
+                            "fixture parse error at line {}: payload must be a JSON object, got {}",
+                            index + 1,
+                            json_type_name(payload)
+                        ));
+                    }
+                }
+
                 items.push(FixtureItem::Event {
                     id: event.id,
                     kind: event.kind,
@@ -83,6 +94,17 @@ pub fn fixture_output_path(path: &Path) -> PathBuf {
     PathBuf::from("target").join(format!("{stem}-capture.json"))
 }
 
+fn json_type_name(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::fixture_output_path;
@@ -94,6 +116,30 @@ mod tests {
             fixture_output_path(Path::new("fixtures/demo_1.jsonl")),
             PathBuf::from("target/demo_1-capture.json")
         );
+    }
+
+    #[test]
+    fn rejects_unknown_fields_in_fixture_line() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("ergo-fixture-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bad.jsonl");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, r#"{{"kind":"episode_start","id":"E1"}}"#).unwrap();
+        writeln!(
+            f,
+            r#"{{"kind":"event","event":{{"type":"Command"}},"context":{{"x":2.5}}}}"#
+        )
+        .unwrap();
+        drop(f);
+        let result = super::parse_fixture(&path);
+        assert!(result.is_err(), "should reject unknown field 'context'");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("context"),
+            "error should mention the unknown field: {err}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

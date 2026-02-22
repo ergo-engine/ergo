@@ -1,0 +1,33 @@
+# BAD: Wire a compute directly to an action (skipping trigger)
+kind: cluster
+id: bad_wire_3
+version: "0.1.0"
+
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 5.0
+
+  zero:
+    impl: number_source@0.1.0
+    params:
+      value: 0.0
+
+  compare:
+    impl: gt@0.1.0
+
+  # Try to wire compute directly to action without trigger
+  act:
+    impl: ack_action@0.1.0
+    params:
+      accept: true
+
+edges:
+  - src.value -> compare.a
+  - zero.value -> compare.b
+  # THIS IS THE BAD WIRE: Bool -> Event input (type mismatch + no trigger gating)
+  - compare.result -> act.event
+
+outputs:
+  outcome: act.outcome
