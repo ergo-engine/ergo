@@ -19,6 +19,10 @@ pub enum CaptureJsonStyle {
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 const MAX_TEMP_FILE_ATTEMPTS: u32 = 64;
+#[cfg(windows)]
+const MAX_REPLACE_RETRY_ATTEMPTS: u32 = 64;
+#[cfg(windows)]
+const REPLACE_RETRY_DELAY_MS: u64 = 10;
 
 pub struct CapturingDecisionLog<L: DecisionLog> {
     inner: L,
@@ -154,7 +158,7 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     }
 
     drop(file);
-    if let Err(err) = replace_destination(&temp_path, path) {
+    if let Err(err) = replace_destination_with_retry(&temp_path, path) {
         let _ = fs::remove_file(&temp_path);
         return Err(format!(
             "write capture bundle '{}': rename temp file '{}': {err}",
@@ -204,12 +208,40 @@ fn create_temp_file(
 }
 
 #[cfg(not(windows))]
-fn replace_destination(temp_path: &Path, destination: &Path) -> std::io::Result<()> {
+fn replace_destination_with_retry(temp_path: &Path, destination: &Path) -> std::io::Result<()> {
     fs::rename(temp_path, destination)
 }
 
 #[cfg(windows)]
-fn replace_destination(temp_path: &Path, destination: &Path) -> std::io::Result<()> {
+fn replace_destination_with_retry(temp_path: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::time::Duration;
+
+    let mut last_permission_error = None;
+    for attempt in 0..MAX_REPLACE_RETRY_ATTEMPTS {
+        match replace_destination_once(temp_path, destination) {
+            Ok(()) => return Ok(()),
+            Err(err)
+                if err.kind() == ErrorKind::PermissionDenied
+                    && attempt + 1 < MAX_REPLACE_RETRY_ATTEMPTS =>
+            {
+                last_permission_error = Some(err);
+                // Windows can transiently deny atomic replace when the destination is contended.
+                std::thread::sleep(Duration::from_millis(REPLACE_RETRY_DELAY_MS));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    Err(last_permission_error.unwrap_or_else(|| {
+        std::io::Error::new(
+            ErrorKind::PermissionDenied,
+            "atomic replace failed after retry attempts",
+        )
+    }))
+}
+
+#[cfg(windows)]
+fn replace_destination_once(temp_path: &Path, destination: &Path) -> std::io::Result<()> {
     use std::iter;
     use std::os::windows::ffi::OsStrExt;
     type Dword = u32;
