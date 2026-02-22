@@ -73,7 +73,7 @@ def is_strict_semver(value: str) -> bool:
 _COMPARATOR_RE = re.compile(
     r"^(?P<op>\^|~|>=|<=|>|<|=)?\s*"
     r"(?P<body>"
-    r"[0-9xX*]+(?:\.[0-9xX*]+){0,2}"
+    r"(?:\d+|[xX*])(?:\.(?:\d+|[xX*])){0,2}"
     r"(?:-[0-9A-Za-z.-]+)?"
     r"(?:\+[0-9A-Za-z.-]+)?"
     r")$"
