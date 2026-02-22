@@ -86,8 +86,9 @@ class PhaseInvariantParserTests(unittest.TestCase):
 
     def test_uses_canonical_phase_invariants_path(self):
         parsed = self.server.parse_phase_invariants()
+        normalized_path = parsed.source_path.replace("\\", "/")
         self.assertEqual(
-            parsed.source_path,
+            normalized_path,
             "docs/CANONICAL/PHASE_INVARIANTS.md",
         )
         self.assertFalse(parsed.degraded_mode)
