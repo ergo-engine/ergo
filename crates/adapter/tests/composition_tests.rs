@@ -4,6 +4,7 @@ use ergo_adapter::composition::{
 };
 use ergo_adapter::provides::{AdapterProvides, ContextKeyProvision};
 use ergo_runtime::action::{ActionEffects, ActionWriteSpec};
+use ergo_runtime::cluster::ParameterValue;
 use ergo_runtime::common::{ErrorInfo, ValueType};
 use std::collections::{HashMap, HashSet};
 
@@ -75,6 +76,10 @@ fn make_source_requires(keys: Vec<(&str, ValueType, bool)>) -> SourceRequires {
     }
 }
 
+fn no_params() -> HashMap<String, ParameterValue> {
+    HashMap::new()
+}
+
 fn assert_comp(err: &dyn ErrorInfo, rule: &str, path: Option<&str>) {
     assert_eq!(err.rule_id(), rule);
     assert_eq!(err.path().as_deref(), path);
@@ -85,7 +90,7 @@ fn comp_1_missing_context_key_rejected() {
     let adapter = make_adapter_provides(vec![("price", "Number")]);
     let source = make_source_requires(vec![("volume", ValueType::Number, true)]);
 
-    let err = validate_source_adapter_composition(&source, &adapter).unwrap_err();
+    let err = validate_source_adapter_composition(&source, &adapter, &no_params()).unwrap_err();
     assert_comp(&err, "COMP-1", Some("$.requires.context[0].name"));
 }
 
@@ -94,7 +99,7 @@ fn comp_2_context_type_mismatch_rejected() {
     let adapter = make_adapter_provides(vec![("price", "Number")]);
     let source = make_source_requires(vec![("price", ValueType::String, true)]);
 
-    let err = validate_source_adapter_composition(&source, &adapter).unwrap_err();
+    let err = validate_source_adapter_composition(&source, &adapter, &no_params()).unwrap_err();
     assert_comp(&err, "COMP-2", Some("$.requires.context[0].type"));
 }
 
@@ -111,7 +116,7 @@ fn src_10_missing_context_key_rejected() {
     let adapter = make_adapter_provides(vec![("price", "Number")]);
     let source = make_source_requires(vec![("volume", ValueType::Number, true)]);
 
-    let err = validate_source_adapter_composition(&source, &adapter).unwrap_err();
+    let err = validate_source_adapter_composition(&source, &adapter, &no_params()).unwrap_err();
     assert_comp(&err, "COMP-1", Some("$.requires.context[0].name"));
 }
 
@@ -122,7 +127,7 @@ fn src_11_context_type_mismatch_rejected() {
     let adapter = make_adapter_provides(vec![("price", "Number")]);
     let source = make_source_requires(vec![("price", ValueType::String, true)]);
 
-    let err = validate_source_adapter_composition(&source, &adapter).unwrap_err();
+    let err = validate_source_adapter_composition(&source, &adapter, &no_params()).unwrap_err();
     assert_comp(&err, "COMP-2", Some("$.requires.context[0].type"));
 }
 
@@ -136,7 +141,8 @@ fn comp_11_write_target_not_provided_rejected() {
         }],
     };
 
-    let err = validate_action_adapter_composition(&effects, &adapter).unwrap_err();
+    let err =
+        validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
     assert_comp(&err, "COMP-11", Some("$.effects.writes[0].name"));
 }
 
@@ -151,7 +157,8 @@ fn comp_12_write_target_not_writable_rejected() {
         }],
     };
 
-    let err = validate_action_adapter_composition(&effects, &adapter).unwrap_err();
+    let err =
+        validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
     assert_comp(&err, "COMP-12", Some("$.effects.writes[0].name"));
 }
 
@@ -166,7 +173,8 @@ fn comp_13_write_type_mismatch_rejected() {
         }],
     };
 
-    let err = validate_action_adapter_composition(&effects, &adapter).unwrap_err();
+    let err =
+        validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
     assert_comp(&err, "COMP-13", Some("$.effects.writes[0].type"));
 }
 
@@ -180,6 +188,137 @@ fn comp_14_missing_set_context_rejected() {
         }],
     };
 
-    let err = validate_action_adapter_composition(&effects, &adapter).unwrap_err();
+    let err =
+        validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
     assert_comp(&err, "COMP-14", Some("$.effects.writes"));
+}
+
+// --- $key resolution tests for source composition ---
+
+#[test]
+fn comp_source_dollar_key_resolves_to_parameter_value() {
+    let adapter = make_adapter_provides(vec![("fast_sma", "Number")]);
+    let source = make_source_requires(vec![("$key", ValueType::Number, true)]);
+    let params = HashMap::from([("key".to_string(), ParameterValue::String("fast_sma".to_string()))]);
+
+    assert!(validate_source_adapter_composition(&source, &adapter, &params).is_ok());
+}
+
+#[test]
+fn comp_source_dollar_key_missing_adapter_provision_rejected() {
+    let adapter = make_adapter_provides(vec![("price", "Number")]);
+    let source = make_source_requires(vec![("$key", ValueType::Number, true)]);
+    let params = HashMap::from([("key".to_string(), ParameterValue::String("fast_sma".to_string()))]);
+
+    let err = validate_source_adapter_composition(&source, &adapter, &params).unwrap_err();
+    assert_comp(&err, "COMP-1", Some("$.requires.context[0].name"));
+}
+
+#[test]
+fn comp_source_dollar_key_type_mismatch_rejected() {
+    let adapter = make_adapter_provides(vec![("fast_sma", "String")]);
+    let source = make_source_requires(vec![("$key", ValueType::Number, true)]);
+    let params = HashMap::from([("key".to_string(), ParameterValue::String("fast_sma".to_string()))]);
+
+    let err = validate_source_adapter_composition(&source, &adapter, &params).unwrap_err();
+    assert_comp(&err, "COMP-2", Some("$.requires.context[0].type"));
+}
+
+#[test]
+fn comp_source_dollar_key_missing_parameter_rejected() {
+    let adapter = make_adapter_provides(vec![("fast_sma", "Number")]);
+    let source = make_source_requires(vec![("$key", ValueType::Number, true)]);
+
+    let err = validate_source_adapter_composition(&source, &adapter, &no_params()).unwrap_err();
+    assert_comp(&err, "COMP-16", Some("$.requires.context[0].name"));
+}
+
+/// Optional $key with missing parameter still fails resolution (COMP-16).
+/// Guards the optional early-return regression: resolution must run before
+/// the `required: false` skip.
+#[test]
+fn comp_source_optional_dollar_key_missing_parameter_rejected() {
+    let adapter = make_adapter_provides(vec![("fast_sma", "Number")]);
+    let source = make_source_requires(vec![("$key", ValueType::Number, false)]);
+
+    let err = validate_source_adapter_composition(&source, &adapter, &no_params()).unwrap_err();
+    assert_comp(&err, "COMP-16", Some("$.requires.context[0].name"));
+}
+
+/// Optional $key with non-String parameter still fails resolution (COMP-16).
+/// Guards the same optional early-return regression.
+#[test]
+fn comp_source_optional_dollar_key_non_string_param_rejected() {
+    let adapter = make_adapter_provides(vec![("fast_sma", "Number")]);
+    let source = make_source_requires(vec![("$key", ValueType::Number, false)]);
+    let params = HashMap::from([("key".to_string(), ParameterValue::Number(42.0))]);
+
+    let err = validate_source_adapter_composition(&source, &adapter, &params).unwrap_err();
+    assert_comp(&err, "COMP-16", Some("$.requires.context[0].name"));
+}
+
+// --- $key resolution tests for action composition ---
+
+#[test]
+fn comp_action_dollar_key_resolves_to_parameter_value() {
+    let adapter =
+        make_adapter_provides_with_effects(vec![("fast_sma", "Number", true)], vec!["set_context"]);
+    let effects = ActionEffects {
+        writes: vec![ActionWriteSpec {
+            name: "$key".to_string(),
+            value_type: ValueType::Number,
+        }],
+    };
+    let params = HashMap::from([("key".to_string(), ParameterValue::String("fast_sma".to_string()))]);
+
+    assert!(validate_action_adapter_composition(&effects, &adapter, &params).is_ok());
+}
+
+#[test]
+fn comp_action_dollar_key_missing_provision_rejected() {
+    let adapter =
+        make_adapter_provides_with_effects(vec![("price", "Number", true)], vec!["set_context"]);
+    let effects = ActionEffects {
+        writes: vec![ActionWriteSpec {
+            name: "$key".to_string(),
+            value_type: ValueType::Number,
+        }],
+    };
+    let params = HashMap::from([("key".to_string(), ParameterValue::String("fast_sma".to_string()))]);
+
+    let err = validate_action_adapter_composition(&effects, &adapter, &params).unwrap_err();
+    assert_comp(&err, "COMP-11", Some("$.effects.writes[0].name"));
+}
+
+#[test]
+fn comp_action_dollar_key_missing_parameter_rejected() {
+    let adapter =
+        make_adapter_provides_with_effects(vec![("fast_sma", "Number", true)], vec!["set_context"]);
+    let effects = ActionEffects {
+        writes: vec![ActionWriteSpec {
+            name: "$key".to_string(),
+            value_type: ValueType::Number,
+        }],
+    };
+
+    let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
+    assert_comp(&err, "COMP-16", Some("$.effects.writes[0].name"));
+}
+
+/// Action write $key with non-String parameter fails resolution (COMP-16).
+/// Covers the WrongParameterType resolver branch for the action composition path.
+#[test]
+fn comp_action_dollar_key_non_string_param_rejected() {
+    let adapter =
+        make_adapter_provides_with_effects(vec![("fast_sma", "Number", true)], vec!["set_context"]);
+    let effects = ActionEffects {
+        writes: vec![ActionWriteSpec {
+            name: "$key".to_string(),
+            value_type: ValueType::Number,
+        }],
+    };
+    let params = HashMap::from([("key".to_string(), ParameterValue::Number(42.0))]);
+
+    let err = validate_action_adapter_composition(&effects, &adapter, &params).unwrap_err();
+    assert_comp(&err, "COMP-16", Some("$.effects.writes[0].name"));
 }

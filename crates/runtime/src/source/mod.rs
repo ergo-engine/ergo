@@ -140,6 +140,14 @@ pub enum SourceValidationError {
         got: ValueType,
     },
     OutputsRequired,
+    UnboundContextKeyReference {
+        name: String,
+        referenced_param: String,
+    },
+    ContextKeyReferenceNotString {
+        name: String,
+        referenced_param: String,
+    },
 }
 
 impl ErrorInfo for SourceValidationError {
@@ -158,6 +166,8 @@ impl ErrorInfo for SourceValidationError {
             Self::InvalidCadence => "SRC-13",
             Self::DuplicateId(_) => "SRC-14",
             Self::InvalidParameterType { .. } => "SRC-15",
+            Self::UnboundContextKeyReference { .. } => "SRC-16",
+            Self::ContextKeyReferenceNotString { .. } => "SRC-17",
         }
     }
 
@@ -180,6 +190,8 @@ impl ErrorInfo for SourceValidationError {
             "SRC-13" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-13",
             "SRC-14" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-14",
             "SRC-15" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-15",
+            "SRC-16" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-16",
+            "SRC-17" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-17",
             _ => "CANONICAL/PHASE_INVARIANTS.md",
         }
     }
@@ -222,6 +234,20 @@ impl ErrorInfo for SourceValidationError {
                 "Parameter '{}' has invalid type: expected {:?}, got {:?}",
                 parameter, expected, got
             )),
+            Self::UnboundContextKeyReference {
+                name,
+                referenced_param,
+            } => Cow::Owned(format!(
+                "Context key '{}' references undefined parameter '{}'",
+                name, referenced_param
+            )),
+            Self::ContextKeyReferenceNotString {
+                name,
+                referenced_param,
+            } => Cow::Owned(format!(
+                "Context key '{}' references parameter '{}' which is not String type",
+                name, referenced_param
+            )),
         }
     }
 
@@ -242,6 +268,12 @@ impl ErrorInfo for SourceValidationError {
             Self::InvalidCadence => Some(Cow::Borrowed("$.execution.cadence")),
             Self::DuplicateId(_) => Some(Cow::Borrowed("$.id")),
             Self::InvalidParameterType { .. } => Some(Cow::Borrowed("$.parameters[].default")),
+            Self::UnboundContextKeyReference { .. } => {
+                Some(Cow::Borrowed("$.requires.context[].name"))
+            }
+            Self::ContextKeyReferenceNotString { .. } => {
+                Some(Cow::Borrowed("$.requires.context[].name"))
+            }
         }
     }
 
@@ -273,6 +305,18 @@ impl ErrorInfo for SourceValidationError {
             Self::InvalidParameterType { .. } => Some(Cow::Borrowed(
                 "Change parameter default value to match the declared parameter type",
             )),
+            Self::UnboundContextKeyReference {
+                referenced_param, ..
+            } => Some(Cow::Owned(format!(
+                "Add parameter '{}' to the source manifest",
+                referenced_param
+            ))),
+            Self::ContextKeyReferenceNotString {
+                referenced_param, ..
+            } => Some(Cow::Owned(format!(
+                "Change parameter '{}' type to String",
+                referenced_param
+            ))),
         }
     }
 }

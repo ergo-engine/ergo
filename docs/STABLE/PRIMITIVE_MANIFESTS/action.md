@@ -197,6 +197,8 @@ Rules:
 | ACT-17 | Execution deterministic | `execution.deterministic == true` |
 | ACT-18 | ID unique in registry | `id ∉ ActionRegistry.ids` |
 | ACT-19 | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` |
+| ACT-20 | $key write references bound to declared parameter | `∀ write where name starts with "$": referenced param exists in parameters[]` |
+| ACT-21 | $key write references must be String type | `∀ write where name starts with "$": referenced param.type == String` |
 
 **Note on ACT-18:** Uniqueness is by id only; version is not considered. Two primitives with the same id but different versions are rejected.
 
@@ -227,6 +229,8 @@ Rules:
 | ACT-17 | Registration | `ActionValidationError::NonDeterministicExecution` | `act_17_non_deterministic_execution_rejected` |
 | ACT-18 | Registration | `ActionValidationError::DuplicateId` | `act_18_duplicate_id_rejected` |
 | ACT-19 | Registration | `ActionValidationError::InvalidParameterType` | `act_19_invalid_parameter_type_default_rejected` |
+| ACT-20 | Registration | `ActionValidationError::UnboundWriteKeyReference` | `act_20_dollar_key_write_referencing_nonexistent_param_rejected` |
+| ACT-21 | Registration | `ActionValidationError::WriteKeyReferenceNotString` | `act_21_dollar_key_write_referencing_non_string_param_rejected` |
 
 **Registration enforcement location:** `crates/runtime/src/action/registry.rs`
 

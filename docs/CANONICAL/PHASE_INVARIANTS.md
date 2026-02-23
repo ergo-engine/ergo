@@ -1,6 +1,6 @@
 ---
 Authority: CANONICAL
-Version: v0.33
+Version: v0.34
 Owner: Claude (Structural Auditor)
 Last Updated: 2026-02-18
 Scope: Phase boundaries, enforcement loci, gap tracking
@@ -65,7 +65,7 @@ Core is frozen at this point. The following constraints are now in force:
 
 1. **No new core implementations** without a vertical proof demonstrating necessity
 2. **Any core change** must introduce a new invariant with explicit enforcement locus
-3. **Action implementations in core = zero** by design; capability atoms live in verticals
+3. **Infrastructure actions** (ack, annotate, context_set_*) live in core; **domain-specific capability actions** live in verticals
 
 This freeze applies to:
 - `src/source/`
@@ -609,10 +609,12 @@ This freeze applies to:
 | COMP-1 | Source context requirements satisfied | adapter.md #COMP-1 | — | — | ✓ | comp_1_missing_context_key_rejected |
 | COMP-2 | Source context types match | adapter.md #COMP-2 | — | — | ✓ | comp_2_context_type_mismatch_rejected |
 | COMP-3 | Capture format version supported | adapter.md #COMP-3 | — | — | ✓ | comp_3_unsupported_capture_format_rejected |
+| COMP-16 | Parameter-bound manifest names resolve | — | — | — | ✓ | comp_source_dollar_key_missing_parameter_rejected |
 
 ### Notes
 
 - **COMP-1, COMP-2:** Only keys with `required: true` in source requirements must exist in adapter provides.
+- **COMP-16:** `$`-prefixed manifest names must resolve to a String parameter value at composition time. Enforced for both source context requirements and action write specs.
 - **Enforcement location:** `crates/adapter/src/composition.rs`
 - **Test location:** `crates/adapter/tests/composition_tests.rs`
 
@@ -647,10 +649,13 @@ This freeze applies to:
 | SRC-13 | Cadence is continuous | source.md #SRC-13 | — | — | ✓ | (structurally enforced) |
 | SRC-14 | ID unique in registry | source.md #SRC-14 | — | — | ✓ | src_14_duplicate_id_rejected |
 | SRC-15 | Parameter default type matches declared type | source.md #SRC-15 | — | — | ✓ | src_15_invalid_parameter_type_default_rejected |
+| SRC-16 | $key context references bound to declared parameter | source.md #SRC-16 | — | — | ✓ | src_16_dollar_key_referencing_nonexistent_param_rejected |
+| SRC-17 | $key context references must be String type | source.md #SRC-17 | — | — | ✓ | src_17_dollar_key_referencing_non_string_param_rejected |
 
 ### Notes
 
 - **SRC-1 through SRC-9, SRC-12, SRC-14, SRC-15:** Registration-time manifest validation.
+- **SRC-16/SRC-17:** Registration-time cross-check for parameter-bound manifest names (`$key` convention). Ensures `$`-prefixed context requirement names reference declared String-typed parameters.
 - **SRC-13:** Structurally enforced — `Cadence` enum only has `Continuous` variant. Enforcement code at `registry.rs:77-78` will be exercised when cadence variants expand.
 - **SRC-10/SRC-11:** Composition-time validation. Same predicate and enforcement as COMP-1/COMP-2 (§10). Alias tests provide source-contract traceability.
 - **Registration enforcement location:** `crates/runtime/src/source/registry.rs`
@@ -779,11 +784,14 @@ This freeze applies to:
 | ACT-17 | Execution deterministic | action.md #ACT-17 | — | — | ✓ | act_17_non_deterministic_execution_rejected |
 | ACT-18 | ID unique in registry | action.md #ACT-18 | — | — | ✓ | act_18_duplicate_id_rejected |
 | ACT-19 | Parameter default type matches declared type | action.md #ACT-19 | — | — | ✓ | act_19_invalid_parameter_type_default_rejected |
+| ACT-20 | $key write references bound to declared parameter | action.md #ACT-20 | — | — | ✓ | act_20_dollar_key_write_referencing_nonexistent_param_rejected |
+| ACT-21 | $key write references must be String type | action.md #ACT-21 | — | — | ✓ | act_21_dollar_key_write_referencing_non_string_param_rejected |
 
 ### Notes
 
 - **ACT-12:** Enforced during graph validation in `crates/runtime/src/runtime/validate.rs` (ValidationError::ActionNotGated).
 - **ACT-19:** Enforced in `action/registry.rs::validate_manifest` by rejecting manifests where a parameter default value type does not match the declared parameter type (`ActionValidationError::InvalidParameterType`).
+- **ACT-20/ACT-21:** Registration-time cross-check for parameter-bound write names (`$key` convention). Ensures `$`-prefixed write spec names reference declared String-typed parameters.
 - **Registration enforcement location:** `crates/runtime/src/action/registry.rs`
 - **Registration test location:** `crates/runtime/src/action/registry.rs`
 - **Validation test location:** `crates/runtime/src/runtime/tests.rs`
@@ -911,3 +919,4 @@ Changes to this document require the same review bar as changes to frozen specs.
 | v0.31 | 2026-02-12 | Codex | Added CMP-20 (compute output type validity closure; maps `ValidationError::InvalidOutputType` to CMP-20 and records structural registration enforcement); +1 invariant |
 | v0.32 | 2026-02-17 | Codex | Added canonical run/replay strictness section (RUN-CANON-1, RUN-CANON-2, REP-7) and documented strict v1 capture bundle requirements (required adapter_provenance, unknown-field rejection, legacy adapter_version deserialization failure). |
 | v0.33 | 2026-02-18 | Codex | Synced tracked invariant count to canonical table IDs (172, including RTHANDLE-* IDs) and aligned tooling expectations with canonical path/parser behavior. |
+| v0.34 | 2026-02-22 | Sebastian | Core freeze §3 updated: acknowledge existing infrastructure actions (ack, annotate); clarify freeze applies to domain-specific capability actions, not infrastructure actions. context_set_* follows same precedent. |

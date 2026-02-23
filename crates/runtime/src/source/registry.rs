@@ -77,6 +77,28 @@ impl SourceRegistry {
             }
         }
 
+        // SRC-16/SRC-17: Validate $key references in context requirements.
+        for req in &manifest.requires.context {
+            if let Some(param_name) = req.name.strip_prefix('$') {
+                let found = manifest.parameters.iter().find(|p| p.name == param_name);
+                match found {
+                    None => {
+                        return Err(SourceValidationError::UnboundContextKeyReference {
+                            name: req.name.clone(),
+                            referenced_param: param_name.to_string(),
+                        });
+                    }
+                    Some(p) if p.value_type != super::ParameterType::String => {
+                        return Err(SourceValidationError::ContextKeyReferenceNotString {
+                            name: req.name.clone(),
+                            referenced_param: param_name.to_string(),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         if manifest.side_effects {
             return Err(SourceValidationError::SideEffectsNotAllowed);
         }

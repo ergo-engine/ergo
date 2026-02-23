@@ -2208,3 +2208,326 @@ fn cmp_12_compute_error_fails() {
         other => panic!("expected ComputeFailed, got {:?}", other),
     }
 }
+
+/// Source with $key context requirement, parameter resolves key name from context.
+#[test]
+fn execute_source_precheck_resolves_dollar_key() {
+    #[derive(Clone)]
+    struct DollarKeySource {
+        manifest: SourcePrimitiveManifest,
+    }
+
+    impl SourcePrimitive for DollarKeySource {
+        fn manifest(&self) -> &SourcePrimitiveManifest {
+            &self.manifest
+        }
+
+        fn produce(
+            &self,
+            _parameters: &HashMap<String, crate::source::ParameterValue>,
+            ctx: &ExecutionContext,
+        ) -> HashMap<String, crate::common::Value> {
+            // The source reads from whatever context key the parameter resolves to.
+            // For test purposes, just return a fixed value to confirm execution succeeded.
+            let _ = ctx;
+            HashMap::from([("out".to_string(), crate::common::Value::Number(99.0))])
+        }
+    }
+
+    let src = DollarKeySource {
+        manifest: SourcePrimitiveManifest {
+            id: "dollar_key_src".to_string(),
+            version: "0.1.0".to_string(),
+            kind: SourceKind::Source,
+            inputs: vec![],
+            outputs: vec![crate::source::OutputSpec {
+                name: "out".to_string(),
+                value_type: crate::common::ValueType::Number,
+            }],
+            parameters: vec![crate::source::ParameterSpec {
+                name: "key".to_string(),
+                value_type: crate::source::ParameterType::String,
+                default: None,
+                bounds: None,
+            }],
+            requires: crate::source::SourceRequires {
+                context: vec![crate::source::ContextRequirement {
+                    name: "$key".to_string(),
+                    ty: crate::common::ValueType::Number,
+                    required: true,
+                }],
+            },
+            execution: crate::source::ExecutionSpec {
+                deterministic: true,
+                cadence: crate::source::Cadence::Continuous,
+            },
+            state: crate::source::StateSpec { allowed: false },
+            side_effects: false,
+        },
+    };
+
+    let mut source_registry = SourceRegistry::new();
+    source_registry.register(Box::new(src)).unwrap();
+
+    let graph = crate::runtime::types::ValidatedGraph {
+        nodes: HashMap::from([(
+            "s".to_string(),
+            crate::runtime::types::ValidatedNode {
+                runtime_id: "s".to_string(),
+                impl_id: "dollar_key_src".to_string(),
+                version: "0.1.0".to_string(),
+                kind: PrimitiveKind::Source,
+                inputs: vec![],
+                outputs: HashMap::from([(
+                    "out".to_string(),
+                    OutputMetadata {
+                        value_type: ValueType::Number,
+                        cardinality: crate::cluster::Cardinality::Single,
+                    },
+                )]),
+                parameters: HashMap::from([(
+                    "key".to_string(),
+                    crate::cluster::ParameterValue::String("fast_sma".to_string()),
+                )]),
+            },
+        )]),
+        edges: vec![],
+        topo_order: vec!["s".to_string()],
+        boundary_outputs: vec![crate::cluster::OutputPortSpec {
+            name: "result".to_string(),
+            maps_to: crate::cluster::OutputRef {
+                node_id: "s".to_string(),
+                port_name: "out".to_string(),
+            },
+        }],
+    };
+
+    let registries = Registries {
+        sources: &source_registry,
+        computes: &ComputeRegistry::new(),
+        triggers: &TriggerRegistry::new(),
+        actions: &crate::action::ActionRegistry::new(),
+    };
+
+    // Context provides the resolved key "fast_sma" with correct type.
+    let ctx = ExecutionContext::from_values(HashMap::from([(
+        "fast_sma".to_string(),
+        crate::common::Value::Number(42.0),
+    )]));
+
+    let report = crate::runtime::execute(&graph, &registries, &ctx).unwrap();
+    assert_eq!(
+        report.outputs.get("result"),
+        Some(&RuntimeValue::Number(99.0))
+    );
+}
+
+/// Source with $key context requirement, resolved key missing from context → error.
+#[test]
+fn execute_source_dollar_key_missing_context_rejected() {
+    #[derive(Clone)]
+    struct DollarKeySource {
+        manifest: SourcePrimitiveManifest,
+    }
+
+    impl SourcePrimitive for DollarKeySource {
+        fn manifest(&self) -> &SourcePrimitiveManifest {
+            &self.manifest
+        }
+
+        fn produce(
+            &self,
+            _parameters: &HashMap<String, crate::source::ParameterValue>,
+            _ctx: &ExecutionContext,
+        ) -> HashMap<String, crate::common::Value> {
+            HashMap::from([("out".to_string(), crate::common::Value::Number(0.0))])
+        }
+    }
+
+    let src = DollarKeySource {
+        manifest: SourcePrimitiveManifest {
+            id: "dollar_key_src2".to_string(),
+            version: "0.1.0".to_string(),
+            kind: SourceKind::Source,
+            inputs: vec![],
+            outputs: vec![crate::source::OutputSpec {
+                name: "out".to_string(),
+                value_type: crate::common::ValueType::Number,
+            }],
+            parameters: vec![crate::source::ParameterSpec {
+                name: "key".to_string(),
+                value_type: crate::source::ParameterType::String,
+                default: None,
+                bounds: None,
+            }],
+            requires: crate::source::SourceRequires {
+                context: vec![crate::source::ContextRequirement {
+                    name: "$key".to_string(),
+                    ty: crate::common::ValueType::Number,
+                    required: true,
+                }],
+            },
+            execution: crate::source::ExecutionSpec {
+                deterministic: true,
+                cadence: crate::source::Cadence::Continuous,
+            },
+            state: crate::source::StateSpec { allowed: false },
+            side_effects: false,
+        },
+    };
+
+    let mut source_registry = SourceRegistry::new();
+    source_registry.register(Box::new(src)).unwrap();
+
+    let graph = crate::runtime::types::ValidatedGraph {
+        nodes: HashMap::from([(
+            "s".to_string(),
+            crate::runtime::types::ValidatedNode {
+                runtime_id: "s".to_string(),
+                impl_id: "dollar_key_src2".to_string(),
+                version: "0.1.0".to_string(),
+                kind: PrimitiveKind::Source,
+                inputs: vec![],
+                outputs: HashMap::from([(
+                    "out".to_string(),
+                    OutputMetadata {
+                        value_type: ValueType::Number,
+                        cardinality: crate::cluster::Cardinality::Single,
+                    },
+                )]),
+                parameters: HashMap::from([(
+                    "key".to_string(),
+                    crate::cluster::ParameterValue::String("fast_sma".to_string()),
+                )]),
+            },
+        )]),
+        edges: vec![],
+        topo_order: vec!["s".to_string()],
+        boundary_outputs: vec![],
+    };
+
+    let registries = Registries {
+        sources: &source_registry,
+        computes: &ComputeRegistry::new(),
+        triggers: &TriggerRegistry::new(),
+        actions: &crate::action::ActionRegistry::new(),
+    };
+
+    // Empty context — resolved key "fast_sma" is not present.
+    let ctx = ExecutionContext::default();
+    let err = crate::runtime::execute(&graph, &registries, &ctx).unwrap_err();
+    assert_eq!(err.rule_id(), "SRC-10");
+    match err {
+        ExecError::MissingRequiredContextKey { node, key } => {
+            assert_eq!(node, "s");
+            assert_eq!(key, "fast_sma");
+        }
+        other => panic!("expected MissingRequiredContextKey, got {:?}", other),
+    }
+}
+
+/// Optional $key with missing parameter fails at execution precheck.
+/// Guards the optional early-return regression at the execution layer:
+/// resolution must run before `if !req.required { continue; }`.
+#[test]
+fn execute_source_precheck_optional_dollar_key_missing_parameter_rejected() {
+    #[derive(Clone)]
+    struct OptDollarKeySource {
+        manifest: SourcePrimitiveManifest,
+    }
+
+    impl SourcePrimitive for OptDollarKeySource {
+        fn manifest(&self) -> &SourcePrimitiveManifest {
+            &self.manifest
+        }
+
+        fn produce(
+            &self,
+            _parameters: &HashMap<String, crate::source::ParameterValue>,
+            _ctx: &ExecutionContext,
+        ) -> HashMap<String, crate::common::Value> {
+            HashMap::from([("out".to_string(), crate::common::Value::Number(0.0))])
+        }
+    }
+
+    let src = OptDollarKeySource {
+        manifest: SourcePrimitiveManifest {
+            id: "opt_dollar_key_src".to_string(),
+            version: "0.1.0".to_string(),
+            kind: SourceKind::Source,
+            inputs: vec![],
+            outputs: vec![crate::source::OutputSpec {
+                name: "out".to_string(),
+                value_type: crate::common::ValueType::Number,
+            }],
+            parameters: vec![crate::source::ParameterSpec {
+                name: "key".to_string(),
+                value_type: crate::source::ParameterType::String,
+                default: None,
+                bounds: None,
+            }],
+            requires: crate::source::SourceRequires {
+                context: vec![crate::source::ContextRequirement {
+                    name: "$key".to_string(),
+                    ty: crate::common::ValueType::Number,
+                    required: false,
+                }],
+            },
+            execution: crate::source::ExecutionSpec {
+                deterministic: true,
+                cadence: crate::source::Cadence::Continuous,
+            },
+            state: crate::source::StateSpec { allowed: false },
+            side_effects: false,
+        },
+    };
+
+    let mut source_registry = SourceRegistry::new();
+    source_registry.register(Box::new(src)).unwrap();
+
+    let graph = crate::runtime::types::ValidatedGraph {
+        nodes: HashMap::from([(
+            "s".to_string(),
+            crate::runtime::types::ValidatedNode {
+                runtime_id: "s".to_string(),
+                impl_id: "opt_dollar_key_src".to_string(),
+                version: "0.1.0".to_string(),
+                kind: PrimitiveKind::Source,
+                inputs: vec![],
+                outputs: HashMap::from([(
+                    "out".to_string(),
+                    OutputMetadata {
+                        value_type: ValueType::Number,
+                        cardinality: crate::cluster::Cardinality::Single,
+                    },
+                )]),
+                // No "key" parameter provided — $key cannot resolve.
+                parameters: HashMap::new(),
+            },
+        )]),
+        edges: vec![],
+        topo_order: vec!["s".to_string()],
+        boundary_outputs: vec![],
+    };
+
+    let registries = Registries {
+        sources: &source_registry,
+        computes: &ComputeRegistry::new(),
+        triggers: &TriggerRegistry::new(),
+        actions: &crate::action::ActionRegistry::new(),
+    };
+
+    let ctx = ExecutionContext::default();
+    let err = crate::runtime::execute(&graph, &registries, &ctx).unwrap_err();
+    // Resolution failure is mapped to MissingRequiredContextKey with the raw binding name.
+    match err {
+        ExecError::MissingRequiredContextKey { node, key } => {
+            assert_eq!(node, "s");
+            assert_eq!(key, "$key");
+        }
+        other => panic!(
+            "expected MissingRequiredContextKey for unresolved optional $key, got {:?}",
+            other
+        ),
+    }
+}

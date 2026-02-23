@@ -473,7 +473,11 @@ impl RuntimeHandle {
             };
 
             let manifest = primitive.manifest();
-            validate_source_adapter_composition(&manifest.requires, &self.adapter_provides)?;
+            validate_source_adapter_composition(
+                &manifest.requires,
+                &self.adapter_provides,
+                &node.parameters,
+            )?;
         }
 
         for node in graph.nodes.values() {
@@ -486,7 +490,11 @@ impl RuntimeHandle {
             };
 
             let manifest = primitive.manifest();
-            validate_action_adapter_composition(&manifest.effects, &self.adapter_provides)?;
+            validate_action_adapter_composition(
+                &manifest.effects,
+                &self.adapter_provides,
+                &node.parameters,
+            )?;
         }
 
         Ok(())

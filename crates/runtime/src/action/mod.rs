@@ -212,6 +212,14 @@ pub enum ActionValidationError {
         expected: ParameterType,
         got: ParameterType,
     },
+    UnboundWriteKeyReference {
+        name: String,
+        referenced_param: String,
+    },
+    WriteKeyReferenceNotString {
+        name: String,
+        referenced_param: String,
+    },
 }
 
 impl ErrorInfo for ActionValidationError {
@@ -234,6 +242,8 @@ impl ErrorInfo for ActionValidationError {
             Self::NonDeterministicExecution => "ACT-17",
             Self::DuplicateId(_) => "ACT-18",
             Self::InvalidParameterType { .. } => "ACT-19",
+            Self::UnboundWriteKeyReference { .. } => "ACT-20",
+            Self::WriteKeyReferenceNotString { .. } => "ACT-21",
         }
     }
 
@@ -260,6 +270,8 @@ impl ErrorInfo for ActionValidationError {
             "ACT-17" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-17",
             "ACT-18" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-18",
             "ACT-19" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-19",
+            "ACT-20" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-20",
+            "ACT-21" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-21",
             _ => "CANONICAL/PHASE_INVARIANTS.md",
         }
     }
@@ -323,6 +335,20 @@ impl ErrorInfo for ActionValidationError {
                 "Parameter '{}' has invalid type: expected {:?}, got {:?}",
                 parameter, expected, got
             )),
+            Self::UnboundWriteKeyReference {
+                name,
+                referenced_param,
+            } => Cow::Owned(format!(
+                "Write key '{}' references undefined parameter '{}'",
+                name, referenced_param
+            )),
+            Self::WriteKeyReferenceNotString {
+                name,
+                referenced_param,
+            } => Cow::Owned(format!(
+                "Write key '{}' references parameter '{}' which is not String type",
+                name, referenced_param
+            )),
         }
     }
 
@@ -352,6 +378,12 @@ impl ErrorInfo for ActionValidationError {
             Self::RetryNotAllowed => Some(Cow::Borrowed("$.execution.retryable")),
             Self::NonDeterministicExecution => Some(Cow::Borrowed("$.execution.deterministic")),
             Self::InvalidParameterType { .. } => Some(Cow::Borrowed("$.parameters[].default")),
+            Self::UnboundWriteKeyReference { .. } => {
+                Some(Cow::Borrowed("$.effects.writes[].name"))
+            }
+            Self::WriteKeyReferenceNotString { .. } => {
+                Some(Cow::Borrowed("$.effects.writes[].name"))
+            }
         }
     }
 
@@ -392,6 +424,18 @@ impl ErrorInfo for ActionValidationError {
             Self::InvalidParameterType { .. } => Some(Cow::Borrowed(
                 "Change parameter default value to match the declared parameter type",
             )),
+            Self::UnboundWriteKeyReference {
+                referenced_param, ..
+            } => Some(Cow::Owned(format!(
+                "Add parameter '{}' to the action manifest",
+                referenced_param
+            ))),
+            Self::WriteKeyReferenceNotString {
+                referenced_param, ..
+            } => Some(Cow::Owned(format!(
+                "Change parameter '{}' type to String",
+                referenced_param
+            ))),
         }
     }
 }

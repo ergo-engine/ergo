@@ -4,7 +4,7 @@ use semver::Version;
 
 use super::{
     ActionKind, ActionPrimitive, ActionPrimitiveManifest, ActionValidationError, ActionValueType,
-    OutputSpec,
+    OutputSpec, ParameterType,
 };
 use crate::common::ValueType;
 
@@ -106,6 +106,26 @@ impl ActionRegistry {
                     name: write.name.clone(),
                     got: write.value_type.clone(),
                 });
+            }
+
+            // ACT-20/ACT-21: Validate $key references in write specs.
+            if let Some(param_name) = write.name.strip_prefix('$') {
+                let found = manifest.parameters.iter().find(|p| p.name == param_name);
+                match found {
+                    None => {
+                        return Err(ActionValidationError::UnboundWriteKeyReference {
+                            name: write.name.clone(),
+                            referenced_param: param_name.to_string(),
+                        });
+                    }
+                    Some(p) if p.value_type != ParameterType::String => {
+                        return Err(ActionValidationError::WriteKeyReferenceNotString {
+                            name: write.name.clone(),
+                            referenced_param: param_name.to_string(),
+                        });
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -503,5 +523,62 @@ mod tests {
             err.fix().as_deref(),
             Some("Choose a unique ID not already registered")
         );
+    }
+
+    #[test]
+    fn act_20_dollar_key_write_referencing_nonexistent_param_rejected() {
+        let mut manifest = baseline_manifest();
+        manifest.effects.writes = vec![crate::action::ActionWriteSpec {
+            name: "$key".to_string(),
+            value_type: ValueType::Number,
+        }];
+        // No parameter named "key" — should fail ACT-20.
+        let err = ActionRegistry::validate_manifest(&manifest).unwrap_err();
+        assert!(matches!(
+            err,
+            ActionValidationError::UnboundWriteKeyReference { .. }
+        ));
+        assert_eq!(err.rule_id(), "ACT-20");
+        assert_eq!(err.path().as_deref(), Some("$.effects.writes[].name"));
+    }
+
+    #[test]
+    fn act_21_dollar_key_write_referencing_non_string_param_rejected() {
+        let mut manifest = baseline_manifest();
+        manifest.parameters.push(ParameterSpec {
+            name: "key".to_string(),
+            value_type: ParameterType::Number,
+            default: None,
+            required: true,
+            bounds: None,
+        });
+        manifest.effects.writes = vec![crate::action::ActionWriteSpec {
+            name: "$key".to_string(),
+            value_type: ValueType::Number,
+        }];
+        let err = ActionRegistry::validate_manifest(&manifest).unwrap_err();
+        assert!(matches!(
+            err,
+            ActionValidationError::WriteKeyReferenceNotString { .. }
+        ));
+        assert_eq!(err.rule_id(), "ACT-21");
+        assert_eq!(err.path().as_deref(), Some("$.effects.writes[].name"));
+    }
+
+    #[test]
+    fn act_20_dollar_key_write_referencing_string_param_accepted() {
+        let mut manifest = baseline_manifest();
+        manifest.parameters.push(ParameterSpec {
+            name: "key".to_string(),
+            value_type: ParameterType::String,
+            default: Some(ParameterValue::String("price".to_string())),
+            required: false,
+            bounds: None,
+        });
+        manifest.effects.writes = vec![crate::action::ActionWriteSpec {
+            name: "$key".to_string(),
+            value_type: ValueType::Number,
+        }];
+        assert!(ActionRegistry::validate_manifest(&manifest).is_ok());
     }
 }

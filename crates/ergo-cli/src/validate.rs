@@ -99,13 +99,14 @@ pub fn check_compose_command(args: &[String]) -> Result<String, String> {
     let adapter_provides = AdapterProvides::from_manifest(&adapter_manifest);
 
     let other = parse_manifest(other_path).map_err(|err| render_failure(&[err], format))?;
+    let no_params = std::collections::HashMap::new();
     let result = match other {
         ParsedManifest::Source { manifest, .. } => {
-            validate_source_adapter_composition(&manifest.requires, &adapter_provides)
+            validate_source_adapter_composition(&manifest.requires, &adapter_provides, &no_params)
                 .map_err(RuleViolation::from)
         }
         ParsedManifest::Action { manifest, .. } => {
-            validate_action_adapter_composition(&manifest.effects, &adapter_provides)
+            validate_action_adapter_composition(&manifest.effects, &adapter_provides, &no_params)
                 .map_err(RuleViolation::from)
         }
         _ => {

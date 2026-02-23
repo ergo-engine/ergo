@@ -1436,20 +1436,22 @@ fn adp_5_duplicate_context_key_rejected() {
 
 **To proceed:** Requires Sebastian authorization before implementation begins.
 
-### 8.1 ctx_get_or_default (Source Implementation Family)
+### 8.1 Context Sources (Source Implementation Family)
 
 **Kind:** Source (no inputs, reads ExecutionContext)
 
 These are a family of implementations, one per supported type:
-- `ctx_get_or_default_number`
-- `ctx_get_or_default_bool`
-- `ctx_get_or_default_string`
+- `context_number_source` (replaces existing hardcoded implementation, bumps to 0.2.0)
+- `context_bool_source`
+- `context_string_source`
 
-**Manifest (ctx_get_or_default_number):**
+A context source reads a value from the execution context — a key-value map provided by the adapter at each event. The source does not know or care whether the adapter populated that key from external data (market feed, user command) or from a prior episode's `context_set_*` write. Both paths are identical from the source's perspective.
+
+**Manifest (context_number_source):**
 ```yaml
 kind: source
-id: ctx_get_or_default_number
-version: 0.1.0
+id: context_number_source
+version: 0.2.0
 
 inputs: []                    # Sources have no inputs
 
@@ -1493,7 +1495,7 @@ requires:
 
 **Note:** Current `SourcePrimitive::produce` returns `HashMap<String, Value>`, not `Result`. Sources cannot return runtime errors. Type safety is enforced at composition time via manifest validation, not at runtime.
 
-### 8.2 ctx_set (Action Implementation Family)
+### 8.2 Context Set (Action Implementation Family)
 
 **Kind:** Action (terminal, emits effects)
 
@@ -1559,10 +1561,24 @@ effects:
 
 ### 8.3 Implementation Deliverables
 
-- [ ] `ctx_get_or_default_number`, `ctx_get_or_default_bool`, `ctx_get_or_default_string` in `crates/runtime/src/source/implementations/`
-- [ ] `ctx_set_number`, `ctx_set_bool`, `ctx_set_string` in `crates/runtime/src/action/implementations/`
+- [ ] `context_number_source@0.2.0`, `context_bool_source@0.1.0`, `context_string_source@0.1.0` in `crates/runtime/src/source/implementations/`
+- [ ] Remove `context_number_source@0.1.0` (hardcoded `"x"`)
+- [ ] `context_set_number@0.1.0`, `context_set_bool@0.1.0`, `context_set_string@0.1.0` in `crates/runtime/src/action/implementations/`
+- [ ] `$key` parameter resolution in manifest/composition validation
 - [ ] Effect routing: runtime collects effects → adapter applies
-- [ ] Tests: source reads default, source reads existing, action emits effect (per type)
+- [ ] Tests: source reads default, source reads existing, source reads parameterized key, action emits effect (per type)
+- [ ] Tests: composition validation catches missing adapter provision for resolved `$key`
+
+### 8.4 Breaking Change Migration
+
+`context_number_source` bumps from 0.1.0 to 0.2.0. The hardcoded key `"x"` is removed. The `key` and `default` parameters are now required. Existing graphs using `context_number_source@0.1.0` without parameters will fail semver resolution against `0.2.0` and must be updated.
+
+**Files requiring migration (same PR as source implementations):**
+- [ ] `dual_ma_crossover.yaml:7` — bump version, add `params: { key: "x", default: 0.0 }`
+- [ ] `sandbox/trading_vertical/price_breakout.yaml:7` — bump version, add `params: { key: "x", default: 0.0 }`
+- [ ] `docs/STABLE/YAML_GRAPH_FORMAT.md:54` — update example
+- [ ] `crates/ergo-cli/src/graph_yaml.rs:2240` — update inline test YAML
+- [ ] `crates/supervisor/src/demo/demo_1.rs:20` — remove `CONTEXT_NUMBER_KEY` constant, update graph builder
 
 ---
 
@@ -1609,18 +1625,83 @@ OnceCluster:
       type: String
       default: derive_key(authoring_path, "has_fired")  # Auto-unique
 
+  input_ports:
+    - name: signal
+      type: Bool           # Incoming signal to gate
+
+  output_ports:
+    - name: outcome
+      type: Event
+      maps_to: ack.outcome
+
   nodes:
-    - id: has_fired_source
-      impl: ctx_get_or_default_bool
-      parameters:
+    has_fired_source:
+      impl: context_bool_source@0.1.0
+      params:
         key: $state_key
         default: false
 
-    - id: set_fired_action
-      impl: ctx_set_bool
-      parameters:
+    not_fired:
+      impl: not@0.1.0       # Negate: true when has NOT fired
+      # inputs wired below
+
+    should_fire:
+      impl: and@0.1.0       # AND: signal is active AND has not fired
+      # inputs wired below
+
+    gate:
+      impl: emit_if_true@0.1.0
+      # inputs wired below
+
+    fired_value:
+      impl: bool_source@0.1.0
+      params:
+        value: true          # Constant: "I have fired"
+
+    ack:
+      impl: ack_action@0.1.0
+      params:
+        accept: true
+
+    set_fired:
+      impl: context_set_bool@0.1.0
+      params:
         key: $state_key
+
+  edges:
+    # State read → negate
+    - from: has_fired_source.value
+      to: not_fired.a
+
+    # Incoming signal + not-fired → AND gate
+    - from: $signal                    # Cluster input port
+      to: should_fire.a
+    - from: not_fired.value
+      to: should_fire.b
+
+    # AND result → trigger
+    - from: should_fire.value
+      to: gate.value
+
+    # Trigger gates both actions
+    - from: gate.event
+      to: ack.event
+    - from: gate.event
+      to: set_fired.event
+
+    # Constant true feeds the write action
+    - from: fired_value.value
+      to: set_fired.value
 ```
+
+**Data flow:**
+1. `has_fired_source` reads `$state_key` from context (default: `false`)
+2. `not_fired` inverts it — `true` on first episode, `false` after firing
+3. `should_fire` ANDs the incoming signal with not-fired
+4. `gate` emits event only when both conditions hold
+5. `ack` acknowledges the event (output exposed as cluster outcome)
+6. `set_fired` writes `true` to `$state_key` — adapter persists it
+7. Next episode: `has_fired_source` reads `true`, `not_fired` outputs `false`, gate stays closed
 
 ### 9.3 Collision Rules
 

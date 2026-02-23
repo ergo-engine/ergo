@@ -680,14 +680,18 @@ pub(crate) fn validate_adapter_composition(
                             node.implementation.impl_id
                         )
                     })?;
-                validate_source_adapter_composition(&source.manifest().requires, provides)
-                    .map_err(|err| {
-                        format!(
-                            "source composition failed for node '{}': {}",
-                            runtime_id,
-                            render_error_info(&err)
-                        )
-                    })?;
+                validate_source_adapter_composition(
+                    &source.manifest().requires,
+                    provides,
+                    &node.parameters,
+                )
+                .map_err(|err| {
+                    format!(
+                        "source composition failed for node '{}': {}",
+                        runtime_id,
+                        render_error_info(&err)
+                    )
+                })?;
             }
             PrimitiveKind::Action => {
                 let action = registries
@@ -699,15 +703,18 @@ pub(crate) fn validate_adapter_composition(
                             node.implementation.impl_id
                         )
                     })?;
-                validate_action_adapter_composition(&action.manifest().effects, provides).map_err(
-                    |err| {
-                        format!(
-                            "action composition failed for node '{}': {}",
-                            runtime_id,
-                            render_error_info(&err)
-                        )
-                    },
-                )?;
+                validate_action_adapter_composition(
+                    &action.manifest().effects,
+                    provides,
+                    &node.parameters,
+                )
+                .map_err(|err| {
+                    format!(
+                        "action composition failed for node '{}': {}",
+                        runtime_id,
+                        render_error_info(&err)
+                    )
+                })?;
             }
             _ => {}
         }

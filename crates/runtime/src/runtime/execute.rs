@@ -130,21 +130,30 @@ fn execute_source(
 
     let manifest = primitive.manifest();
     for req in &manifest.requires.context {
+        // Resolve $key bindings before the required check so optional
+        // parameter-bound keys are still resolved.
+        let resolved_name =
+            crate::common::resolve_manifest_name(&req.name, &node.parameters).map_err(|_| {
+                ExecError::MissingRequiredContextKey {
+                    node: node.runtime_id.clone(),
+                    key: req.name.clone(),
+                }
+            })?;
         if !req.required {
             continue;
         }
-        match ctx.value(&req.name) {
+        match ctx.value(&resolved_name) {
             None => {
                 return Err(ExecError::MissingRequiredContextKey {
                     node: node.runtime_id.clone(),
-                    key: req.name.clone(),
+                    key: resolved_name,
                 });
             }
             Some(val) => {
                 if val.value_type() != req.ty {
                     return Err(ExecError::ContextKeyTypeMismatch {
                         node: node.runtime_id.clone(),
-                        key: req.name.clone(),
+                        key: resolved_name,
                         expected: req.ty.clone(),
                         got: val.value_type(),
                     });
