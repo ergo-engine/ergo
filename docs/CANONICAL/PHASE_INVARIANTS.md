@@ -786,6 +786,8 @@ This freeze applies to:
 | ACT-19 | Parameter default type matches declared type | action.md #ACT-19 | — | — | ✓ | act_19_invalid_parameter_type_default_rejected |
 | ACT-20 | $key write references bound to declared parameter | action.md #ACT-20 | — | — | ✓ | act_20_dollar_key_write_referencing_nonexistent_param_rejected |
 | ACT-21 | $key write references must be String type | action.md #ACT-21 | — | — | ✓ | act_21_dollar_key_write_referencing_non_string_param_rejected |
+| ACT-22 | Write from_input references declared input | action.md #ACT-22 | — | — | ✓ | act_22_from_input_not_found_rejected |
+| ACT-23 | Write from_input type compatible with write type | action.md #ACT-23 | — | — | ✓ | act_23_from_input_event_type_rejected |
 
 ### Notes
 

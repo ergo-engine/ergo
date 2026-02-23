@@ -405,6 +405,112 @@ fn replay_rejects_mid_stream_corruption() {
     ));
 }
 
+/// End-to-end effect infrastructure: a runtime that emits real non-empty effects
+/// is captured and replayed. Mutation of captured effect triggers mismatch.
+#[test]
+fn e2e_effect_capture_and_replay_integrity() {
+    use ergo_adapter::{RunResult, RuntimeInvoker};
+    use ergo_runtime::common::{ActionEffect, EffectWrite, Value};
+    use ergo_supervisor::replay::compare_decisions;
+
+    /// Test runtime that emits a real non-empty effect on every invocation.
+    #[derive(Clone)]
+    struct EffectRuntime;
+
+    impl RuntimeInvoker for EffectRuntime {
+        fn run(
+            &self,
+            _graph_id: &ergo_adapter::GraphId,
+            _event_id: &ergo_adapter::EventId,
+            _ctx: &ergo_adapter::ExecutionContext,
+            _deadline: Option<Duration>,
+        ) -> RunResult {
+            RunResult {
+                termination: RunTermination::Completed,
+                effects: vec![ActionEffect {
+                    kind: "set_context".to_string(),
+                    writes: vec![EffectWrite {
+                        key: "price".to_string(),
+                        value: Value::Number(42.0),
+                    }],
+                }],
+            }
+        }
+    }
+
+    let runtime = EffectRuntime;
+
+    // Capture phase
+    let mut session = ergo_supervisor::CapturingSession::new(
+        ergo_adapter::GraphId::new("g"),
+        Constraints::default(),
+        ergo_supervisor::replay::MemoryDecisionLog::default(),
+        runtime.clone(),
+        "rpv1:sha256:test".to_string(),
+    );
+    session.on_event(ExternalEvent::mechanical_at(
+        EventId::new("e1"),
+        ExternalEventKind::Command,
+        EventTime::from_duration(Duration::from_secs(0)),
+    ));
+    let bundle = session.into_bundle();
+
+    // Verify capture stores real non-empty effects
+    assert_eq!(bundle.decisions.len(), 1);
+    let captured_effects = bundle.decisions[0]
+        .effects
+        .as_ref()
+        .expect("effect-aware capture must have effects = Some(...)");
+    assert_eq!(captured_effects.len(), 1, "one real effect expected");
+    assert_eq!(captured_effects[0].effect.kind, "set_context");
+    assert_eq!(captured_effects[0].effect.writes[0].key, "price");
+    assert_eq!(
+        captured_effects[0].effect.writes[0].value,
+        Value::Number(42.0)
+    );
+    assert!(!captured_effects[0].effect_hash.is_empty());
+
+    // Replay phase — same runtime produces same effects
+    let replayed = ergo_supervisor::replay::replay(&bundle, runtime);
+    assert_eq!(replayed.len(), 1);
+    let replayed_effects = replayed[0]
+        .effects
+        .as_ref()
+        .expect("replayed record must have effects");
+    assert_eq!(replayed_effects.len(), 1);
+
+    // Compare should succeed
+    assert_eq!(
+        compare_decisions(&bundle.decisions, &replayed).unwrap(),
+        true,
+        "capture and replay with same runtime should match"
+    );
+
+    // Mutate captured effect key -> replay should reject
+    let mut corrupted_bundle = bundle.clone();
+    corrupted_bundle.decisions[0]
+        .effects
+        .as_mut()
+        .unwrap()[0]
+        .effect
+        .writes[0]
+        .key = "corrupted".to_string();
+    // Rehash to make hash consistent with corrupted content
+    corrupted_bundle.decisions[0]
+        .effects
+        .as_mut()
+        .unwrap()[0]
+        .effect_hash = ergo_supervisor::replay::hash_effect(
+        &corrupted_bundle.decisions[0].effects.as_ref().unwrap()[0].effect,
+    );
+    let err = compare_decisions(&corrupted_bundle.decisions, &replayed).unwrap_err();
+    assert!(
+        matches!(err, ReplayError::EffectMismatch { .. }),
+        "corrupted effect key should cause mismatch: {:?}",
+        err
+    );
+}
+
 /// RENAME-TICK-1: Old captures with "Tick" deserialize to Pump via serde alias.
 /// This ensures backward compatibility for captures created before the rename.
 #[test]

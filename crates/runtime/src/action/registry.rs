@@ -127,6 +127,36 @@ impl ActionRegistry {
                     _ => {}
                 }
             }
+
+            // ACT-22: from_input must reference a declared input.
+            // ACT-23: Referenced input must be scalar (not Event) and type-compatible.
+            {
+                let input = manifest.inputs.iter().find(|i| i.name == write.from_input);
+                match input {
+                    None => {
+                        return Err(ActionValidationError::WriteFromInputNotFound {
+                            write_name: write.name.clone(),
+                            from_input: write.from_input.clone(),
+                        });
+                    }
+                    Some(inp) => {
+                        let compatible = match (&write.value_type, &inp.value_type) {
+                            (ValueType::Number, super::ActionValueType::Number) => true,
+                            (ValueType::Bool, super::ActionValueType::Bool) => true,
+                            (ValueType::String, super::ActionValueType::String) => true,
+                            _ => false,
+                        };
+                        if !compatible {
+                            return Err(ActionValidationError::WriteFromInputTypeMismatch {
+                                write_name: write.name.clone(),
+                                from_input: write.from_input.clone(),
+                                expected: write.value_type.clone(),
+                                found: inp.value_type.clone(),
+                            });
+                        }
+                    }
+                }
+            }
         }
 
         Self::validate_outputs(&manifest.outputs)?;
@@ -228,12 +258,20 @@ mod tests {
             id: "test_action".to_string(),
             version: "0.1.0".to_string(),
             kind: ActionKind::Action,
-            inputs: vec![InputSpec {
-                name: "event".to_string(),
-                value_type: ActionValueType::Event,
-                required: true,
-                cardinality: crate::action::Cardinality::Single,
-            }],
+            inputs: vec![
+                InputSpec {
+                    name: "event".to_string(),
+                    value_type: ActionValueType::Event,
+                    required: true,
+                    cardinality: crate::action::Cardinality::Single,
+                },
+                InputSpec {
+                    name: "value".to_string(),
+                    value_type: ActionValueType::Number,
+                    required: true,
+                    cardinality: crate::action::Cardinality::Single,
+                },
+            ],
             outputs: vec![OutputSpec {
                 name: "outcome".to_string(),
                 value_type: ActionValueType::Event,
@@ -303,7 +341,7 @@ mod tests {
         let err = ActionRegistry::validate_manifest(&manifest).unwrap_err();
         assert!(matches!(err, ActionValidationError::DuplicateInput { .. }));
         assert_eq!(err.rule_id(), "ACT-5");
-        assert_eq!(err.path().as_deref(), Some("$.inputs[1].name"));
+        assert_eq!(err.path().as_deref(), Some("$.inputs[2].name"));
     }
 
     #[test]
@@ -387,10 +425,12 @@ mod tests {
             crate::action::ActionWriteSpec {
                 name: "price".to_string(),
                 value_type: ValueType::Number,
+                from_input: "value".to_string(),
             },
             crate::action::ActionWriteSpec {
                 name: "price".to_string(),
                 value_type: ValueType::Number,
+                from_input: "value".to_string(),
             },
         ];
         let err = ActionRegistry::validate_manifest(&manifest).unwrap_err();
@@ -408,6 +448,7 @@ mod tests {
         manifest.effects.writes = vec![crate::action::ActionWriteSpec {
             name: "series".to_string(),
             value_type: ValueType::Series,
+            from_input: String::new(),
         }];
         let err = ActionRegistry::validate_manifest(&manifest).unwrap_err();
         assert!(matches!(
@@ -531,6 +572,7 @@ mod tests {
         manifest.effects.writes = vec![crate::action::ActionWriteSpec {
             name: "$key".to_string(),
             value_type: ValueType::Number,
+            from_input: String::new(),
         }];
         // No parameter named "key" — should fail ACT-20.
         let err = ActionRegistry::validate_manifest(&manifest).unwrap_err();
@@ -555,6 +597,7 @@ mod tests {
         manifest.effects.writes = vec![crate::action::ActionWriteSpec {
             name: "$key".to_string(),
             value_type: ValueType::Number,
+            from_input: String::new(),
         }];
         let err = ActionRegistry::validate_manifest(&manifest).unwrap_err();
         assert!(matches!(
@@ -578,6 +621,78 @@ mod tests {
         manifest.effects.writes = vec![crate::action::ActionWriteSpec {
             name: "$key".to_string(),
             value_type: ValueType::Number,
+            from_input: "value".to_string(),
+        }];
+        assert!(ActionRegistry::validate_manifest(&manifest).is_ok());
+    }
+
+    #[test]
+    fn act_22_from_input_not_found_rejected() {
+        let mut manifest = baseline_manifest();
+        manifest.effects.writes = vec![crate::action::ActionWriteSpec {
+            name: "price".to_string(),
+            value_type: ValueType::Number,
+            from_input: "nonexistent".to_string(),
+        }];
+        let err = ActionRegistry::validate_manifest(&manifest).unwrap_err();
+        assert!(matches!(
+            err,
+            ActionValidationError::WriteFromInputNotFound { .. }
+        ));
+        assert_eq!(err.rule_id(), "ACT-22");
+        assert_eq!(
+            err.path().as_deref(),
+            Some("$.effects.writes[].from_input")
+        );
+    }
+
+    #[test]
+    fn act_23_from_input_event_type_rejected() {
+        let mut manifest = baseline_manifest();
+        // "event" input is ActionValueType::Event — not compatible with Number write
+        manifest.effects.writes = vec![crate::action::ActionWriteSpec {
+            name: "price".to_string(),
+            value_type: ValueType::Number,
+            from_input: "event".to_string(),
+        }];
+        let err = ActionRegistry::validate_manifest(&manifest).unwrap_err();
+        assert!(matches!(
+            err,
+            ActionValidationError::WriteFromInputTypeMismatch { .. }
+        ));
+        assert_eq!(err.rule_id(), "ACT-23");
+    }
+
+    #[test]
+    fn act_23_from_input_scalar_type_mismatch_rejected() {
+        let mut manifest = baseline_manifest();
+        manifest.inputs.push(crate::action::InputSpec {
+            name: "flag".to_string(),
+            value_type: crate::action::ActionValueType::Bool,
+            required: true,
+            cardinality: crate::action::Cardinality::Single,
+        });
+        manifest.effects.writes = vec![crate::action::ActionWriteSpec {
+            name: "price".to_string(),
+            value_type: ValueType::Number,
+            from_input: "flag".to_string(),
+        }];
+        let err = ActionRegistry::validate_manifest(&manifest).unwrap_err();
+        assert!(matches!(
+            err,
+            ActionValidationError::WriteFromInputTypeMismatch { .. }
+        ));
+        assert_eq!(err.rule_id(), "ACT-23");
+    }
+
+    #[test]
+    fn act_22_valid_from_input_matching_scalar_accepted() {
+        let mut manifest = baseline_manifest();
+        // baseline already includes a "value" Number input
+        manifest.effects.writes = vec![crate::action::ActionWriteSpec {
+            name: "price".to_string(),
+            value_type: ValueType::Number,
+            from_input: "value".to_string(),
         }];
         assert!(ActionRegistry::validate_manifest(&manifest).is_ok());
     }

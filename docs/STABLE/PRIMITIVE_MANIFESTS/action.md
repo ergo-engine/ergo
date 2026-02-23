@@ -199,6 +199,8 @@ Rules:
 | ACT-19 | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` |
 | ACT-20 | $key write references bound to declared parameter | `∀ write where name starts with "$": referenced param exists in parameters[]` |
 | ACT-21 | $key write references must be String type | `∀ write where name starts with "$": referenced param.type == String` |
+| ACT-22 | Write from_input references declared input | `∀ write: from_input ∈ inputs[].name` |
+| ACT-23 | Write from_input type compatible with write type | `∀ write: inputs[from_input].type is scalar AND matches write.value_type` |
 
 **Note on ACT-18:** Uniqueness is by id only; version is not considered. Two primitives with the same id but different versions are rejected.
 
@@ -231,6 +233,8 @@ Rules:
 | ACT-19 | Registration | `ActionValidationError::InvalidParameterType` | `act_19_invalid_parameter_type_default_rejected` |
 | ACT-20 | Registration | `ActionValidationError::UnboundWriteKeyReference` | `act_20_dollar_key_write_referencing_nonexistent_param_rejected` |
 | ACT-21 | Registration | `ActionValidationError::WriteKeyReferenceNotString` | `act_21_dollar_key_write_referencing_non_string_param_rejected` |
+| ACT-22 | Registration | `ActionValidationError::WriteFromInputNotFound` | `act_22_from_input_not_found_rejected` |
+| ACT-23 | Registration | `ActionValidationError::WriteFromInputTypeMismatch` | `act_23_from_input_event_type_rejected` |
 
 **Registration enforcement location:** `crates/runtime/src/action/registry.rs`
 

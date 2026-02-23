@@ -120,6 +120,7 @@ pub struct ParameterSpec {
 pub struct ActionWriteSpec {
     pub name: String,
     pub value_type: ValueType,
+    pub from_input: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -220,6 +221,16 @@ pub enum ActionValidationError {
         name: String,
         referenced_param: String,
     },
+    WriteFromInputNotFound {
+        write_name: String,
+        from_input: String,
+    },
+    WriteFromInputTypeMismatch {
+        write_name: String,
+        from_input: String,
+        expected: ValueType,
+        found: ActionValueType,
+    },
 }
 
 impl ErrorInfo for ActionValidationError {
@@ -244,6 +255,8 @@ impl ErrorInfo for ActionValidationError {
             Self::InvalidParameterType { .. } => "ACT-19",
             Self::UnboundWriteKeyReference { .. } => "ACT-20",
             Self::WriteKeyReferenceNotString { .. } => "ACT-21",
+            Self::WriteFromInputNotFound { .. } => "ACT-22",
+            Self::WriteFromInputTypeMismatch { .. } => "ACT-23",
         }
     }
 
@@ -272,6 +285,8 @@ impl ErrorInfo for ActionValidationError {
             "ACT-19" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-19",
             "ACT-20" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-20",
             "ACT-21" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-21",
+            "ACT-22" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-22",
+            "ACT-23" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-23",
             _ => "CANONICAL/PHASE_INVARIANTS.md",
         }
     }
@@ -349,6 +364,22 @@ impl ErrorInfo for ActionValidationError {
                 "Write key '{}' references parameter '{}' which is not String type",
                 name, referenced_param
             )),
+            Self::WriteFromInputNotFound {
+                write_name,
+                from_input,
+            } => Cow::Owned(format!(
+                "Write '{}' references undeclared input '{}'",
+                write_name, from_input
+            )),
+            Self::WriteFromInputTypeMismatch {
+                write_name,
+                from_input,
+                expected,
+                found,
+            } => Cow::Owned(format!(
+                "Write '{}' type {:?} does not match input '{}' type {:?}",
+                write_name, expected, from_input, found
+            )),
         }
     }
 
@@ -383,6 +414,12 @@ impl ErrorInfo for ActionValidationError {
             }
             Self::WriteKeyReferenceNotString { .. } => {
                 Some(Cow::Borrowed("$.effects.writes[].name"))
+            }
+            Self::WriteFromInputNotFound { .. } => {
+                Some(Cow::Borrowed("$.effects.writes[].from_input"))
+            }
+            Self::WriteFromInputTypeMismatch { .. } => {
+                Some(Cow::Borrowed("$.effects.writes[].from_input"))
             }
         }
     }
@@ -435,6 +472,18 @@ impl ErrorInfo for ActionValidationError {
             } => Some(Cow::Owned(format!(
                 "Change parameter '{}' type to String",
                 referenced_param
+            ))),
+            Self::WriteFromInputNotFound { from_input, .. } => Some(Cow::Owned(format!(
+                "Declare input '{}' in the action manifest inputs",
+                from_input
+            ))),
+            Self::WriteFromInputTypeMismatch {
+                from_input,
+                expected,
+                ..
+            } => Some(Cow::Owned(format!(
+                "Change input '{}' type to match write type {:?}, or use a scalar-typed input",
+                from_input, expected
             ))),
         }
     }

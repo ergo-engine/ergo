@@ -4,8 +4,10 @@ use std::time::Duration;
 
 use ergo_adapter::{
     capture::ExternalEventRecord, AdapterProvides, ErrKind, EventId, EventTime, ExecutionContext,
-    ExternalEvent, ExternalEventKind, GraphId, RunTermination, RuntimeHandle, RuntimeInvoker,
+    ExternalEvent, ExternalEventKind, GraphId, RunResult, RunTermination, RuntimeHandle,
+    RuntimeInvoker,
 };
+use ergo_runtime::common::ActionEffect;
 use ergo_runtime::catalog::{CorePrimitiveCatalog, CoreRegistries};
 use ergo_runtime::cluster::ExpandedGraph;
 use serde::{Deserialize, Serialize};
@@ -23,6 +25,13 @@ pub mod replay;
 pub mod demo;
 
 pub use capture::{write_capture_bundle, CaptureJsonStyle, CapturingDecisionLog, CapturingSession};
+
+/// A captured action effect with a deterministic hash for replay verification.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CapturedActionEffect {
+    pub effect: ActionEffect,
+    pub effect_hash: String,
+}
 
 /// SUP-7: DecisionLog is write-only. No read/query surface is ever exposed.
 pub trait DecisionLog {
@@ -91,9 +100,10 @@ pub struct DecisionLogEntry {
     pub deadline: Option<Duration>,
     pub termination: Option<RunTermination>,
     pub retry_count: usize,
+    pub effects: Vec<ActionEffect>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EpisodeInvocationRecord {
     pub event_id: EventId,
     pub decision: Decision,
@@ -103,6 +113,9 @@ pub struct EpisodeInvocationRecord {
     #[serde(default)]
     pub termination: Option<RunTermination>,
     pub retry_count: usize,
+    /// Effect-aware captures: Some(vec) for effect data, None for legacy bundles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effects: Option<Vec<CapturedActionEffect>>,
 }
 
 impl From<&DecisionLogEntry> for EpisodeInvocationRecord {
@@ -115,6 +128,9 @@ impl From<&DecisionLogEntry> for EpisodeInvocationRecord {
             deadline: entry.deadline,
             termination: entry.termination.clone(),
             retry_count: entry.retry_count,
+            // Non-capturing logs (e.g. MemoryDecisionLog in replay) don't hash effects.
+            // CapturingDecisionLog overrides this in its own log() impl.
+            effects: None,
         }
     }
 }
@@ -208,7 +224,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
 
         if self.is_concurrency_saturated() {
             self.enqueue_deferred(now, episode_id, &event);
-            self.log_decision(&event, Decision::Defer, Some(now), episode_id, None, 0);
+            self.log_decision(&event, Decision::Defer, Some(now), episode_id, None, 0, vec![]);
             return;
         }
 
@@ -222,6 +238,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
                 episode_id,
                 None,
                 0,
+                vec![],
             );
             return;
         }
@@ -231,7 +248,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
             self.recent_invocations.push_back(now);
         }
 
-        let (termination, retry_count) =
+        let (result, retry_count) =
             self.invoke_with_retries(event.event_id(), event.context());
 
         self.in_flight = self.in_flight.saturating_sub(1);
@@ -241,8 +258,9 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
             Decision::Invoke,
             None,
             episode_id,
-            Some(termination),
+            Some(result.termination),
             retry_count,
+            result.effects,
         );
     }
 
@@ -283,7 +301,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
         // CASE 1: Nothing due — log no-op
         let Some(key) = due_key else {
             let episode_id = self.next_episode_id();
-            self.log_decision(tick_event, Decision::Defer, None, episode_id, None, 0);
+            self.log_decision(tick_event, Decision::Defer, None, episode_id, None, 0, vec![]);
             return;
         };
 
@@ -294,7 +312,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
         if self.is_concurrency_saturated() {
             item.defer_count += 1;
             self.deferred_queue.insert((now, episode_id), item);
-            self.log_decision(tick_event, Decision::Defer, Some(now), episode_id, None, 0);
+            self.log_decision(tick_event, Decision::Defer, Some(now), episode_id, None, 0, vec![]);
             return;
         }
 
@@ -310,6 +328,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
                 episode_id,
                 None,
                 0,
+                vec![],
             );
             return;
         }
@@ -320,7 +339,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
             self.recent_invocations.push_back(now);
         }
 
-        let (termination, retry_count) = self.invoke_with_retries(&item.origin_event_id, &item.ctx);
+        let (result, retry_count) = self.invoke_with_retries(&item.origin_event_id, &item.ctx);
 
         self.in_flight = self.in_flight.saturating_sub(1);
 
@@ -329,8 +348,9 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
             Decision::Invoke,
             None,
             episode_id,
-            Some(termination),
+            Some(result.termination),
             retry_count,
+            result.effects,
         );
     }
 
@@ -365,20 +385,20 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
         &self,
         event_id: &EventId,
         ctx: &ergo_adapter::ExecutionContext,
-    ) -> (RunTermination, usize) {
+    ) -> (RunResult, usize) {
         let mut attempts = 0_usize;
-        let mut termination =
+        let mut result =
             self.runtime
                 .run(&self.graph_id, event_id, ctx, self.constraints.deadline);
 
-        while attempts < self.constraints.max_retries && Self::should_retry(&termination) {
+        while attempts < self.constraints.max_retries && Self::should_retry(&result.termination) {
             attempts = attempts.saturating_add(1);
-            termination =
+            result =
                 self.runtime
                     .run(&self.graph_id, event_id, ctx, self.constraints.deadline);
         }
 
-        (termination, attempts)
+        (result, attempts)
     }
 
     fn should_retry(termination: &RunTermination) -> bool {
@@ -403,6 +423,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
         episode_id: EpisodeId,
         termination: Option<RunTermination>,
         retry_count: usize,
+        effects: Vec<ActionEffect>,
     ) {
         let entry = DecisionLogEntry {
             graph_id: self.graph_id.clone(),
@@ -414,6 +435,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
             deadline: self.constraints.deadline,
             termination,
             retry_count,
+            effects,
         };
         self.decision_log.log(entry);
     }
@@ -424,6 +446,7 @@ mod tests {
     use super::{
         DecisionLog, DecisionLogEntry, ErrKind, RunTermination, RuntimeInvoker, Supervisor,
     };
+    use ergo_adapter::RunResult;
 
     struct TestLog;
 
@@ -440,8 +463,11 @@ mod tests {
             _event_id: &ergo_adapter::EventId,
             _ctx: &ergo_adapter::ExecutionContext,
             _deadline: Option<std::time::Duration>,
-        ) -> RunTermination {
-            RunTermination::Completed
+        ) -> RunResult {
+            RunResult {
+                termination: RunTermination::Completed,
+                effects: vec![],
+            }
         }
     }
 

@@ -134,6 +134,8 @@ Primary spec: `STABLE/PRIMITIVE_MANIFESTS/action.md`
 | ACT-19 | Registration | enforced | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-19` |
 | ACT-20 | Registration | enforced | $key write references bound to declared parameter | `∀ write where name starts with "$": referenced param exists` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-20` |
 | ACT-21 | Registration | enforced | $key write references must be String type | `∀ write where name starts with "$": referenced param.type == String` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-21` |
+| ACT-22 | Registration | enforced | Write from_input references declared input | `∀ write: from_input ∈ inputs[].name` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-22` |
+| ACT-23 | Registration | enforced | Write from_input type compatible with write type | `∀ write: inputs[from_input].type is scalar AND matches write.value_type` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-23` |
 
 ## Composition (COMP-*)
 

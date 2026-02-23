@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::action::{ActionOutcome, ActionValue};
 use crate::cluster::{PrimitiveKind, ValueType};
+use crate::common::{ActionEffect, EffectWrite};
 use crate::trigger::{TriggerEvent, TriggerValue};
 
 use super::types::{
@@ -15,6 +16,7 @@ pub fn execute(
     ctx: &ExecutionContext,
 ) -> Result<ExecutionReport, ExecError> {
     let mut node_outputs: HashMap<String, HashMap<String, RuntimeValue>> = HashMap::new();
+    let mut effects: Vec<ActionEffect> = Vec::new();
 
     for node_id in &graph.topo_order {
         let node = graph
@@ -36,7 +38,10 @@ pub fn execute(
                 if should_skip_action(&inputs) {
                     produce_skipped_outputs(node)
                 } else {
-                    execute_action(node, inputs, registries)?
+                    let (action_outputs, action_effects) =
+                        execute_action(node, inputs, registries)?;
+                    effects.extend(action_effects);
+                    action_outputs
                 }
             }
         };
@@ -63,7 +68,7 @@ pub fn execute(
         }
     }
 
-    Ok(ExecutionReport { outputs })
+    Ok(ExecutionReport { outputs, effects })
 }
 
 fn collect_inputs(
@@ -292,7 +297,7 @@ fn execute_action(
     node: &ValidatedNode,
     inputs: HashMap<String, RuntimeValue>,
     registries: &Registries,
-) -> Result<HashMap<String, RuntimeValue>, ExecError> {
+) -> Result<(HashMap<String, RuntimeValue>, Vec<ActionEffect>), ExecError> {
     let primitive =
         registries
             .actions
@@ -303,9 +308,9 @@ fn execute_action(
             })?;
 
     let mut mapped_inputs: HashMap<String, ActionValue> = HashMap::new();
-    for (name, val) in inputs {
-        let mapped = map_to_action_value(&val, &node.runtime_id, &name)?;
-        mapped_inputs.insert(name, mapped);
+    for (name, val) in &inputs {
+        let mapped = map_to_action_value(val, &node.runtime_id, name)?;
+        mapped_inputs.insert(name.clone(), mapped);
     }
 
     let mut mapped_parameters: HashMap<String, crate::action::ParameterValue> = HashMap::new();
@@ -320,10 +325,54 @@ fn execute_action(
     }
 
     let outputs = primitive.execute(&mapped_inputs, &mapped_parameters);
-    Ok(outputs
+
+    // Build effects from manifest write declarations
+    let manifest = primitive.manifest();
+    let mut effects = Vec::new();
+    if !manifest.effects.writes.is_empty() {
+        let mut writes = Vec::new();
+        for spec in &manifest.effects.writes {
+            // Resolve $key via Decision 2 infrastructure
+            let resolved_name =
+                crate::common::resolve_manifest_name(&spec.name, &node.parameters).map_err(
+                    |_| ExecError::ParameterTypeConversionFailed {
+                        node: node.runtime_id.clone(),
+                        parameter: spec.name.clone(),
+                    },
+                )?;
+
+            // Read the write value from the action input snapshot
+            let input_val = inputs.get(&spec.from_input).ok_or_else(|| {
+                ExecError::MissingOutput {
+                    node: node.runtime_id.clone(),
+                    output: spec.from_input.clone(),
+                }
+            })?;
+
+            let value = map_runtime_value_to_common(input_val).ok_or_else(|| {
+                ExecError::TypeConversionFailed {
+                    node: node.runtime_id.clone(),
+                    port: spec.from_input.clone(),
+                }
+            })?;
+
+            writes.push(EffectWrite {
+                key: resolved_name,
+                value,
+            });
+        }
+        effects.push(ActionEffect {
+            kind: "set_context".to_string(),
+            writes,
+        });
+    }
+
+    let runtime_outputs = outputs
         .into_iter()
         .map(|(k, v)| (k, map_action_value(v)))
-        .collect())
+        .collect();
+
+    Ok((runtime_outputs, effects))
 }
 
 /// NUM-FINITE-1: Reject non-finite numeric outputs before propagation.
@@ -465,6 +514,16 @@ fn map_to_action_value(v: &RuntimeValue, node: &str, port: &str) -> Result<Actio
             node: node.to_string(),
             port: port.to_string(),
         }),
+    }
+}
+
+fn map_runtime_value_to_common(v: &RuntimeValue) -> Option<crate::common::Value> {
+    match v {
+        RuntimeValue::Number(n) => Some(crate::common::Value::Number(*n)),
+        RuntimeValue::Bool(b) => Some(crate::common::Value::Bool(*b)),
+        RuntimeValue::String(s) => Some(crate::common::Value::String(s.clone())),
+        RuntimeValue::Series(s) => Some(crate::common::Value::Series(s.clone())),
+        RuntimeValue::Event(_) => None,
     }
 }
 

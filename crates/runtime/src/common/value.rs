@@ -11,7 +11,7 @@ pub enum PrimitiveKind {
     Compute,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Value {
     Number(f64),
     Series(Vec<f64>),

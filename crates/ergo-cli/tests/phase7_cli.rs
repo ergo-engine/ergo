@@ -324,6 +324,7 @@ effects:
   writes:
     - name: x
       type: Number
+      from_input: gate
 
 execution:
   deterministic: true
@@ -349,6 +350,54 @@ side_effects: true
         serde_json::from_str(&err).expect("error output should be json in --format json mode");
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["errors"][0]["rule_id"], "COMP-12");
+}
+
+/// Action write missing from_input must fail YAML parse (serde missing field).
+#[test]
+fn validate_action_write_missing_from_input_rejected() {
+    let manifest = r#"
+kind: action
+id: missing_from_input
+version: 0.1.0
+
+inputs:
+  - name: gate
+    type: event
+    required: true
+    cardinality: single
+
+outputs:
+  - name: outcome
+    type: event
+
+parameters: []
+
+effects:
+  writes:
+    - name: x
+      type: Number
+
+execution:
+  deterministic: true
+  retryable: false
+
+state:
+  allowed: false
+
+side_effects: true
+"#;
+
+    let path = write_temp_file("action-no-from-input.yaml", manifest);
+    let result = ergo_cli::validate::validate_command(&[path.to_string_lossy().to_string()]);
+    assert!(
+        result.is_err(),
+        "action write without from_input must fail validation"
+    );
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("from_input"),
+        "error should mention missing from_input field: {err}"
+    );
 }
 
 #[test]

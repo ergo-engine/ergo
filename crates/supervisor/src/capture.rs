@@ -4,11 +4,14 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use sha2::{Digest, Sha256};
+
 use ergo_adapter::capture::ExternalEventRecord;
 use ergo_adapter::{ExternalEvent, GraphId, RuntimeInvoker};
 
 use crate::{
-    CaptureBundle, Constraints, DecisionLog, DecisionLogEntry, EpisodeInvocationRecord, Supervisor,
+    CaptureBundle, CapturedActionEffect, Constraints, DecisionLog, DecisionLogEntry,
+    EpisodeInvocationRecord, Supervisor,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,8 +42,27 @@ impl<L: DecisionLog> DecisionLog for CapturingDecisionLog<L> {
     fn log(&self, entry: DecisionLogEntry) {
         self.inner.log(entry.clone());
 
+        let captured_effects: Vec<CapturedActionEffect> = entry
+            .effects
+            .iter()
+            .map(|effect| {
+                let effect_bytes =
+                    serde_json::to_vec(effect).expect("ActionEffect must be serializable");
+                let mut hasher = Sha256::new();
+                hasher.update(&effect_bytes);
+                let effect_hash = hex::encode(hasher.finalize());
+                CapturedActionEffect {
+                    effect: effect.clone(),
+                    effect_hash,
+                }
+            })
+            .collect();
+
+        let mut record = EpisodeInvocationRecord::from(&entry);
+        record.effects = Some(captured_effects);
+
         let mut guard = self.bundle.lock().expect("capture bundle poisoned");
-        guard.decisions.push(EpisodeInvocationRecord::from(&entry));
+        guard.decisions.push(record);
     }
 }
 
@@ -450,5 +472,71 @@ mod tests {
         perms.set_mode(0o755);
         fs::set_permissions(&dir, perms).expect("restore dir permissions");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn capturing_log_hashes_non_empty_effects_correctly() {
+        use ergo_runtime::common::{ActionEffect, EffectWrite, Value};
+        use sha2::{Digest, Sha256};
+
+        let effect = ActionEffect {
+            kind: "set_context".to_string(),
+            writes: vec![EffectWrite {
+                key: "price".to_string(),
+                value: Value::Number(42.0),
+            }],
+        };
+
+        let bundle = Arc::new(Mutex::new(CaptureBundle {
+            capture_version: "v2".to_string(),
+            graph_id: GraphId::new("hash_test"),
+            config: Constraints::default(),
+            events: Vec::new(),
+            decisions: Vec::new(),
+            adapter_provenance: crate::NO_ADAPTER_PROVENANCE.to_string(),
+            runtime_provenance: "rpv1:sha256:test".to_string(),
+        }));
+
+        let inner = crate::replay::MemoryDecisionLog::default();
+        let capturing_log = CapturingDecisionLog::new(inner, Arc::clone(&bundle));
+
+        // Construct a DecisionLogEntry with a real effect
+        let entry = crate::DecisionLogEntry {
+            graph_id: GraphId::new("hash_test"),
+            event_id: ergo_adapter::EventId::new("e1"),
+            event: ergo_adapter::ExternalEvent::mechanical(
+                ergo_adapter::EventId::new("e1"),
+                ergo_adapter::ExternalEventKind::Command,
+            ),
+            decision: crate::Decision::Invoke,
+            schedule_at: None,
+            episode_id: crate::EpisodeId::new(0),
+            deadline: None,
+            termination: Some(ergo_adapter::RunTermination::Completed),
+            retry_count: 0,
+            effects: vec![effect.clone()],
+        };
+
+        capturing_log.log(entry);
+
+        let guard = bundle.lock().expect("bundle poisoned");
+        assert_eq!(guard.decisions.len(), 1);
+        let record = &guard.decisions[0];
+        let captured_effects = record
+            .effects
+            .as_ref()
+            .expect("captured record must have effects = Some(...)");
+        assert_eq!(captured_effects.len(), 1, "one effect expected");
+        assert_eq!(captured_effects[0].effect, effect);
+
+        // Verify hash matches serde_json::to_vec -> SHA-256 path
+        let expected_bytes = serde_json::to_vec(&effect).unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(&expected_bytes);
+        let expected_hash = hex::encode(hasher.finalize());
+        assert_eq!(
+            captured_effects[0].effect_hash, expected_hash,
+            "effect_hash must equal SHA-256 of serde_json::to_vec(&effect)"
+        );
     }
 }

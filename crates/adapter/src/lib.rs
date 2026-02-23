@@ -129,6 +129,13 @@ pub enum ErrKind {
     Cancelled,
 }
 
+/// Result of a runtime invocation, carrying termination status and any effects.
+#[derive(Debug, Clone)]
+pub struct RunResult {
+    pub termination: RunTermination,
+    pub effects: Vec<ergo_runtime::common::ActionEffect>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RunTermination {
     Completed,
@@ -414,21 +421,32 @@ impl RuntimeHandle {
         event_id: &EventId,
         ctx: &ExecutionContext,
         deadline: Option<Duration>,
-    ) -> RunTermination {
+    ) -> RunResult {
         let _ = graph_id;
         let _ = event_id;
 
         if matches!(deadline, Some(d) if d.is_zero()) {
-            return RunTermination::Aborted;
+            return RunResult {
+                termination: RunTermination::Aborted,
+                effects: vec![],
+            };
         }
 
         let validated = match runtime_validate(&self.graph, &*self.catalog) {
             Ok(graph) => graph,
-            Err(_) => return RunTermination::Failed(ErrKind::ValidationFailed),
+            Err(_) => {
+                return RunResult {
+                    termination: RunTermination::Failed(ErrKind::ValidationFailed),
+                    effects: vec![],
+                }
+            }
         };
 
         if self.validate_composition(&validated).is_err() {
-            return RunTermination::Failed(ErrKind::ValidationFailed);
+            return RunResult {
+                termination: RunTermination::Failed(ErrKind::ValidationFailed),
+                effects: vec![],
+            };
         }
 
         // Create temporary Registries reference from owned CoreRegistries
@@ -439,18 +457,27 @@ impl RuntimeHandle {
             actions: &self.registries.actions,
         };
 
-        // Call runtime::execute, consume ExecutionReport internally (SUP-2)
+        // Call runtime::execute, surface effects through the boundary
         match execute(&validated, &registries, ctx.inner()) {
-            Ok(_report) => RunTermination::Completed,
-            Err(exec_err) => match exec_err {
-                ExecError::ComputeFailed { .. }
-                | ExecError::NonFiniteOutput { .. }
-                | ExecError::MissingRequiredContextKey { .. }
-                | ExecError::ContextKeyTypeMismatch { .. } => {
-                    RunTermination::Failed(ErrKind::SemanticError)
-                }
-                _ => RunTermination::Failed(ErrKind::RuntimeError),
+            Ok(report) => RunResult {
+                termination: RunTermination::Completed,
+                effects: report.effects,
             },
+            Err(exec_err) => {
+                let termination = match exec_err {
+                    ExecError::ComputeFailed { .. }
+                    | ExecError::NonFiniteOutput { .. }
+                    | ExecError::MissingRequiredContextKey { .. }
+                    | ExecError::ContextKeyTypeMismatch { .. } => {
+                        RunTermination::Failed(ErrKind::SemanticError)
+                    }
+                    _ => RunTermination::Failed(ErrKind::RuntimeError),
+                };
+                RunResult {
+                    termination,
+                    effects: vec![],
+                }
+            }
         }
     }
 
@@ -508,7 +535,7 @@ pub trait RuntimeInvoker {
         event_id: &EventId,
         ctx: &ExecutionContext,
         deadline: Option<Duration>,
-    ) -> RunTermination;
+    ) -> RunResult;
 }
 
 impl RuntimeInvoker for RuntimeHandle {
@@ -518,7 +545,7 @@ impl RuntimeInvoker for RuntimeHandle {
         event_id: &EventId,
         ctx: &ExecutionContext,
         deadline: Option<Duration>,
-    ) -> RunTermination {
+    ) -> RunResult {
         Self::run(self, graph_id, event_id, ctx, deadline)
     }
 }
@@ -566,21 +593,29 @@ impl RuntimeInvoker for FaultRuntimeHandle {
         event_id: &EventId,
         ctx: &ExecutionContext,
         deadline: Option<Duration>,
-    ) -> RunTermination {
+    ) -> RunResult {
         let _ = graph_id;
         let _ = ctx.inner();
 
         if matches!(deadline, Some(d) if d.is_zero()) {
-            return RunTermination::Aborted;
+            return RunResult {
+                termination: RunTermination::Aborted,
+                effects: vec![],
+            };
         }
 
         let mut guard = self.schedule.lock().expect("fault schedule poisoned");
         let queue = guard.entry(event_id.clone()).or_default();
-        if !queue.is_empty() {
-            return queue.remove(0);
-        }
+        let termination = if !queue.is_empty() {
+            queue.remove(0)
+        } else {
+            self.default.clone()
+        };
 
-        self.default.clone()
+        RunResult {
+            termination,
+            effects: vec![],
+        }
     }
 }
 
@@ -607,14 +642,14 @@ mod tests {
         let handle = FaultRuntimeHandle::new(RunTermination::Completed);
         let rt_ctx = ergo_runtime::runtime::ExecutionContext::default();
         let ctx = ExecutionContext::new(rt_ctx);
-        let term = handle.run(
+        let result = handle.run(
             &GraphId::new("g"),
             &EventId::new("e"),
             &ctx,
             Some(Duration::ZERO),
         );
 
-        assert_eq!(term, RunTermination::Aborted);
+        assert_eq!(result.termination, RunTermination::Aborted);
     }
 
     #[test]
@@ -629,12 +664,12 @@ mod tests {
         let ctx = ExecutionContext::new(rt_ctx);
 
         // First call returns scheduled outcome
-        let term = handle.run(&GraphId::new("g"), &EventId::new("e1"), &ctx, None);
-        assert_eq!(term, RunTermination::Failed(ErrKind::NetworkTimeout));
+        let result = handle.run(&GraphId::new("g"), &EventId::new("e1"), &ctx, None);
+        assert_eq!(result.termination, RunTermination::Failed(ErrKind::NetworkTimeout));
 
         // Second call returns default
-        let term = handle.run(&GraphId::new("g"), &EventId::new("e1"), &ctx, None);
-        assert_eq!(term, RunTermination::Completed);
+        let result = handle.run(&GraphId::new("g"), &EventId::new("e1"), &ctx, None);
+        assert_eq!(result.termination, RunTermination::Completed);
     }
 
     /// TEST-PUMP-SERDE-1: Verify Pump serializes as "Pump" not "Tick".
@@ -785,9 +820,9 @@ mod tests {
 
         let rt_ctx = RuntimeExecutionContext::default();
         let ctx = ExecutionContext::new(rt_ctx);
-        let term = runtime.run(&GraphId::new("g"), &EventId::new("e"), &ctx, None);
+        let result = runtime.run(&GraphId::new("g"), &EventId::new("e"), &ctx, None);
 
-        assert_eq!(term, RunTermination::Failed(ErrKind::ValidationFailed));
+        assert_eq!(result.termination, RunTermination::Failed(ErrKind::ValidationFailed));
     }
 
     #[test]
@@ -832,7 +867,7 @@ mod tests {
         );
 
         let ctx = ExecutionContext::new(RuntimeExecutionContext::default());
-        let term = runtime.run(&GraphId::new("g"), &EventId::new("e"), &ctx, None);
-        assert_eq!(term, RunTermination::Failed(ErrKind::ValidationFailed));
+        let result = runtime.run(&GraphId::new("g"), &EventId::new("e"), &ctx, None);
+        assert_eq!(result.termination, RunTermination::Failed(ErrKind::ValidationFailed));
     }
 }

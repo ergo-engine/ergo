@@ -932,6 +932,22 @@ const ACTION_RULES: &[RuleDefinition] = &[
         doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-21",
         status: RuleStatus::Enforced,
     },
+    RuleDefinition {
+        id: "ACT-22",
+        phase: Phase::Registration,
+        summary: "Write from_input references declared input",
+        predicate: "∀ write: from_input ∈ inputs[].name",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-22",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "ACT-23",
+        phase: Phase::Registration,
+        summary: "Write from_input type compatible with write type",
+        predicate: "∀ write: inputs[from_input].type is scalar AND matches write.value_type",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-23",
+        status: RuleStatus::Enforced,
+    },
 ];
 
 const COMPOSITION_RULES: &[RuleDefinition] = &[

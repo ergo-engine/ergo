@@ -1060,6 +1060,7 @@ struct RawActionWrite {
     name: String,
     #[serde(rename = "type")]
     value_type: String,
+    from_input: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1431,6 +1432,7 @@ fn raw_to_action_manifest(
                 Ok(ergo_runtime::action::ActionWriteSpec {
                     name: write.name,
                     value_type,
+                    from_input: write.from_input,
                 })
             })
             .collect::<Result<Vec<_>, ActionParseError>>()?,

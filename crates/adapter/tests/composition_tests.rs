@@ -138,6 +138,7 @@ fn comp_11_write_target_not_provided_rejected() {
         writes: vec![ActionWriteSpec {
             name: "price".to_string(),
             value_type: ValueType::Number,
+            from_input: String::new(),
         }],
     };
 
@@ -154,6 +155,7 @@ fn comp_12_write_target_not_writable_rejected() {
         writes: vec![ActionWriteSpec {
             name: "price".to_string(),
             value_type: ValueType::Number,
+            from_input: String::new(),
         }],
     };
 
@@ -170,6 +172,7 @@ fn comp_13_write_type_mismatch_rejected() {
         writes: vec![ActionWriteSpec {
             name: "price".to_string(),
             value_type: ValueType::Bool,
+            from_input: String::new(),
         }],
     };
 
@@ -185,6 +188,7 @@ fn comp_14_missing_set_context_rejected() {
         writes: vec![ActionWriteSpec {
             name: "price".to_string(),
             value_type: ValueType::Number,
+            from_input: String::new(),
         }],
     };
 
@@ -267,6 +271,7 @@ fn comp_action_dollar_key_resolves_to_parameter_value() {
         writes: vec![ActionWriteSpec {
             name: "$key".to_string(),
             value_type: ValueType::Number,
+            from_input: String::new(),
         }],
     };
     let params = HashMap::from([("key".to_string(), ParameterValue::String("fast_sma".to_string()))]);
@@ -282,6 +287,7 @@ fn comp_action_dollar_key_missing_provision_rejected() {
         writes: vec![ActionWriteSpec {
             name: "$key".to_string(),
             value_type: ValueType::Number,
+            from_input: String::new(),
         }],
     };
     let params = HashMap::from([("key".to_string(), ParameterValue::String("fast_sma".to_string()))]);
@@ -298,6 +304,7 @@ fn comp_action_dollar_key_missing_parameter_rejected() {
         writes: vec![ActionWriteSpec {
             name: "$key".to_string(),
             value_type: ValueType::Number,
+            from_input: String::new(),
         }],
     };
 
@@ -315,6 +322,7 @@ fn comp_action_dollar_key_non_string_param_rejected() {
         writes: vec![ActionWriteSpec {
             name: "$key".to_string(),
             value_type: ValueType::Number,
+            from_input: String::new(),
         }],
     };
     let params = HashMap::from([("key".to_string(), ParameterValue::Number(42.0))]);
