@@ -678,13 +678,15 @@ fn format_replay_error(err: &ReplayError) -> String {
             if let Some(exp) = expected {
                 info = info.with_detail(format!(
                     "expected: {}",
-                    serde_json::to_string(&exp.effect).unwrap_or_else(|_| "<unserializable>".to_string())
+                    serde_json::to_string(&exp.effect)
+                        .unwrap_or_else(|_| "<unserializable>".to_string())
                 ));
             }
             if let Some(act) = actual {
                 info = info.with_detail(format!(
                     "actual: {}",
-                    serde_json::to_string(&act.effect).unwrap_or_else(|_| "<unserializable>".to_string())
+                    serde_json::to_string(&act.effect)
+                        .unwrap_or_else(|_| "<unserializable>".to_string())
                 ));
             }
 
@@ -757,8 +759,8 @@ fn replay_graph(
         },
     )
     .map_err(|err| format_replay_error(&err))?;
-    let replay_matches = compare_decisions(&bundle.decisions, &replayed)
-        .map_err(|err| format_replay_error(&err))?;
+    let replay_matches =
+        compare_decisions(&bundle.decisions, &replayed).map_err(|err| format_replay_error(&err))?;
 
     let invoke_count = replayed
         .iter()
@@ -1284,8 +1286,8 @@ outputs:
     #[test]
     fn format_replay_error_effect_mismatch_surfaces_expected_actual() {
         use ergo_runtime::common::{ActionEffect, EffectWrite, Value};
-        use ergo_supervisor::CapturedActionEffect;
         use ergo_supervisor::replay::hash_effect;
+        use ergo_supervisor::CapturedActionEffect;
 
         let expected_effect = ActionEffect {
             kind: "set_context".to_string(),
@@ -1308,14 +1310,20 @@ outputs:
                 effect: expected_effect,
                 effect_hash: hash_effect(&ActionEffect {
                     kind: "set_context".to_string(),
-                    writes: vec![EffectWrite { key: "price".to_string(), value: Value::Number(42.0) }],
+                    writes: vec![EffectWrite {
+                        key: "price".to_string(),
+                        value: Value::Number(42.0),
+                    }],
                 }),
             }),
             actual: Some(CapturedActionEffect {
                 effect: actual_effect,
                 effect_hash: hash_effect(&ActionEffect {
                     kind: "set_context".to_string(),
-                    writes: vec![EffectWrite { key: "volume".to_string(), value: Value::Number(99.0) }],
+                    writes: vec![EffectWrite {
+                        key: "volume".to_string(),
+                        value: Value::Number(99.0),
+                    }],
                 }),
             }),
             detail: "content mismatch".to_string(),

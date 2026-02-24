@@ -35,7 +35,11 @@ impl fmt::Display for ManifestNameError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingParameter { binding } => {
-                write!(f, "manifest name '{}' references missing parameter", binding)
+                write!(
+                    f,
+                    "manifest name '{}' references missing parameter",
+                    binding
+                )
             }
             Self::WrongParameterType { binding } => {
                 write!(

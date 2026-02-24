@@ -409,9 +409,7 @@ impl ErrorInfo for ActionValidationError {
             Self::RetryNotAllowed => Some(Cow::Borrowed("$.execution.retryable")),
             Self::NonDeterministicExecution => Some(Cow::Borrowed("$.execution.deterministic")),
             Self::InvalidParameterType { .. } => Some(Cow::Borrowed("$.parameters[].default")),
-            Self::UnboundWriteKeyReference { .. } => {
-                Some(Cow::Borrowed("$.effects.writes[].name"))
-            }
+            Self::UnboundWriteKeyReference { .. } => Some(Cow::Borrowed("$.effects.writes[].name")),
             Self::WriteKeyReferenceNotString { .. } => {
                 Some(Cow::Borrowed("$.effects.writes[].name"))
             }

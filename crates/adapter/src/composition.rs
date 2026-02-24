@@ -136,9 +136,9 @@ impl ErrorInfo for CompositionError {
                 Some(Cow::Owned(format!("$.effects.writes[{}].type", index)))
             }
             Self::MissingSetContextEffect => Some(Cow::Borrowed("$.effects.writes")),
-            Self::ManifestNameResolutionFailed {
-                index, context, ..
-            } => Some(Cow::Owned(format!("$.{context}[{index}].name"))),
+            Self::ManifestNameResolutionFailed { index, context, .. } => {
+                Some(Cow::Owned(format!("$.{context}[{index}].name")))
+            }
         }
     }
 

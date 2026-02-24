@@ -20,8 +20,7 @@ use ergo_runtime::cluster::{
     expand, BoundaryKind, Cardinality, ClusterDefinition, ClusterLoader, ClusterVersionIndex, Edge,
     ExpandedGraph, GraphInputPlaceholder, InputPortSpec, InputRef, NodeInstance, NodeKind,
     OutputPortSpec, OutputRef, ParameterBinding, ParameterDefault, ParameterSpec, ParameterType,
-    ParameterValue,
-    PortSpec, PrimitiveCatalog, PrimitiveKind, Signature, ValueType, Version,
+    ParameterValue, PortSpec, PrimitiveCatalog, PrimitiveKind, Signature, ValueType, Version,
 };
 use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceScheme};
 use ergo_runtime::runtime::{
@@ -2599,8 +2598,7 @@ outputs:
     fn parse_cluster_parameter_default_derive_key() {
         let yaml = "derive_key: has_fired";
         let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
-        let result =
-            parse_cluster_parameter_default(&value, &ParameterType::String).unwrap();
+        let result = parse_cluster_parameter_default(&value, &ParameterType::String).unwrap();
         assert_eq!(
             result,
             ParameterDefault::DeriveKey {
@@ -2613,8 +2611,7 @@ outputs:
     fn parse_derive_key_rejects_non_string_slot() {
         let yaml = "derive_key: 42";
         let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
-        let err =
-            parse_cluster_parameter_default(&value, &ParameterType::String).unwrap_err();
+        let err = parse_cluster_parameter_default(&value, &ParameterType::String).unwrap_err();
         assert!(
             err.contains("derive_key value must be a string"),
             "unexpected error: {err}"
@@ -2625,8 +2622,7 @@ outputs:
     fn parse_derive_key_rejects_empty_slot() {
         let yaml = "derive_key: ''";
         let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
-        let err =
-            parse_cluster_parameter_default(&value, &ParameterType::String).unwrap_err();
+        let err = parse_cluster_parameter_default(&value, &ParameterType::String).unwrap_err();
         assert!(
             err.contains("slot_name must not be empty"),
             "unexpected error: {err}"
@@ -2637,8 +2633,7 @@ outputs:
     fn parse_derive_key_rejects_unknown_default_mapping_key() {
         let yaml = "unknown_key: value";
         let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
-        let err =
-            parse_cluster_parameter_default(&value, &ParameterType::String).unwrap_err();
+        let err = parse_cluster_parameter_default(&value, &ParameterType::String).unwrap_err();
         assert!(
             err.contains("unknown parameter default key"),
             "unexpected error: {err}"
@@ -2649,20 +2644,15 @@ outputs:
     fn parse_derive_key_rejects_multi_key_mapping() {
         let yaml = "derive_key: slot\nextra: bad";
         let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
-        let err =
-            parse_cluster_parameter_default(&value, &ParameterType::String).unwrap_err();
-        assert!(
-            err.contains("exactly one key"),
-            "unexpected error: {err}"
-        );
+        let err = parse_cluster_parameter_default(&value, &ParameterType::String).unwrap_err();
+        assert!(err.contains("exactly one key"), "unexpected error: {err}");
     }
 
     #[test]
     fn parse_scalar_parameter_default_still_works() {
         let yaml = "42.0";
         let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
-        let result =
-            parse_cluster_parameter_default(&value, &ParameterType::Number).unwrap();
+        let result = parse_cluster_parameter_default(&value, &ParameterType::Number).unwrap();
         assert_eq!(
             result,
             ParameterDefault::Literal(ParameterValue::Number(42.0))

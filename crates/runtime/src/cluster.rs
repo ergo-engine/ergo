@@ -4217,10 +4217,7 @@ mod tests {
             .parameters
             .get("key")
             .expect("leaf should have 'key' param from exposed derive_key default");
-        let expected = derive_key(
-            &[("root".to_string(), "inst".to_string())],
-            "has_fired",
-        );
+        let expected = derive_key(&[("root".to_string(), "inst".to_string())], "has_fired");
         assert_eq!(
             resolved,
             &ParameterValue::String(expected),
@@ -4317,8 +4314,15 @@ mod tests {
                 _ => panic!("expected String parameter"),
             })
             .collect();
-        assert_eq!(keys.len(), 2, "both instances should have derived key params");
-        assert_ne!(keys[0], keys[1], "different instances must derive different keys");
+        assert_eq!(
+            keys.len(),
+            2,
+            "both instances should have derived key params"
+        );
+        assert_ne!(
+            keys[0], keys[1],
+            "different instances must derive different keys"
+        );
     }
 
     #[test]
@@ -4407,7 +4411,10 @@ mod tests {
         let path = vec![("cluster".to_string(), "node".to_string())];
         let key_a = derive_key(&path, "shared_slot");
         let key_b = derive_key(&path, "shared_slot");
-        assert_eq!(key_a, key_b, "same slot_name at same path must produce same key");
+        assert_eq!(
+            key_a, key_b,
+            "same slot_name at same path must produce same key"
+        );
     }
 
     // ---- Validation tests (defense in depth) ----

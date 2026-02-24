@@ -142,8 +142,7 @@ fn comp_11_write_target_not_provided_rejected() {
         }],
     };
 
-    let err =
-        validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
+    let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
     assert_comp(&err, "COMP-11", Some("$.effects.writes[0].name"));
 }
 
@@ -159,8 +158,7 @@ fn comp_12_write_target_not_writable_rejected() {
         }],
     };
 
-    let err =
-        validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
+    let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
     assert_comp(&err, "COMP-12", Some("$.effects.writes[0].name"));
 }
 
@@ -176,8 +174,7 @@ fn comp_13_write_type_mismatch_rejected() {
         }],
     };
 
-    let err =
-        validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
+    let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
     assert_comp(&err, "COMP-13", Some("$.effects.writes[0].type"));
 }
 
@@ -192,8 +189,7 @@ fn comp_14_missing_set_context_rejected() {
         }],
     };
 
-    let err =
-        validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
+    let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
     assert_comp(&err, "COMP-14", Some("$.effects.writes"));
 }
 
@@ -203,7 +199,10 @@ fn comp_14_missing_set_context_rejected() {
 fn comp_source_dollar_key_resolves_to_parameter_value() {
     let adapter = make_adapter_provides(vec![("fast_sma", "Number")]);
     let source = make_source_requires(vec![("$key", ValueType::Number, true)]);
-    let params = HashMap::from([("key".to_string(), ParameterValue::String("fast_sma".to_string()))]);
+    let params = HashMap::from([(
+        "key".to_string(),
+        ParameterValue::String("fast_sma".to_string()),
+    )]);
 
     assert!(validate_source_adapter_composition(&source, &adapter, &params).is_ok());
 }
@@ -212,7 +211,10 @@ fn comp_source_dollar_key_resolves_to_parameter_value() {
 fn comp_source_dollar_key_missing_adapter_provision_rejected() {
     let adapter = make_adapter_provides(vec![("price", "Number")]);
     let source = make_source_requires(vec![("$key", ValueType::Number, true)]);
-    let params = HashMap::from([("key".to_string(), ParameterValue::String("fast_sma".to_string()))]);
+    let params = HashMap::from([(
+        "key".to_string(),
+        ParameterValue::String("fast_sma".to_string()),
+    )]);
 
     let err = validate_source_adapter_composition(&source, &adapter, &params).unwrap_err();
     assert_comp(&err, "COMP-1", Some("$.requires.context[0].name"));
@@ -222,7 +224,10 @@ fn comp_source_dollar_key_missing_adapter_provision_rejected() {
 fn comp_source_dollar_key_type_mismatch_rejected() {
     let adapter = make_adapter_provides(vec![("fast_sma", "String")]);
     let source = make_source_requires(vec![("$key", ValueType::Number, true)]);
-    let params = HashMap::from([("key".to_string(), ParameterValue::String("fast_sma".to_string()))]);
+    let params = HashMap::from([(
+        "key".to_string(),
+        ParameterValue::String("fast_sma".to_string()),
+    )]);
 
     let err = validate_source_adapter_composition(&source, &adapter, &params).unwrap_err();
     assert_comp(&err, "COMP-2", Some("$.requires.context[0].type"));
@@ -274,7 +279,10 @@ fn comp_action_dollar_key_resolves_to_parameter_value() {
             from_input: String::new(),
         }],
     };
-    let params = HashMap::from([("key".to_string(), ParameterValue::String("fast_sma".to_string()))]);
+    let params = HashMap::from([(
+        "key".to_string(),
+        ParameterValue::String("fast_sma".to_string()),
+    )]);
 
     assert!(validate_action_adapter_composition(&effects, &adapter, &params).is_ok());
 }
@@ -290,7 +298,10 @@ fn comp_action_dollar_key_missing_provision_rejected() {
             from_input: String::new(),
         }],
     };
-    let params = HashMap::from([("key".to_string(), ParameterValue::String("fast_sma".to_string()))]);
+    let params = HashMap::from([(
+        "key".to_string(),
+        ParameterValue::String("fast_sma".to_string()),
+    )]);
 
     let err = validate_action_adapter_composition(&effects, &adapter, &params).unwrap_err();
     assert_comp(&err, "COMP-11", Some("$.effects.writes[0].name"));

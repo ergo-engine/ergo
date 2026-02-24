@@ -7,9 +7,9 @@ use ergo_adapter::{
     ExternalEvent, ExternalEventKind, GraphId, RunResult, RunTermination, RuntimeHandle,
     RuntimeInvoker,
 };
-use ergo_runtime::common::ActionEffect;
 use ergo_runtime::catalog::{CorePrimitiveCatalog, CoreRegistries};
 use ergo_runtime::cluster::ExpandedGraph;
+use ergo_runtime::common::ActionEffect;
 use serde::{Deserialize, Serialize};
 
 /// Capture bundle format version. This repo treats captures as ephemeral artifacts.
@@ -224,7 +224,15 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
 
         if self.is_concurrency_saturated() {
             self.enqueue_deferred(now, episode_id, &event);
-            self.log_decision(&event, Decision::Defer, Some(now), episode_id, None, 0, vec![]);
+            self.log_decision(
+                &event,
+                Decision::Defer,
+                Some(now),
+                episode_id,
+                None,
+                0,
+                vec![],
+            );
             return;
         }
 
@@ -248,8 +256,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
             self.recent_invocations.push_back(now);
         }
 
-        let (result, retry_count) =
-            self.invoke_with_retries(event.event_id(), event.context());
+        let (result, retry_count) = self.invoke_with_retries(event.event_id(), event.context());
 
         self.in_flight = self.in_flight.saturating_sub(1);
 
@@ -301,7 +308,15 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
         // CASE 1: Nothing due — log no-op
         let Some(key) = due_key else {
             let episode_id = self.next_episode_id();
-            self.log_decision(tick_event, Decision::Defer, None, episode_id, None, 0, vec![]);
+            self.log_decision(
+                tick_event,
+                Decision::Defer,
+                None,
+                episode_id,
+                None,
+                0,
+                vec![],
+            );
             return;
         };
 
@@ -312,7 +327,15 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
         if self.is_concurrency_saturated() {
             item.defer_count += 1;
             self.deferred_queue.insert((now, episode_id), item);
-            self.log_decision(tick_event, Decision::Defer, Some(now), episode_id, None, 0, vec![]);
+            self.log_decision(
+                tick_event,
+                Decision::Defer,
+                Some(now),
+                episode_id,
+                None,
+                0,
+                vec![],
+            );
             return;
         }
 
@@ -387,15 +410,15 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
         ctx: &ergo_adapter::ExecutionContext,
     ) -> (RunResult, usize) {
         let mut attempts = 0_usize;
-        let mut result =
-            self.runtime
-                .run(&self.graph_id, event_id, ctx, self.constraints.deadline);
+        let mut result = self
+            .runtime
+            .run(&self.graph_id, event_id, ctx, self.constraints.deadline);
 
         while attempts < self.constraints.max_retries && Self::should_retry(&result.termination) {
             attempts = attempts.saturating_add(1);
-            result =
-                self.runtime
-                    .run(&self.graph_id, event_id, ctx, self.constraints.deadline);
+            result = self
+                .runtime
+                .run(&self.graph_id, event_id, ctx, self.constraints.deadline);
         }
 
         (result, attempts)

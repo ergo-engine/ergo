@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::adapter_manifest_io::parse_adapter_manifest;
@@ -10,6 +11,7 @@ use ergo_runtime::action::{
     ActionEffects, ActionKind, ActionPrimitiveManifest, ActionRegistry, ActionValueType,
     ParameterType as ActionParameterType, ParameterValue as ActionParameterValue,
 };
+use ergo_runtime::cluster::ParameterValue as ClusterParameterValue;
 use ergo_runtime::common::{ErrorInfo, Phase, PrimitiveKind, RuleViolation, Value, ValueType};
 use ergo_runtime::compute::{
     Cadence as ComputeCadence, Cardinality as ComputeCardinality, ComputePrimitiveManifest,
@@ -99,14 +101,15 @@ pub fn check_compose_command(args: &[String]) -> Result<String, String> {
     let adapter_provides = AdapterProvides::from_manifest(&adapter_manifest);
 
     let other = parse_manifest(other_path).map_err(|err| render_failure(&[err], format))?;
-    let no_params = std::collections::HashMap::new();
     let result = match other {
         ParsedManifest::Source { manifest, .. } => {
-            validate_source_adapter_composition(&manifest.requires, &adapter_provides, &no_params)
+            let params = source_manifest_default_params(&manifest);
+            validate_source_adapter_composition(&manifest.requires, &adapter_provides, &params)
                 .map_err(RuleViolation::from)
         }
         ParsedManifest::Action { manifest, .. } => {
-            validate_action_adapter_composition(&manifest.effects, &adapter_provides, &no_params)
+            let params = action_manifest_default_params(&manifest);
+            validate_action_adapter_composition(&manifest.effects, &adapter_provides, &params)
                 .map_err(RuleViolation::from)
         }
         _ => {
@@ -124,6 +127,56 @@ pub fn check_compose_command(args: &[String]) -> Result<String, String> {
             format,
             "Composition invalid",
         )),
+    }
+}
+
+fn source_manifest_default_params(
+    manifest: &SourcePrimitiveManifest,
+) -> HashMap<String, ClusterParameterValue> {
+    manifest
+        .parameters
+        .iter()
+        .filter_map(|param| {
+            param
+                .default
+                .as_ref()
+                .map(|value| (param.name.clone(), source_param_value_to_cluster(value)))
+        })
+        .collect()
+}
+
+fn action_manifest_default_params(
+    manifest: &ActionPrimitiveManifest,
+) -> HashMap<String, ClusterParameterValue> {
+    manifest
+        .parameters
+        .iter()
+        .filter_map(|param| {
+            param
+                .default
+                .as_ref()
+                .map(|value| (param.name.clone(), action_param_value_to_cluster(value)))
+        })
+        .collect()
+}
+
+fn source_param_value_to_cluster(value: &SourceParameterValue) -> ClusterParameterValue {
+    match value {
+        SourceParameterValue::Int(v) => ClusterParameterValue::Int(*v),
+        SourceParameterValue::Number(v) => ClusterParameterValue::Number(*v),
+        SourceParameterValue::Bool(v) => ClusterParameterValue::Bool(*v),
+        SourceParameterValue::String(v) => ClusterParameterValue::String(v.clone()),
+        SourceParameterValue::Enum(v) => ClusterParameterValue::Enum(v.clone()),
+    }
+}
+
+fn action_param_value_to_cluster(value: &ActionParameterValue) -> ClusterParameterValue {
+    match value {
+        ActionParameterValue::Int(v) => ClusterParameterValue::Int(*v),
+        ActionParameterValue::Number(v) => ClusterParameterValue::Number(*v),
+        ActionParameterValue::Bool(v) => ClusterParameterValue::Bool(*v),
+        ActionParameterValue::String(v) => ClusterParameterValue::String(v.clone()),
+        ActionParameterValue::Enum(v) => ClusterParameterValue::Enum(v.clone()),
     }
 }
 

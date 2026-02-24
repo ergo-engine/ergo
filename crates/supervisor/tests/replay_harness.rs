@@ -488,21 +488,15 @@ fn e2e_effect_capture_and_replay_integrity() {
 
     // Mutate captured effect key -> replay should reject
     let mut corrupted_bundle = bundle.clone();
-    corrupted_bundle.decisions[0]
-        .effects
-        .as_mut()
-        .unwrap()[0]
+    corrupted_bundle.decisions[0].effects.as_mut().unwrap()[0]
         .effect
         .writes[0]
         .key = "corrupted".to_string();
     // Rehash to make hash consistent with corrupted content
-    corrupted_bundle.decisions[0]
-        .effects
-        .as_mut()
-        .unwrap()[0]
-        .effect_hash = ergo_supervisor::replay::hash_effect(
-        &corrupted_bundle.decisions[0].effects.as_ref().unwrap()[0].effect,
-    );
+    corrupted_bundle.decisions[0].effects.as_mut().unwrap()[0].effect_hash =
+        ergo_supervisor::replay::hash_effect(
+            &corrupted_bundle.decisions[0].effects.as_ref().unwrap()[0].effect,
+        );
     let err = compare_decisions(&corrupted_bundle.decisions, &replayed).unwrap_err();
     assert!(
         matches!(err, ReplayError::EffectMismatch { .. }),

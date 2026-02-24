@@ -453,8 +453,7 @@ const SOURCE_RULES: &[RuleDefinition] = &[
         id: "SRC-17",
         phase: Phase::Registration,
         summary: "$key context references must be String type",
-        predicate:
-            "∀ ctx where name starts with \"$\": referenced param.type == String",
+        predicate: "∀ ctx where name starts with \"$\": referenced param.type == String",
         doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-17",
         status: RuleStatus::Enforced,
     },
@@ -927,8 +926,7 @@ const ACTION_RULES: &[RuleDefinition] = &[
         id: "ACT-21",
         phase: Phase::Registration,
         summary: "$key write references must be String type",
-        predicate:
-            "∀ write where name starts with \"$\": referenced param.type == String",
+        predicate: "∀ write where name starts with \"$\": referenced param.type == String",
         doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-21",
         status: RuleStatus::Enforced,
     },

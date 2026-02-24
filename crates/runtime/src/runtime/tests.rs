@@ -2608,7 +2608,11 @@ fn effect_action_one_write_emits_effect() {
 
     let mut act_reg = crate::action::ActionRegistry::new();
     act_reg
-        .register(Box::new(WriteAction::new("test_write_action", "price", "value")))
+        .register(Box::new(WriteAction::new(
+            "test_write_action",
+            "price",
+            "value",
+        )))
         .unwrap();
 
     let mut bool_source = SourceRegistry::new();
@@ -2767,7 +2771,11 @@ fn effect_action_one_write_emits_effect() {
     let report = crate::runtime::execute(&graph, &regs, &ctx).unwrap();
 
     // Verify effects
-    assert_eq!(report.effects.len(), 1, "action with one write should emit one effect");
+    assert_eq!(
+        report.effects.len(),
+        1,
+        "action with one write should emit one effect"
+    );
     let effect = &report.effects[0];
     assert_eq!(effect.kind, "set_context");
     assert_eq!(effect.writes.len(), 1);
@@ -2904,7 +2912,11 @@ fn effect_skipped_action_emits_no_effects() {
 
     let mut act_reg = crate::action::ActionRegistry::new();
     act_reg
-        .register(Box::new(WriteAction::new("test_write_action2", "price", "value")))
+        .register(Box::new(WriteAction::new(
+            "test_write_action2",
+            "price",
+            "value",
+        )))
         .unwrap();
 
     // Source produces false -> emit_if_true emits NotEmitted -> action skipped
@@ -3238,13 +3250,28 @@ fn effect_action_multiple_writes_emits_writes_in_declaration_order() {
                     version: "0.1.0".to_string(),
                     kind: PrimitiveKind::Action,
                     inputs: vec![
-                        InputMetadata { name: "event".to_string(), value_type: ValueType::Event, required: true },
-                        InputMetadata { name: "val_a".to_string(), value_type: ValueType::Number, required: true },
-                        InputMetadata { name: "val_b".to_string(), value_type: ValueType::Number, required: true },
+                        InputMetadata {
+                            name: "event".to_string(),
+                            value_type: ValueType::Event,
+                            required: true,
+                        },
+                        InputMetadata {
+                            name: "val_a".to_string(),
+                            value_type: ValueType::Number,
+                            required: true,
+                        },
+                        InputMetadata {
+                            name: "val_b".to_string(),
+                            value_type: ValueType::Number,
+                            required: true,
+                        },
                     ],
                     outputs: HashMap::from([(
                         "outcome".to_string(),
-                        OutputMetadata { value_type: ValueType::Event, cardinality: crate::cluster::Cardinality::Single },
+                        OutputMetadata {
+                            value_type: ValueType::Event,
+                            cardinality: crate::cluster::Cardinality::Single,
+                        },
                     )]),
                     parameters: HashMap::new(),
                 },
@@ -3252,23 +3279,53 @@ fn effect_action_multiple_writes_emits_writes_in_declaration_order() {
         ]),
         edges: vec![
             crate::runtime::types::ValidatedEdge {
-                from: crate::runtime::types::Endpoint::NodePort { node_id: "src_bool".to_string(), port_name: "value".to_string() },
-                to: crate::runtime::types::Endpoint::NodePort { node_id: "emit".to_string(), port_name: "input".to_string() },
+                from: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "src_bool".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "input".to_string(),
+                },
             },
             crate::runtime::types::ValidatedEdge {
-                from: crate::runtime::types::Endpoint::NodePort { node_id: "emit".to_string(), port_name: "event".to_string() },
-                to: crate::runtime::types::Endpoint::NodePort { node_id: "act".to_string(), port_name: "event".to_string() },
+                from: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "event".to_string(),
+                },
+                to: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "act".to_string(),
+                    port_name: "event".to_string(),
+                },
             },
             crate::runtime::types::ValidatedEdge {
-                from: crate::runtime::types::Endpoint::NodePort { node_id: "src_a".to_string(), port_name: "value".to_string() },
-                to: crate::runtime::types::Endpoint::NodePort { node_id: "act".to_string(), port_name: "val_a".to_string() },
+                from: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "src_a".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "act".to_string(),
+                    port_name: "val_a".to_string(),
+                },
             },
             crate::runtime::types::ValidatedEdge {
-                from: crate::runtime::types::Endpoint::NodePort { node_id: "src_b".to_string(), port_name: "value".to_string() },
-                to: crate::runtime::types::Endpoint::NodePort { node_id: "act".to_string(), port_name: "val_b".to_string() },
+                from: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "src_b".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "act".to_string(),
+                    port_name: "val_b".to_string(),
+                },
             },
         ],
-        topo_order: vec!["src_bool".to_string(), "src_a".to_string(), "src_b".to_string(), "emit".to_string(), "act".to_string()],
+        topo_order: vec![
+            "src_bool".to_string(),
+            "src_a".to_string(),
+            "src_b".to_string(),
+            "emit".to_string(),
+            "act".to_string(),
+        ],
         boundary_outputs: vec![],
     };
 
@@ -3312,63 +3369,164 @@ fn effect_action_write_key_dollar_binding_resolves_from_parameters() {
         manifest: crate::action::ActionPrimitiveManifest,
     }
     impl crate::action::ActionPrimitive for ParamWriteAction {
-        fn manifest(&self) -> &crate::action::ActionPrimitiveManifest { &self.manifest }
-        fn execute(&self, _inputs: &HashMap<String, crate::action::ActionValue>, _parameters: &HashMap<String, crate::action::ParameterValue>) -> HashMap<String, crate::action::ActionValue> {
-            HashMap::from([("outcome".to_string(), crate::action::ActionValue::Event(crate::action::ActionOutcome::Completed))])
+        fn manifest(&self) -> &crate::action::ActionPrimitiveManifest {
+            &self.manifest
+        }
+        fn execute(
+            &self,
+            _inputs: &HashMap<String, crate::action::ActionValue>,
+            _parameters: &HashMap<String, crate::action::ParameterValue>,
+        ) -> HashMap<String, crate::action::ActionValue> {
+            HashMap::from([(
+                "outcome".to_string(),
+                crate::action::ActionValue::Event(crate::action::ActionOutcome::Completed),
+            )])
         }
     }
-    act_reg.register(Box::new(ParamWriteAction { manifest })).unwrap();
+    act_reg
+        .register(Box::new(ParamWriteAction { manifest }))
+        .unwrap();
 
     let core_regs = crate::catalog::core_registries().unwrap();
 
     let graph = crate::runtime::types::ValidatedGraph {
         nodes: HashMap::from([
-            ("src_bool".to_string(), crate::runtime::types::ValidatedNode {
-                runtime_id: "src_bool".to_string(), impl_id: "boolean_source".to_string(), version: "0.1.0".to_string(),
-                kind: PrimitiveKind::Source, inputs: vec![],
-                outputs: HashMap::from([("value".to_string(), OutputMetadata { value_type: ValueType::Bool, cardinality: crate::cluster::Cardinality::Single })]),
-                parameters: HashMap::from([("value".to_string(), crate::cluster::ParameterValue::Bool(true))]),
-            }),
-            ("src_num".to_string(), crate::runtime::types::ValidatedNode {
-                runtime_id: "src_num".to_string(), impl_id: "number_source".to_string(), version: "0.1.0".to_string(),
-                kind: PrimitiveKind::Source, inputs: vec![],
-                outputs: HashMap::from([("value".to_string(), OutputMetadata { value_type: ValueType::Number, cardinality: crate::cluster::Cardinality::Single })]),
-                parameters: HashMap::from([("value".to_string(), crate::cluster::ParameterValue::Number(77.0))]),
-            }),
-            ("emit".to_string(), crate::runtime::types::ValidatedNode {
-                runtime_id: "emit".to_string(), impl_id: "emit_if_true".to_string(), version: "0.1.0".to_string(),
-                kind: PrimitiveKind::Trigger,
-                inputs: vec![InputMetadata { name: "input".to_string(), value_type: ValueType::Bool, required: true }],
-                outputs: HashMap::from([("event".to_string(), OutputMetadata { value_type: ValueType::Event, cardinality: crate::cluster::Cardinality::Single })]),
-                parameters: HashMap::new(),
-            }),
-            ("act".to_string(), crate::runtime::types::ValidatedNode {
-                runtime_id: "act".to_string(), impl_id: "dollar_write_action".to_string(), version: "0.1.0".to_string(),
-                kind: PrimitiveKind::Action,
-                inputs: vec![
-                    InputMetadata { name: "event".to_string(), value_type: ValueType::Event, required: true },
-                    InputMetadata { name: "value".to_string(), value_type: ValueType::Number, required: true },
-                ],
-                outputs: HashMap::from([("outcome".to_string(), OutputMetadata { value_type: ValueType::Event, cardinality: crate::cluster::Cardinality::Single })]),
-                // Node parameter resolves $key -> "fast_sma"
-                parameters: HashMap::from([("key".to_string(), crate::cluster::ParameterValue::String("fast_sma".to_string()))]),
-            }),
+            (
+                "src_bool".to_string(),
+                crate::runtime::types::ValidatedNode {
+                    runtime_id: "src_bool".to_string(),
+                    impl_id: "boolean_source".to_string(),
+                    version: "0.1.0".to_string(),
+                    kind: PrimitiveKind::Source,
+                    inputs: vec![],
+                    outputs: HashMap::from([(
+                        "value".to_string(),
+                        OutputMetadata {
+                            value_type: ValueType::Bool,
+                            cardinality: crate::cluster::Cardinality::Single,
+                        },
+                    )]),
+                    parameters: HashMap::from([(
+                        "value".to_string(),
+                        crate::cluster::ParameterValue::Bool(true),
+                    )]),
+                },
+            ),
+            (
+                "src_num".to_string(),
+                crate::runtime::types::ValidatedNode {
+                    runtime_id: "src_num".to_string(),
+                    impl_id: "number_source".to_string(),
+                    version: "0.1.0".to_string(),
+                    kind: PrimitiveKind::Source,
+                    inputs: vec![],
+                    outputs: HashMap::from([(
+                        "value".to_string(),
+                        OutputMetadata {
+                            value_type: ValueType::Number,
+                            cardinality: crate::cluster::Cardinality::Single,
+                        },
+                    )]),
+                    parameters: HashMap::from([(
+                        "value".to_string(),
+                        crate::cluster::ParameterValue::Number(77.0),
+                    )]),
+                },
+            ),
+            (
+                "emit".to_string(),
+                crate::runtime::types::ValidatedNode {
+                    runtime_id: "emit".to_string(),
+                    impl_id: "emit_if_true".to_string(),
+                    version: "0.1.0".to_string(),
+                    kind: PrimitiveKind::Trigger,
+                    inputs: vec![InputMetadata {
+                        name: "input".to_string(),
+                        value_type: ValueType::Bool,
+                        required: true,
+                    }],
+                    outputs: HashMap::from([(
+                        "event".to_string(),
+                        OutputMetadata {
+                            value_type: ValueType::Event,
+                            cardinality: crate::cluster::Cardinality::Single,
+                        },
+                    )]),
+                    parameters: HashMap::new(),
+                },
+            ),
+            (
+                "act".to_string(),
+                crate::runtime::types::ValidatedNode {
+                    runtime_id: "act".to_string(),
+                    impl_id: "dollar_write_action".to_string(),
+                    version: "0.1.0".to_string(),
+                    kind: PrimitiveKind::Action,
+                    inputs: vec![
+                        InputMetadata {
+                            name: "event".to_string(),
+                            value_type: ValueType::Event,
+                            required: true,
+                        },
+                        InputMetadata {
+                            name: "value".to_string(),
+                            value_type: ValueType::Number,
+                            required: true,
+                        },
+                    ],
+                    outputs: HashMap::from([(
+                        "outcome".to_string(),
+                        OutputMetadata {
+                            value_type: ValueType::Event,
+                            cardinality: crate::cluster::Cardinality::Single,
+                        },
+                    )]),
+                    // Node parameter resolves $key -> "fast_sma"
+                    parameters: HashMap::from([(
+                        "key".to_string(),
+                        crate::cluster::ParameterValue::String("fast_sma".to_string()),
+                    )]),
+                },
+            ),
         ]),
         edges: vec![
             crate::runtime::types::ValidatedEdge {
-                from: crate::runtime::types::Endpoint::NodePort { node_id: "src_bool".to_string(), port_name: "value".to_string() },
-                to: crate::runtime::types::Endpoint::NodePort { node_id: "emit".to_string(), port_name: "input".to_string() },
+                from: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "src_bool".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "input".to_string(),
+                },
             },
             crate::runtime::types::ValidatedEdge {
-                from: crate::runtime::types::Endpoint::NodePort { node_id: "emit".to_string(), port_name: "event".to_string() },
-                to: crate::runtime::types::Endpoint::NodePort { node_id: "act".to_string(), port_name: "event".to_string() },
+                from: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "event".to_string(),
+                },
+                to: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "act".to_string(),
+                    port_name: "event".to_string(),
+                },
             },
             crate::runtime::types::ValidatedEdge {
-                from: crate::runtime::types::Endpoint::NodePort { node_id: "src_num".to_string(), port_name: "value".to_string() },
-                to: crate::runtime::types::Endpoint::NodePort { node_id: "act".to_string(), port_name: "value".to_string() },
+                from: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "src_num".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "act".to_string(),
+                    port_name: "value".to_string(),
+                },
             },
         ],
-        topo_order: vec!["src_bool".to_string(), "src_num".to_string(), "emit".to_string(), "act".to_string()],
+        topo_order: vec![
+            "src_bool".to_string(),
+            "src_num".to_string(),
+            "emit".to_string(),
+            "act".to_string(),
+        ],
         boundary_outputs: vec![],
     };
 
@@ -3386,5 +3544,8 @@ fn effect_action_write_key_dollar_binding_resolves_from_parameters() {
     assert_eq!(report.effects[0].writes.len(), 1);
     // Key should be resolved "fast_sma", not literal "$key"
     assert_eq!(report.effects[0].writes[0].key, "fast_sma");
-    assert_eq!(report.effects[0].writes[0].value, crate::common::Value::Number(77.0));
+    assert_eq!(
+        report.effects[0].writes[0].value,
+        crate::common::Value::Number(77.0)
+    );
 }

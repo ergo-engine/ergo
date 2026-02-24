@@ -48,11 +48,24 @@ impl MemoryDecisionLog {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReplayError {
-    UnsupportedVersion { capture_version: String },
-    HashMismatch { event_id: EventId },
-    InvalidPayload { event_id: EventId, detail: String },
-    AdapterProvenanceMismatch { expected: String, got: String },
-    RuntimeProvenanceMismatch { expected: String, got: String },
+    UnsupportedVersion {
+        capture_version: String,
+    },
+    HashMismatch {
+        event_id: EventId,
+    },
+    InvalidPayload {
+        event_id: EventId,
+        detail: String,
+    },
+    AdapterProvenanceMismatch {
+        expected: String,
+        got: String,
+    },
+    RuntimeProvenanceMismatch {
+        expected: String,
+        got: String,
+    },
     UnexpectedAdapterProvidedForNoAdapterCapture,
     AdapterRequiredForProvenancedCapture,
     EffectMismatch {
@@ -215,12 +228,8 @@ pub fn compare_decisions(
                 return Err(ReplayError::EffectMismatch {
                     event_id: cap.event_id.clone(),
                     effect_index: captured_effects.len().min(replayed_effects.len()),
-                    expected: captured_effects
-                        .get(replayed_effects.len())
-                        .cloned(),
-                    actual: replayed_effects
-                        .get(captured_effects.len())
-                        .cloned(),
+                    expected: captured_effects.get(replayed_effects.len()).cloned(),
+                    actual: replayed_effects.get(captured_effects.len()).cloned(),
                     detail: format!(
                         "expected {} effects, got {}",
                         captured_effects.len(),
@@ -229,8 +238,10 @@ pub fn compare_decisions(
                 });
             }
 
-            for (idx, (cap_eff, rep_eff)) in
-                captured_effects.iter().zip(replayed_effects.iter()).enumerate()
+            for (idx, (cap_eff, rep_eff)) in captured_effects
+                .iter()
+                .zip(replayed_effects.iter())
+                .enumerate()
             {
                 if cap_eff.effect != rep_eff.effect || cap_eff.effect_hash != rep_eff.effect_hash {
                     return Err(ReplayError::EffectMismatch {
@@ -345,7 +356,8 @@ mod tests {
         let mut cap_eff = make_captured_effect("price", 42.0);
         let rep_eff = make_captured_effect("price", 42.0);
         // Tamper with captured hash but leave effect content identical
-        cap_eff.effect_hash = "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+        cap_eff.effect_hash =
+            "0000000000000000000000000000000000000000000000000000000000000000".to_string();
         let captured = vec![make_record("e1", Some(vec![cap_eff]))];
         let replayed = vec![make_record("e1", Some(vec![rep_eff]))];
         let err = compare_decisions(&captured, &replayed).unwrap_err();

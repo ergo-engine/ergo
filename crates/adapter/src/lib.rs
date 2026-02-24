@@ -665,7 +665,10 @@ mod tests {
 
         // First call returns scheduled outcome
         let result = handle.run(&GraphId::new("g"), &EventId::new("e1"), &ctx, None);
-        assert_eq!(result.termination, RunTermination::Failed(ErrKind::NetworkTimeout));
+        assert_eq!(
+            result.termination,
+            RunTermination::Failed(ErrKind::NetworkTimeout)
+        );
 
         // Second call returns default
         let result = handle.run(&GraphId::new("g"), &EventId::new("e1"), &ctx, None);
@@ -822,7 +825,10 @@ mod tests {
         let ctx = ExecutionContext::new(rt_ctx);
         let result = runtime.run(&GraphId::new("g"), &EventId::new("e"), &ctx, None);
 
-        assert_eq!(result.termination, RunTermination::Failed(ErrKind::ValidationFailed));
+        assert_eq!(
+            result.termination,
+            RunTermination::Failed(ErrKind::ValidationFailed)
+        );
     }
 
     #[test]
@@ -868,6 +874,9 @@ mod tests {
 
         let ctx = ExecutionContext::new(RuntimeExecutionContext::default());
         let result = runtime.run(&GraphId::new("g"), &EventId::new("e"), &ctx, None);
-        assert_eq!(result.termination, RunTermination::Failed(ErrKind::ValidationFailed));
+        assert_eq!(
+            result.termination,
+            RunTermination::Failed(ErrKind::ValidationFailed)
+        );
     }
 }

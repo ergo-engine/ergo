@@ -137,12 +137,10 @@ fn execute_source(
     for req in &manifest.requires.context {
         // Resolve $key bindings before the required check so optional
         // parameter-bound keys are still resolved.
-        let resolved_name =
-            crate::common::resolve_manifest_name(&req.name, &node.parameters).map_err(|_| {
-                ExecError::MissingRequiredContextKey {
-                    node: node.runtime_id.clone(),
-                    key: req.name.clone(),
-                }
+        let resolved_name = crate::common::resolve_manifest_name(&req.name, &node.parameters)
+            .map_err(|_| ExecError::MissingRequiredContextKey {
+                node: node.runtime_id.clone(),
+                key: req.name.clone(),
             })?;
         if !req.required {
             continue;
@@ -333,21 +331,20 @@ fn execute_action(
         let mut writes = Vec::new();
         for spec in &manifest.effects.writes {
             // Resolve $key via Decision 2 infrastructure
-            let resolved_name =
-                crate::common::resolve_manifest_name(&spec.name, &node.parameters).map_err(
-                    |_| ExecError::ParameterTypeConversionFailed {
-                        node: node.runtime_id.clone(),
-                        parameter: spec.name.clone(),
-                    },
-                )?;
+            let resolved_name = crate::common::resolve_manifest_name(&spec.name, &node.parameters)
+                .map_err(|_| ExecError::ParameterTypeConversionFailed {
+                    node: node.runtime_id.clone(),
+                    parameter: spec.name.clone(),
+                })?;
 
             // Read the write value from the action input snapshot
-            let input_val = inputs.get(&spec.from_input).ok_or_else(|| {
-                ExecError::MissingOutput {
-                    node: node.runtime_id.clone(),
-                    output: spec.from_input.clone(),
-                }
-            })?;
+            let input_val =
+                inputs
+                    .get(&spec.from_input)
+                    .ok_or_else(|| ExecError::MissingOutput {
+                        node: node.runtime_id.clone(),
+                        output: spec.from_input.clone(),
+                    })?;
 
             let value = map_runtime_value_to_common(input_val).ok_or_else(|| {
                 ExecError::TypeConversionFailed {

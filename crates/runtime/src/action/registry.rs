@@ -640,10 +640,7 @@ mod tests {
             ActionValidationError::WriteFromInputNotFound { .. }
         ));
         assert_eq!(err.rule_id(), "ACT-22");
-        assert_eq!(
-            err.path().as_deref(),
-            Some("$.effects.writes[].from_input")
-        );
+        assert_eq!(err.path().as_deref(), Some("$.effects.writes[].from_input"));
     }
 
     #[test]
