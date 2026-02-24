@@ -343,3 +343,67 @@ fn src_14_duplicate_id_rejected() {
         Some("Choose a unique ID not already registered")
     );
 }
+
+#[test]
+fn src_16_dollar_key_referencing_nonexistent_param_rejected() {
+    let mut manifest = valid_manifest();
+    manifest.requires = SourceRequires {
+        context: vec![crate::source::ContextRequirement {
+            name: "$key".to_string(),
+            ty: ValueType::Number,
+            required: true,
+        }],
+    };
+    // No parameter named "key" — should fail SRC-16.
+    let err = SourceRegistry::validate_manifest(&manifest).unwrap_err();
+    assert!(matches!(
+        err,
+        SourceValidationError::UnboundContextKeyReference { .. }
+    ));
+    assert_eq!(err.rule_id(), "SRC-16");
+    assert_eq!(err.path().as_deref(), Some("$.requires.context[].name"));
+}
+
+#[test]
+fn src_17_dollar_key_referencing_non_string_param_rejected() {
+    let mut manifest = valid_manifest();
+    manifest.parameters.push(ParameterSpec {
+        name: "key".to_string(),
+        value_type: ParameterType::Number,
+        default: None,
+        bounds: None,
+    });
+    manifest.requires = SourceRequires {
+        context: vec![crate::source::ContextRequirement {
+            name: "$key".to_string(),
+            ty: ValueType::Number,
+            required: true,
+        }],
+    };
+    let err = SourceRegistry::validate_manifest(&manifest).unwrap_err();
+    assert!(matches!(
+        err,
+        SourceValidationError::ContextKeyReferenceNotString { .. }
+    ));
+    assert_eq!(err.rule_id(), "SRC-17");
+    assert_eq!(err.path().as_deref(), Some("$.requires.context[].name"));
+}
+
+#[test]
+fn src_16_dollar_key_referencing_string_param_accepted() {
+    let mut manifest = valid_manifest();
+    manifest.parameters.push(ParameterSpec {
+        name: "key".to_string(),
+        value_type: ParameterType::String,
+        default: Some(crate::source::ParameterValue::String("x".to_string())),
+        bounds: None,
+    });
+    manifest.requires = SourceRequires {
+        context: vec![crate::source::ContextRequirement {
+            name: "$key".to_string(),
+            ty: ValueType::Number,
+            required: true,
+        }],
+    };
+    assert!(SourceRegistry::validate_manifest(&manifest).is_ok());
+}

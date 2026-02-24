@@ -76,10 +76,16 @@ pub struct GraphInputPlaceholder {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum ParameterDefault {
+    Literal(ParameterValue),
+    DeriveKey { slot_name: String },
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ParameterSpec {
     pub name: String,
     pub ty: ParameterType,
-    pub default: Option<ParameterValue>,
+    pub default: Option<ParameterDefault>,
     pub required: bool,
 }
 
@@ -272,6 +278,9 @@ pub enum ExpandError {
         expected: ParameterType,
         got: ParameterType,
     },
+    InvalidDeriveKeySlot {
+        parameter: String,
+    },
     SignatureInferenceFailed(SignatureInferenceError),
     DeclaredSignatureInvalid(ClusterValidationError),
     /// I.3: Required parameter has no binding and no default
@@ -442,6 +451,7 @@ impl ErrorInfo for ExpandError {
             Self::DuplicateOutputPort { .. } => "D.6",
             Self::DuplicateParameter { .. } => "D.9",
             Self::ParameterDefaultTypeMismatch { .. } => "D.8",
+            Self::InvalidDeriveKeySlot { .. } => "D.8",
             Self::SignatureInferenceFailed(_) => "D.4",
             Self::DeclaredSignatureInvalid(_) => "D.10",
             Self::MissingCluster { .. } => "E.9",
@@ -540,6 +550,10 @@ impl ErrorInfo for ExpandError {
                 "Parameter '{}' default has wrong type (expected {:?}, got {:?})",
                 name, expected, got
             )),
+            Self::InvalidDeriveKeySlot { parameter } => Cow::Owned(format!(
+                "Parameter '{}' has derive_key default with empty slot_name",
+                parameter
+            )),
             Self::SignatureInferenceFailed(inner) => inner.summary(),
             Self::DeclaredSignatureInvalid(inner) => inner.summary(),
             Self::MissingRequiredParameter {
@@ -608,6 +622,7 @@ impl ErrorInfo for ExpandError {
             Self::DuplicateOutputPort { .. } => Some(Cow::Borrowed("$.output_ports")),
             Self::DuplicateParameter { .. } => Some(Cow::Borrowed("$.parameters")),
             Self::ParameterDefaultTypeMismatch { .. } => Some(Cow::Borrowed("$.parameters")),
+            Self::InvalidDeriveKeySlot { .. } => Some(Cow::Borrowed("$.parameters")),
             Self::SignatureInferenceFailed(_) => Some(Cow::Borrowed("$.output_ports")),
             Self::DeclaredSignatureInvalid(_) => Some(Cow::Borrowed("$.declared_signature")),
             Self::InvalidVersionSelector { .. }
@@ -655,6 +670,10 @@ impl ErrorInfo for ExpandError {
             Self::ParameterDefaultTypeMismatch { name, expected, .. } => Some(Cow::Owned(format!(
                 "Set default for '{}' to type {:?}",
                 name, expected
+            ))),
+            Self::InvalidDeriveKeySlot { parameter } => Some(Cow::Owned(format!(
+                "Provide a non-empty slot_name for derive_key on parameter '{}'",
+                parameter
             ))),
             Self::SignatureInferenceFailed(_) => Some(Cow::Borrowed(
                 "Ensure output ports map to valid node outputs",
@@ -891,13 +910,31 @@ fn validate_cluster_definition(cluster_def: &ClusterDefinition) -> Result<(), Ex
         }
 
         if let Some(default) = &param.default {
-            let got = parameter_value_type(default);
-            if got != param.ty {
-                return Err(ExpandError::ParameterDefaultTypeMismatch {
-                    name: param.name.clone(),
-                    expected: param.ty.clone(),
-                    got,
-                });
+            match default {
+                ParameterDefault::Literal(v) => {
+                    let got = parameter_value_type(v);
+                    if got != param.ty {
+                        return Err(ExpandError::ParameterDefaultTypeMismatch {
+                            name: param.name.clone(),
+                            expected: param.ty.clone(),
+                            got,
+                        });
+                    }
+                }
+                ParameterDefault::DeriveKey { slot_name } => {
+                    if param.ty != ParameterType::String {
+                        return Err(ExpandError::ParameterDefaultTypeMismatch {
+                            name: param.name.clone(),
+                            expected: param.ty.clone(),
+                            got: ParameterType::String,
+                        });
+                    }
+                    if slot_name.is_empty() {
+                        return Err(ExpandError::InvalidDeriveKeySlot {
+                            parameter: param.name.clone(),
+                        });
+                    }
+                }
             }
         }
     }
@@ -1298,19 +1335,23 @@ where
 
                 let bound_nested = apply_literal_bindings(&nested_def, &node.parameter_bindings);
 
+                // Compute nested authoring path before build_resolved_params
+                // so DeriveKey defaults can access the instantiation path.
+                let mut nested_prefix = authoring_prefix.to_vec();
+                nested_prefix.push((cluster_def.id.clone(), node.id.clone()));
+
                 // A.1: Build resolved parameter values for the nested cluster:
                 // - Literal bindings use their value directly
                 // - Exposed bindings look up the value from our resolved_params
                 // - Missing bindings use defaults from cluster parameter specs
+                // - DeriveKey defaults derive deterministic keys from the authoring path
                 let nested_resolved_params = build_resolved_params(
                     &nested_def.id,
                     &nested_def.parameters,
                     &node.parameter_bindings,
                     resolved_params,
+                    &nested_prefix,
                 )?;
-
-                let mut nested_prefix = authoring_prefix.to_vec();
-                nested_prefix.push((cluster_def.id.clone(), node.id.clone()));
 
                 let nested_build = expand_with_context(
                     &bound_nested,
@@ -1635,11 +1676,16 @@ fn resolve_impl_parameters(
 /// - Explicit bindings (Literal or Exposed) take precedence
 /// - If no binding, apply default from cluster parameter spec
 /// - If no binding and no default and required, error
+///
+/// Note: This function is called only for nested cluster instantiation.
+/// Root-cluster parameter defaults are not resolved through this path;
+/// `derive_key` defaults are for nested cluster instantiation only.
 fn build_resolved_params(
     cluster_id: &str,
     specs: &[ParameterSpec],
     bindings: &HashMap<String, ParameterBinding>,
     resolved_params: &HashMap<String, ParameterValue>,
+    authoring_path: &[(String, NodeId)],
 ) -> Result<HashMap<String, ParameterValue>, ExpandError> {
     // I.7: Reject bindings that reference undeclared parameters
     let spec_names: std::collections::HashSet<&str> =
@@ -1674,7 +1720,17 @@ fn build_resolved_params(
             None => {
                 // A.1: Apply default if available
                 if let Some(default) = &spec.default {
-                    result.insert(spec.name.clone(), default.clone());
+                    match default {
+                        ParameterDefault::Literal(v) => {
+                            result.insert(spec.name.clone(), v.clone());
+                        }
+                        ParameterDefault::DeriveKey { slot_name } => {
+                            result.insert(
+                                spec.name.clone(),
+                                ParameterValue::String(derive_key(authoring_path, slot_name)),
+                            );
+                        }
+                    }
                 } else if spec.required {
                     return Err(ExpandError::MissingRequiredParameter {
                         cluster_id: cluster_id.to_string(),
@@ -1714,6 +1770,25 @@ fn map_boundary_outputs(
         });
     }
     Ok(result)
+}
+
+/// Derive a deterministic, injective key from an authoring path and slot name.
+///
+/// Uses length-prefixed segments to avoid delimiter collisions (identifiers may
+/// contain `#`, `/`, etc.). The output is namespaced with `__ergo/` to avoid
+/// collisions with user-chosen key names.
+///
+/// Format: `__ergo/<len>:<segment>/<len>:<segment>/.../<len>:<slot_name>`
+/// where `<len>` is the UTF-8 byte length of the following segment,
+/// and segments alternate cluster_id and node_id from the authoring path.
+pub fn derive_key(authoring_path: &[(String, NodeId)], slot_name: &str) -> String {
+    let mut parts = Vec::new();
+    for (cluster_id, node_id) in authoring_path {
+        parts.push(format!("{}:{}", cluster_id.len(), cluster_id));
+        parts.push(format!("{}:{}", node_id.len(), node_id));
+    }
+    parts.push(format!("{}:{}", slot_name.len(), slot_name));
+    format!("__ergo/{}", parts.join("/"))
 }
 
 #[cfg(test)]
@@ -2650,7 +2725,7 @@ mod tests {
             parameters: vec![ParameterSpec {
                 name: "flag".to_string(),
                 ty: ParameterType::Bool,
-                default: Some(ParameterValue::Number(1.0)),
+                default: Some(ParameterDefault::Literal(ParameterValue::Number(1.0))),
                 required: false,
             }],
             declared_signature: None,
@@ -3404,7 +3479,7 @@ mod tests {
             parameters: vec![ParameterSpec {
                 name: "threshold".to_string(),
                 ty: ParameterType::Number,
-                default: Some(ParameterValue::Number(42.0)), // Default value
+                default: Some(ParameterDefault::Literal(ParameterValue::Number(42.0))), // Default value
                 required: false,
             }],
             declared_signature: None,
@@ -3739,7 +3814,7 @@ mod tests {
             parameters: vec![ParameterSpec {
                 name: "threshold".to_string(),
                 ty: ParameterType::Number,
-                default: Some(ParameterValue::Number(0.0)),
+                default: Some(ParameterDefault::Literal(ParameterValue::Number(0.0))),
                 required: false,
             }],
             declared_signature: None,
@@ -4017,5 +4092,429 @@ mod tests {
                 version,
             } if id == "prim" && version == "legacy"
         ));
+    }
+
+    // ---- derive_key() function tests ----
+
+    #[test]
+    fn derive_key_deterministic() {
+        let path = vec![("cluster_a".to_string(), "node_1".to_string())];
+        let a = derive_key(&path, "slot");
+        let b = derive_key(&path, "slot");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn derive_key_different_paths_produce_different_keys() {
+        let path_a = vec![("cluster_a".to_string(), "node_1".to_string())];
+        let path_b = vec![("cluster_b".to_string(), "node_1".to_string())];
+        assert_ne!(derive_key(&path_a, "slot"), derive_key(&path_b, "slot"));
+    }
+
+    #[test]
+    fn derive_key_different_slot_names_produce_different_keys() {
+        let path = vec![("cluster_a".to_string(), "node_1".to_string())];
+        assert_ne!(derive_key(&path, "slot_x"), derive_key(&path, "slot_y"));
+    }
+
+    #[test]
+    fn derive_key_injective_encoding_handles_reserved_chars() {
+        // Identifiers containing # and / must produce distinct keys from
+        // identifiers that happen to match after naive delimiter joining.
+        let path_a = vec![("a#b".to_string(), "c/d".to_string())];
+        let path_b = vec![("a".to_string(), "b/c".to_string())];
+        assert_ne!(derive_key(&path_a, "slot"), derive_key(&path_b, "slot"));
+
+        // Length-prefix ensures "ab" + "cd" != "a" + "bcd"
+        let path_c = vec![("ab".to_string(), "cd".to_string())];
+        let path_d = vec![("a".to_string(), "bcd".to_string())];
+        assert_ne!(derive_key(&path_c, "slot"), derive_key(&path_d, "slot"));
+    }
+
+    #[test]
+    fn derive_key_empty_path_produces_defined_output() {
+        let key = derive_key(&[], "slot");
+        assert!(key.starts_with("__ergo/"));
+        assert!(key.contains("slot"));
+        // Must be deterministic
+        assert_eq!(key, derive_key(&[], "slot"));
+    }
+
+    // ---- Expansion-time derive_key resolution tests ----
+
+    #[test]
+    fn expand_derive_key_default_resolves_to_string() {
+        // Inner cluster has a parameter with DeriveKey default.
+        // The leaf exposes the cluster param so we can verify the resolved value.
+        let mut inner_nodes = HashMap::new();
+        inner_nodes.insert(
+            "leaf".to_string(),
+            NodeInstance {
+                id: "leaf".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "1.0.0".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "key".to_string(),
+                    ParameterBinding::Exposed {
+                        parent_param: "state_key".to_string(),
+                    },
+                )]),
+            },
+        );
+
+        let inner = ClusterDefinition {
+            id: "inner".to_string(),
+            version: "1.0.0".to_string(),
+            nodes: inner_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: vec![ParameterSpec {
+                name: "state_key".to_string(),
+                ty: ParameterType::String,
+                default: Some(ParameterDefault::DeriveKey {
+                    slot_name: "has_fired".to_string(),
+                }),
+                required: false,
+            }],
+            declared_signature: None,
+        };
+
+        // Root cluster instantiates inner
+        let mut root_nodes = HashMap::new();
+        root_nodes.insert(
+            "inst".to_string(),
+            NodeInstance {
+                id: "inst".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "inner".to_string(),
+                    version: "1.0.0".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+
+        let root = ClusterDefinition {
+            id: "root".to_string(),
+            version: "1.0.0".to_string(),
+            nodes: root_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new().with_cluster(inner);
+        let catalog = TestCatalog::default();
+        let expanded = expand(&root, &loader, &catalog).unwrap();
+
+        assert_eq!(expanded.nodes.len(), 1);
+        let node = expanded.nodes.values().next().unwrap();
+        let resolved = node
+            .parameters
+            .get("key")
+            .expect("leaf should have 'key' param from exposed derive_key default");
+        let expected = derive_key(&[("root".to_string(), "inst".to_string())], "has_fired");
+        assert_eq!(
+            resolved,
+            &ParameterValue::String(expected),
+            "derive_key default must resolve to exact derived key"
+        );
+    }
+
+    #[test]
+    fn expand_same_cluster_twice_produces_different_derived_keys() {
+        let mut inner_nodes = HashMap::new();
+        inner_nodes.insert(
+            "leaf".to_string(),
+            NodeInstance {
+                id: "leaf".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "1.0.0".to_string(),
+                },
+                // Expose the derive_key param as a primitive parameter
+                parameter_bindings: HashMap::from([(
+                    "key".to_string(),
+                    ParameterBinding::Exposed {
+                        parent_param: "state_key".to_string(),
+                    },
+                )]),
+            },
+        );
+
+        let inner = ClusterDefinition {
+            id: "inner".to_string(),
+            version: "1.0.0".to_string(),
+            nodes: inner_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: vec![ParameterSpec {
+                name: "state_key".to_string(),
+                ty: ParameterType::String,
+                default: Some(ParameterDefault::DeriveKey {
+                    slot_name: "has_fired".to_string(),
+                }),
+                required: false,
+            }],
+            declared_signature: None,
+        };
+
+        // Root cluster instantiates inner twice
+        let mut root_nodes = HashMap::new();
+        root_nodes.insert(
+            "inst_a".to_string(),
+            NodeInstance {
+                id: "inst_a".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "inner".to_string(),
+                    version: "1.0.0".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+        root_nodes.insert(
+            "inst_b".to_string(),
+            NodeInstance {
+                id: "inst_b".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "inner".to_string(),
+                    version: "1.0.0".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+
+        let root = ClusterDefinition {
+            id: "root".to_string(),
+            version: "1.0.0".to_string(),
+            nodes: root_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new().with_cluster(inner);
+        let catalog = TestCatalog::default();
+        let expanded = expand(&root, &loader, &catalog).unwrap();
+
+        assert_eq!(expanded.nodes.len(), 2);
+        let keys: Vec<String> = expanded
+            .nodes
+            .values()
+            .filter_map(|n| n.parameters.get("key"))
+            .map(|v| match v {
+                ParameterValue::String(s) => s.clone(),
+                _ => panic!("expected String parameter"),
+            })
+            .collect();
+        assert_eq!(
+            keys.len(),
+            2,
+            "both instances should have derived key params"
+        );
+        assert_ne!(
+            keys[0], keys[1],
+            "different instances must derive different keys"
+        );
+    }
+
+    #[test]
+    fn expand_explicit_binding_overrides_derive_key_default() {
+        let mut inner_nodes = HashMap::new();
+        inner_nodes.insert(
+            "leaf".to_string(),
+            NodeInstance {
+                id: "leaf".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "1.0.0".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "key".to_string(),
+                    ParameterBinding::Exposed {
+                        parent_param: "state_key".to_string(),
+                    },
+                )]),
+            },
+        );
+
+        let inner = ClusterDefinition {
+            id: "inner".to_string(),
+            version: "1.0.0".to_string(),
+            nodes: inner_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: vec![ParameterSpec {
+                name: "state_key".to_string(),
+                ty: ParameterType::String,
+                default: Some(ParameterDefault::DeriveKey {
+                    slot_name: "has_fired".to_string(),
+                }),
+                required: false,
+            }],
+            declared_signature: None,
+        };
+
+        // Root instantiates inner with an explicit binding that overrides DeriveKey
+        let mut root_nodes = HashMap::new();
+        root_nodes.insert(
+            "inst".to_string(),
+            NodeInstance {
+                id: "inst".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "inner".to_string(),
+                    version: "1.0.0".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "state_key".to_string(),
+                    ParameterBinding::Literal {
+                        value: ParameterValue::String("explicit_override".to_string()),
+                    },
+                )]),
+            },
+        );
+
+        let root = ClusterDefinition {
+            id: "root".to_string(),
+            version: "1.0.0".to_string(),
+            nodes: root_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new().with_cluster(inner);
+        let catalog = TestCatalog::default();
+        let expanded = expand(&root, &loader, &catalog).unwrap();
+
+        let leaf = expanded.nodes.values().next().unwrap();
+        assert_eq!(
+            leaf.parameters.get("key"),
+            Some(&ParameterValue::String("explicit_override".to_string())),
+            "explicit binding must override DeriveKey default"
+        );
+    }
+
+    #[test]
+    fn expand_derive_key_same_slot_aliasing_allowed() {
+        // Two parameters with same slot_name derive the same key (aliasing)
+        let path = vec![("cluster".to_string(), "node".to_string())];
+        let key_a = derive_key(&path, "shared_slot");
+        let key_b = derive_key(&path, "shared_slot");
+        assert_eq!(
+            key_a, key_b,
+            "same slot_name at same path must produce same key"
+        );
+    }
+
+    // ---- Validation tests (defense in depth) ----
+
+    #[test]
+    fn cluster_derive_key_on_non_string_param_rejected() {
+        let cluster = ClusterDefinition {
+            id: "bad".to_string(),
+            version: "1.0.0".to_string(),
+            nodes: HashMap::new(),
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: vec![ParameterSpec {
+                name: "count".to_string(),
+                ty: ParameterType::Number,
+                default: Some(ParameterDefault::DeriveKey {
+                    slot_name: "slot".to_string(),
+                }),
+                required: false,
+            }],
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+        let catalog = TestCatalog::default();
+        let err = expand(&cluster, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "D.8");
+        assert!(matches!(
+            err,
+            ExpandError::ParameterDefaultTypeMismatch {
+                expected: ParameterType::Number,
+                got: ParameterType::String,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn cluster_derive_key_on_string_param_accepted() {
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "p1".to_string(),
+            NodeInstance {
+                id: "p1".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "prim".to_string(),
+                    version: "1.0.0".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+
+        let cluster = ClusterDefinition {
+            id: "root".to_string(),
+            version: "1.0.0".to_string(),
+            nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: vec![ParameterSpec {
+                name: "key".to_string(),
+                ty: ParameterType::String,
+                default: Some(ParameterDefault::DeriveKey {
+                    slot_name: "slot".to_string(),
+                }),
+                required: false,
+            }],
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+        let catalog = TestCatalog::default();
+        assert!(expand(&cluster, &loader, &catalog).is_ok());
+    }
+
+    #[test]
+    fn cluster_derive_key_empty_slot_name_rejected() {
+        let cluster = ClusterDefinition {
+            id: "bad".to_string(),
+            version: "1.0.0".to_string(),
+            nodes: HashMap::new(),
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: vec![ParameterSpec {
+                name: "key".to_string(),
+                ty: ParameterType::String,
+                default: Some(ParameterDefault::DeriveKey {
+                    slot_name: String::new(),
+                }),
+                required: false,
+            }],
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new();
+        let catalog = TestCatalog::default();
+        let err = expand(&cluster, &loader, &catalog).unwrap_err();
+        assert_eq!(err.rule_id(), "D.8");
+        assert!(matches!(err, ExpandError::InvalidDeriveKeySlot { .. }));
     }
 }

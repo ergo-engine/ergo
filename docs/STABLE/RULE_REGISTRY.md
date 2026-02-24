@@ -54,6 +54,8 @@ Primary spec: `STABLE/PRIMITIVE_MANIFESTS/source.md`
 | SRC-13 | Registration | enforced | Cadence is continuous | `execution.cadence == continuous` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-13` |
 | SRC-14 | Registration | enforced | ID unique in registry | `!registry.contains_key(id)` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-14` |
 | SRC-15 | Registration | enforced | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-15` |
+| SRC-16 | Registration | enforced | $key context references bound to declared parameter | `∀ ctx where name starts with "$": referenced param exists` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-16` |
+| SRC-17 | Registration | enforced | $key context references must be String type | `∀ ctx where name starts with "$": referenced param.type == String` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-17` |
 | SRC-10 | Composition | alias -> COMP-1 | Required context keys exist in adapter | `source.requires.context.filter(required).keys ⊆ adapter.provides.context.keys` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-10` |
 | SRC-11 | Composition | alias -> COMP-2 | Required context types match adapter | `∀ k where required: source.requires.context[k].ty == adapter.provides.context[k].ty` | `STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-11` |
 
@@ -130,6 +132,10 @@ Primary spec: `STABLE/PRIMITIVE_MANIFESTS/action.md`
 | ACT-17 | Registration | enforced | Execution deterministic | `execution.deterministic == true` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-17` |
 | ACT-18 | Registration | enforced | ID unique in registry | `!registry.contains_key(id)` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-18` |
 | ACT-19 | Registration | enforced | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-19` |
+| ACT-20 | Registration | enforced | $key write references bound to declared parameter | `∀ write where name starts with "$": referenced param exists` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-20` |
+| ACT-21 | Registration | enforced | $key write references must be String type | `∀ write where name starts with "$": referenced param.type == String` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-21` |
+| ACT-22 | Registration | enforced | Write from_input references declared input | `∀ write: from_input ∈ inputs[].name` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-22` |
+| ACT-23 | Registration | enforced | Write from_input type compatible with write type | `∀ write: inputs[from_input].type is scalar AND matches write.value_type` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-23` |
 
 ## Composition (COMP-*)
 
@@ -152,6 +158,7 @@ Primary spec: `STABLE/PRIMITIVE_MANIFESTS (distributed)`
 | COMP-13 | Composition | enforced | Action write types match | `∀n ∈ writes: action.type[n] == adapter.key[n].type` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-13` |
 | COMP-14 | Composition | enforced | If action writes, adapter accepts set_context | `writes.len > 0 => accepts.effects contains "set_context"` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-14` |
 | COMP-15 | Composition | deferred | Writes captured (planned) | `writes.len > 0 => ("effect.set_context" ∈ capture.fields AND ∀n: "context." + n ∈ capture.fields)` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-15` |
+| COMP-16 | Composition | enforced | Parameter-bound manifest names resolve | `$-prefixed names resolve to String parameter values` | `CANONICAL/PHASE_INVARIANTS.md#COMP-16` |
 
 ## Cluster (D./I./E./V.)
 

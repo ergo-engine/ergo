@@ -442,6 +442,7 @@ pub struct Registries<'a> {
 #[derive(Debug)]
 pub struct ExecutionReport {
     pub outputs: HashMap<String, RuntimeValue>,
+    pub effects: Vec<crate::common::ActionEffect>,
 }
 
 impl RuntimeValue {

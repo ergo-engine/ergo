@@ -371,7 +371,7 @@ the phase invariants in `docs/CANONICAL/PHASE_INVARIANTS.md`.
 | D.5 | Input port names unique | `cluster.rs::validate_cluster_definition` | `ExpandError::DuplicateInputPort` |
 | D.6 | Output port names unique | `cluster.rs::validate_cluster_definition` | `ExpandError::DuplicateOutputPort` |
 | D.7 | Parameter types valid | Type (enum) | No runtime error |
-| D.8 | Parameter defaults type-compatible | `cluster.rs::validate_cluster_definition` | `ExpandError::ParameterDefaultTypeMismatch` |
+| D.8 | Parameter defaults type-compatible | `cluster.rs::validate_cluster_definition` | `ExpandError::ParameterDefaultTypeMismatch`, `ExpandError::InvalidDeriveKeySlot` |
 | D.9 | No duplicate parameter names | `cluster.rs::validate_cluster_definition` | `ExpandError::DuplicateParameter` |
 | D.10 | Declared signature compatible with inferred | `cluster.rs::expand` → `validate_declared_signature` | `ExpandError::DeclaredSignatureInvalid` (currently wireability-only) |
 | D.11 | Declared wireability ≤ inferred | `cluster.rs::validate_declared_signature` | `ClusterValidationError::WireabilityExceedsInferred` |
@@ -401,6 +401,28 @@ the phase invariants in `docs/CANONICAL/PHASE_INVARIANTS.md`.
 | E.7 | Boundary ports retained for inference only | `ExpandedGraph` doc contract | No runtime error |
 | E.8 | Deterministic runtime IDs | `cluster.rs::expand_with_context` (sorted keys) | Verified by tests; no error type |
 | E.9 | Referenced nested clusters exist | `cluster.rs::expand_with_context` (`NodeKind::Cluster` load) | `ExpandError::MissingCluster` |
+
+### Computed Defaults: `derive_key`
+
+Cluster parameter defaults may use `derive_key` to compute a deterministic key from the cluster instantiation authoring path:
+
+```yaml
+parameters:
+  - name: state_key
+    type: String
+    default:
+      derive_key: has_fired
+```
+
+Behavior:
+- `derive_key` is resolved at expansion time in `build_resolved_params(...)` during nested cluster instantiation.
+- The resolved value is a `ParameterValue::String` using a length-prefixed (UTF-8 byte length), namespaced encoding (`__ergo/...`).
+- Different instantiation paths produce different keys; same slot names at the same path produce the same key (intentional aliasing).
+- Explicit parameter bindings override `derive_key` defaults.
+- `derive_key` is only valid on `ParameterType::String` parameters (D.8).
+- Empty `slot_name` is rejected (D.8, `ExpandError::InvalidDeriveKeySlot`).
+- `slot_name` must be non-empty. It is not identifier-validated; the injective encoding handles reserved characters safely.
+- Root-cluster parameter defaults are not resolved through `build_resolved_params`; `derive_key` is for nested cluster instantiation only.
 
 **Validation-Time (V.*)**
 

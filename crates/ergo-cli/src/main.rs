@@ -27,7 +27,9 @@ use ergo_runtime::catalog::{build_core_catalog, core_registries};
 use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceScheme};
 use ergo_supervisor::demo::demo_1;
 use ergo_supervisor::fixture_runner;
-use ergo_supervisor::replay::{replay_checked_strict, ReplayError, StrictReplayExpectations};
+use ergo_supervisor::replay::{
+    compare_decisions, replay_checked_strict, ReplayError, StrictReplayExpectations,
+};
 use ergo_supervisor::{
     write_capture_bundle, CaptureBundle, CaptureJsonStyle, CapturingSession, Constraints, Decision,
     DecisionLog, DecisionLogEntry, NO_ADAPTER_PROVENANCE,
@@ -650,6 +652,46 @@ fn format_replay_error(err: &ReplayError) -> String {
             .with_where("replay option '--adapter'")
             .with_fix("provide --adapter <adapter.yaml> that matches capture provenance"),
         ),
+        ReplayError::EffectMismatch {
+            event_id,
+            effect_index,
+            expected,
+            actual,
+            detail,
+        } => {
+            let mut info = CliErrorInfo::new(
+                "replay.effect_mismatch",
+                format!(
+                    "effect mismatch at index {} for event '{}': {}",
+                    effect_index,
+                    event_id.as_str(),
+                    detail,
+                ),
+            )
+            .with_where(format!(
+                "event '{}' effect[{}]",
+                event_id.as_str(),
+                effect_index
+            ))
+            .with_fix("inspect action effect drift and regenerate capture if needed");
+
+            if let Some(exp) = expected {
+                info = info.with_detail(format!(
+                    "expected: {}",
+                    serde_json::to_string(&exp.effect)
+                        .unwrap_or_else(|_| "<unserializable>".to_string())
+                ));
+            }
+            if let Some(act) = actual {
+                info = info.with_detail(format!(
+                    "actual: {}",
+                    serde_json::to_string(&act.effect)
+                        .unwrap_or_else(|_| "<unserializable>".to_string())
+                ));
+            }
+
+            render_cli_error(&info)
+        }
     }
 }
 
@@ -717,7 +759,8 @@ fn replay_graph(
         },
     )
     .map_err(|err| format_replay_error(&err))?;
-    let replay_matches = replayed == bundle.decisions;
+    let replay_matches =
+        compare_decisions(&bundle.decisions, &replayed).map_err(|err| format_replay_error(&err))?;
 
     let invoke_count = replayed
         .iter()
@@ -818,7 +861,7 @@ fn replay_demo_1(path: &Path, adapter_path: Option<&Path>) -> Result<(), String>
         },
     );
     let replay_matches = match &replay_result {
-        Ok(records) => records == &bundle.decisions,
+        Ok(records) => compare_decisions(&bundle.decisions, records).unwrap_or(false),
         Err(_) => false,
     };
 
@@ -1218,6 +1261,84 @@ outputs:
                 && err.contains("where:")
                 && err.contains("fix:"),
             "unexpected err: {err}"
+        );
+    }
+
+    #[test]
+    fn format_replay_error_effect_mismatch_includes_code() {
+        let err = format_replay_error(&ReplayError::EffectMismatch {
+            event_id: EventId::new("e1"),
+            effect_index: 0,
+            expected: None,
+            actual: None,
+            detail: "hash differs".to_string(),
+        });
+        assert!(
+            err.contains("code: replay.effect_mismatch"),
+            "expected replay.effect_mismatch code: {err}"
+        );
+        assert!(
+            err.contains("error:") && err.contains("where:") && err.contains("fix:"),
+            "unexpected format: {err}"
+        );
+    }
+
+    #[test]
+    fn format_replay_error_effect_mismatch_surfaces_expected_actual() {
+        use ergo_runtime::common::{ActionEffect, EffectWrite, Value};
+        use ergo_supervisor::replay::hash_effect;
+        use ergo_supervisor::CapturedActionEffect;
+
+        let expected_effect = ActionEffect {
+            kind: "set_context".to_string(),
+            writes: vec![EffectWrite {
+                key: "price".to_string(),
+                value: Value::Number(42.0),
+            }],
+        };
+        let actual_effect = ActionEffect {
+            kind: "set_context".to_string(),
+            writes: vec![EffectWrite {
+                key: "volume".to_string(),
+                value: Value::Number(99.0),
+            }],
+        };
+        let err = format_replay_error(&ReplayError::EffectMismatch {
+            event_id: EventId::new("e1"),
+            effect_index: 0,
+            expected: Some(CapturedActionEffect {
+                effect: expected_effect,
+                effect_hash: hash_effect(&ActionEffect {
+                    kind: "set_context".to_string(),
+                    writes: vec![EffectWrite {
+                        key: "price".to_string(),
+                        value: Value::Number(42.0),
+                    }],
+                }),
+            }),
+            actual: Some(CapturedActionEffect {
+                effect: actual_effect,
+                effect_hash: hash_effect(&ActionEffect {
+                    kind: "set_context".to_string(),
+                    writes: vec![EffectWrite {
+                        key: "volume".to_string(),
+                        value: Value::Number(99.0),
+                    }],
+                }),
+            }),
+            detail: "content mismatch".to_string(),
+        });
+        assert!(
+            err.contains("code: replay.effect_mismatch"),
+            "expected code: {err}"
+        );
+        assert!(
+            err.contains("detail: expected:") && err.contains("\"price\""),
+            "expected effect detail with key 'price': {err}"
+        );
+        assert!(
+            err.contains("detail: actual:") && err.contains("\"volume\""),
+            "actual effect detail with key 'volume': {err}"
         );
     }
 

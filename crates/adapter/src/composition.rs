@@ -1,8 +1,9 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fmt;
 
 use ergo_runtime::action::ActionEffects;
-use ergo_runtime::common::{ErrorInfo, Phase, ValueType};
+use ergo_runtime::common::{resolve_manifest_name, ErrorInfo, Phase, ValueType};
 pub use ergo_runtime::source::{ContextRequirement, SourceRequires};
 
 use crate::provides::AdapterProvides;
@@ -37,6 +38,11 @@ pub enum CompositionError {
         index: usize,
     },
     MissingSetContextEffect,
+    ManifestNameResolutionFailed {
+        binding: String,
+        index: usize,
+        context: &'static str,
+    },
 }
 
 impl ErrorInfo for CompositionError {
@@ -49,6 +55,7 @@ impl ErrorInfo for CompositionError {
             Self::WriteTargetNotWritable { .. } => "COMP-12",
             Self::WriteTypeMismatch { .. } => "COMP-13",
             Self::MissingSetContextEffect => "COMP-14",
+            Self::ManifestNameResolutionFailed { .. } => "COMP-16",
         }
     }
 
@@ -65,6 +72,7 @@ impl ErrorInfo for CompositionError {
             Self::WriteTargetNotWritable { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-12",
             Self::WriteTypeMismatch { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-13",
             Self::MissingSetContextEffect => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-14",
+            Self::ManifestNameResolutionFailed { .. } => "CANONICAL/PHASE_INVARIANTS.md#COMP-16",
         }
     }
 
@@ -100,6 +108,10 @@ impl ErrorInfo for CompositionError {
             Self::MissingSetContextEffect => {
                 Cow::Borrowed("Adapter does not accept set_context effect required for writes")
             }
+            Self::ManifestNameResolutionFailed { binding, .. } => Cow::Owned(format!(
+                "Failed to resolve parameter-bound manifest name '{}'",
+                binding
+            )),
         }
     }
 
@@ -124,6 +136,9 @@ impl ErrorInfo for CompositionError {
                 Some(Cow::Owned(format!("$.effects.writes[{}].type", index)))
             }
             Self::MissingSetContextEffect => Some(Cow::Borrowed("$.effects.writes")),
+            Self::ManifestNameResolutionFailed { index, context, .. } => {
+                Some(Cow::Owned(format!("$.{context}[{index}].name")))
+            }
         }
     }
 
@@ -155,6 +170,10 @@ impl ErrorInfo for CompositionError {
             Self::MissingSetContextEffect => Some(Cow::Borrowed(
                 "Add 'set_context' to adapter accepts.effects",
             )),
+            Self::ManifestNameResolutionFailed { binding, .. } => Some(Cow::Owned(format!(
+                "Ensure parameter referenced by '{}' exists and is a String type",
+                binding
+            ))),
         }
     }
 }
@@ -173,21 +192,33 @@ const SUPPORTED_CAPTURE_VERSIONS: &[&str] = &["1"];
 /// Validate that an adapter provides what a source requires.
 /// COMP-1: Required context keys must exist in adapter.
 /// COMP-2: Context key types must match.
+/// COMP-16: Parameter-bound manifest names ($key) must resolve.
 pub fn validate_source_adapter_composition(
     source: &SourceRequires,
     adapter: &AdapterProvides,
+    parameters: &HashMap<String, ergo_runtime::cluster::ParameterValue>,
 ) -> Result<(), CompositionError> {
     for (index, req) in source.context.iter().enumerate() {
+        // COMP-16: Resolve $key bindings before required check so optional
+        // parameter-bound keys are still resolved.
+        let resolved_name = resolve_manifest_name(&req.name, parameters).map_err(|_| {
+            CompositionError::ManifestNameResolutionFailed {
+                binding: req.name.clone(),
+                index,
+                context: "requires.context",
+            }
+        })?;
+
         if !req.required {
             continue;
         }
 
         // COMP-1: Check key exists
-        let provided = match adapter.context.get(&req.name) {
+        let provided = match adapter.context.get(&resolved_name) {
             Some(p) => p,
             None => {
                 return Err(CompositionError::MissingContextKey {
-                    key: req.name.clone(),
+                    key: resolved_name,
                     index,
                 });
             }
@@ -198,7 +229,7 @@ pub fn validate_source_adapter_composition(
             Some(ty) => ty,
             None => {
                 return Err(CompositionError::ContextTypeMismatch {
-                    key: req.name.clone(),
+                    key: resolved_name,
                     expected: value_type_name(&req.ty).to_string(),
                     got: provided.ty.clone(),
                     index,
@@ -208,7 +239,7 @@ pub fn validate_source_adapter_composition(
 
         if req.ty != provided_ty {
             return Err(CompositionError::ContextTypeMismatch {
-                key: req.name.clone(),
+                key: resolved_name,
                 expected: value_type_name(&req.ty).to_string(),
                 got: provided.ty.clone(),
                 index,
@@ -233,20 +264,31 @@ pub fn validate_capture_format(version: &str) -> Result<(), CompositionError> {
 /// COMP-12: Write targets are writable.
 /// COMP-13: Write target types match.
 /// COMP-14: Writes require set_context effect acceptance.
+/// COMP-16: Parameter-bound manifest names ($key) must resolve.
 pub fn validate_action_adapter_composition(
     effects: &ActionEffects,
     adapter: &AdapterProvides,
+    parameters: &HashMap<String, ergo_runtime::cluster::ParameterValue>,
 ) -> Result<(), CompositionError> {
     if effects.writes.is_empty() {
         return Ok(());
     }
 
     for (index, write) in effects.writes.iter().enumerate() {
-        let provided = match adapter.context.get(&write.name) {
+        // COMP-16: Resolve $key bindings
+        let resolved_name = resolve_manifest_name(&write.name, parameters).map_err(|_| {
+            CompositionError::ManifestNameResolutionFailed {
+                binding: write.name.clone(),
+                index,
+                context: "effects.writes",
+            }
+        })?;
+
+        let provided = match adapter.context.get(&resolved_name) {
             Some(p) => p,
             None => {
                 return Err(CompositionError::WriteTargetNotProvided {
-                    key: write.name.clone(),
+                    key: resolved_name,
                     index,
                 });
             }
@@ -254,7 +296,7 @@ pub fn validate_action_adapter_composition(
 
         if !provided.writable {
             return Err(CompositionError::WriteTargetNotWritable {
-                key: write.name.clone(),
+                key: resolved_name,
                 index,
             });
         }
@@ -263,7 +305,7 @@ pub fn validate_action_adapter_composition(
             Some(ty) => ty,
             None => {
                 return Err(CompositionError::WriteTypeMismatch {
-                    key: write.name.clone(),
+                    key: resolved_name,
                     expected: value_type_name(&write.value_type).to_string(),
                     got: provided.ty.clone(),
                     index,
@@ -273,7 +315,7 @@ pub fn validate_action_adapter_composition(
 
         if provided_ty != write.value_type {
             return Err(CompositionError::WriteTypeMismatch {
-                key: write.name.clone(),
+                key: resolved_name,
                 expected: value_type_name(&write.value_type).to_string(),
                 got: provided.ty.clone(),
                 index,

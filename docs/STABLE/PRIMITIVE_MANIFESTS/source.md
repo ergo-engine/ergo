@@ -202,6 +202,8 @@ These rules are checked when a source manifest is registered.
 | SRC-13 | Cadence is continuous | `execution.cadence == continuous` |
 | SRC-14 | ID unique in registry | `id ∉ SourceRegistry.ids` |
 | SRC-15 | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` |
+| SRC-16 | $key context references bound to declared parameter | `∀ ctx where name starts with "$": referenced param exists in parameters[]` |
+| SRC-17 | $key context references must be String type | `∀ ctx where name starts with "$": referenced param.type == String` |
 
 **Note on SRC-14:** Uniqueness is by id only; version is not considered. Two primitives with the same id but different versions are rejected.
 
@@ -235,6 +237,8 @@ These rules are checked when a source is composed with an adapter.
 | SRC-13 | Registration | `SourceValidationError::InvalidCadence` | (structurally enforced) |
 | SRC-14 | Registration | `SourceValidationError::DuplicateId` | `src_14_duplicate_id_rejected` |
 | SRC-15 | Registration | `SourceValidationError::InvalidParameterType` | `src_15_invalid_parameter_type_default_rejected` |
+| SRC-16 | Registration | `SourceValidationError::UnboundContextKeyReference` | `src_16_dollar_key_referencing_nonexistent_param_rejected` |
+| SRC-17 | Registration | `SourceValidationError::ContextKeyReferenceNotString` | `src_17_dollar_key_referencing_non_string_param_rejected` |
 
 **Note on SRC-13:** Currently untestable because `Cadence` enum only has `Continuous` variant. Enforcement code exists at `registry.rs:77-78`; test will be added when cadence variants expand.
 

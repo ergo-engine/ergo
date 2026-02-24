@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::adapter_manifest_io::parse_adapter_manifest;
@@ -10,6 +11,7 @@ use ergo_runtime::action::{
     ActionEffects, ActionKind, ActionPrimitiveManifest, ActionRegistry, ActionValueType,
     ParameterType as ActionParameterType, ParameterValue as ActionParameterValue,
 };
+use ergo_runtime::cluster::ParameterValue as ClusterParameterValue;
 use ergo_runtime::common::{ErrorInfo, Phase, PrimitiveKind, RuleViolation, Value, ValueType};
 use ergo_runtime::compute::{
     Cadence as ComputeCadence, Cardinality as ComputeCardinality, ComputePrimitiveManifest,
@@ -101,11 +103,13 @@ pub fn check_compose_command(args: &[String]) -> Result<String, String> {
     let other = parse_manifest(other_path).map_err(|err| render_failure(&[err], format))?;
     let result = match other {
         ParsedManifest::Source { manifest, .. } => {
-            validate_source_adapter_composition(&manifest.requires, &adapter_provides)
+            let params = source_manifest_default_params(&manifest);
+            validate_source_adapter_composition(&manifest.requires, &adapter_provides, &params)
                 .map_err(RuleViolation::from)
         }
         ParsedManifest::Action { manifest, .. } => {
-            validate_action_adapter_composition(&manifest.effects, &adapter_provides)
+            let params = action_manifest_default_params(&manifest);
+            validate_action_adapter_composition(&manifest.effects, &adapter_provides, &params)
                 .map_err(RuleViolation::from)
         }
         _ => {
@@ -123,6 +127,56 @@ pub fn check_compose_command(args: &[String]) -> Result<String, String> {
             format,
             "Composition invalid",
         )),
+    }
+}
+
+fn source_manifest_default_params(
+    manifest: &SourcePrimitiveManifest,
+) -> HashMap<String, ClusterParameterValue> {
+    manifest
+        .parameters
+        .iter()
+        .filter_map(|param| {
+            param
+                .default
+                .as_ref()
+                .map(|value| (param.name.clone(), source_param_value_to_cluster(value)))
+        })
+        .collect()
+}
+
+fn action_manifest_default_params(
+    manifest: &ActionPrimitiveManifest,
+) -> HashMap<String, ClusterParameterValue> {
+    manifest
+        .parameters
+        .iter()
+        .filter_map(|param| {
+            param
+                .default
+                .as_ref()
+                .map(|value| (param.name.clone(), action_param_value_to_cluster(value)))
+        })
+        .collect()
+}
+
+fn source_param_value_to_cluster(value: &SourceParameterValue) -> ClusterParameterValue {
+    match value {
+        SourceParameterValue::Int(v) => ClusterParameterValue::Int(*v),
+        SourceParameterValue::Number(v) => ClusterParameterValue::Number(*v),
+        SourceParameterValue::Bool(v) => ClusterParameterValue::Bool(*v),
+        SourceParameterValue::String(v) => ClusterParameterValue::String(v.clone()),
+        SourceParameterValue::Enum(v) => ClusterParameterValue::Enum(v.clone()),
+    }
+}
+
+fn action_param_value_to_cluster(value: &ActionParameterValue) -> ClusterParameterValue {
+    match value {
+        ActionParameterValue::Int(v) => ClusterParameterValue::Int(*v),
+        ActionParameterValue::Number(v) => ClusterParameterValue::Number(*v),
+        ActionParameterValue::Bool(v) => ClusterParameterValue::Bool(*v),
+        ActionParameterValue::String(v) => ClusterParameterValue::String(v.clone()),
+        ActionParameterValue::Enum(v) => ClusterParameterValue::Enum(v.clone()),
     }
 }
 
@@ -1059,6 +1113,7 @@ struct RawActionWrite {
     name: String,
     #[serde(rename = "type")]
     value_type: String,
+    from_input: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1430,6 +1485,7 @@ fn raw_to_action_manifest(
                 Ok(ergo_runtime::action::ActionWriteSpec {
                     name: write.name,
                     value_type,
+                    from_input: write.from_input,
                 })
             })
             .collect::<Result<Vec<_>, ActionParseError>>()?,

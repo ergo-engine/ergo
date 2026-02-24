@@ -19,8 +19,8 @@ use ergo_runtime::catalog::{
 use ergo_runtime::cluster::{
     expand, BoundaryKind, Cardinality, ClusterDefinition, ClusterLoader, ClusterVersionIndex, Edge,
     ExpandedGraph, GraphInputPlaceholder, InputPortSpec, InputRef, NodeInstance, NodeKind,
-    OutputPortSpec, OutputRef, ParameterBinding, ParameterSpec, ParameterType, ParameterValue,
-    PortSpec, PrimitiveCatalog, PrimitiveKind, Signature, ValueType, Version,
+    OutputPortSpec, OutputRef, ParameterBinding, ParameterDefault, ParameterSpec, ParameterType,
+    ParameterValue, PortSpec, PrimitiveCatalog, PrimitiveKind, Signature, ValueType, Version,
 };
 use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceScheme};
 use ergo_runtime::runtime::{
@@ -680,14 +680,18 @@ pub(crate) fn validate_adapter_composition(
                             node.implementation.impl_id
                         )
                     })?;
-                validate_source_adapter_composition(&source.manifest().requires, provides)
-                    .map_err(|err| {
-                        format!(
-                            "source composition failed for node '{}': {}",
-                            runtime_id,
-                            render_error_info(&err)
-                        )
-                    })?;
+                validate_source_adapter_composition(
+                    &source.manifest().requires,
+                    provides,
+                    &node.parameters,
+                )
+                .map_err(|err| {
+                    format!(
+                        "source composition failed for node '{}': {}",
+                        runtime_id,
+                        render_error_info(&err)
+                    )
+                })?;
             }
             PrimitiveKind::Action => {
                 let action = registries
@@ -699,15 +703,18 @@ pub(crate) fn validate_adapter_composition(
                             node.implementation.impl_id
                         )
                     })?;
-                validate_action_adapter_composition(&action.manifest().effects, provides).map_err(
-                    |err| {
-                        format!(
-                            "action composition failed for node '{}': {}",
-                            runtime_id,
-                            render_error_info(&err)
-                        )
-                    },
-                )?;
+                validate_action_adapter_composition(
+                    &action.manifest().effects,
+                    provides,
+                    &node.parameters,
+                )
+                .map_err(|err| {
+                    format!(
+                        "action composition failed for node '{}': {}",
+                        runtime_id,
+                        render_error_info(&err)
+                    )
+                })?;
             }
             _ => {}
         }
@@ -1304,7 +1311,7 @@ impl RawParameterSpec {
         let default = self
             .default
             .as_ref()
-            .map(|value| parse_typed_parameter_value(value, &ty))
+            .map(|value| parse_cluster_parameter_default(value, &ty))
             .transpose()?;
         let required = self.required.unwrap_or(default.is_none());
         Ok(ParameterSpec {
@@ -1495,6 +1502,43 @@ fn parse_untyped_parameter_value(value: &serde_yaml::Value) -> Result<ParameterV
             "parameter values must be scalar (number, bool, string) or {{exposed: ...}}, got '{value:?}'"
         )),
     }
+}
+
+fn parse_cluster_parameter_default(
+    value: &serde_yaml::Value,
+    ty: &ParameterType,
+) -> Result<ParameterDefault, String> {
+    // Mapping with "derive_key" key → DeriveKey default
+    if let Some(mapping) = value.as_mapping() {
+        if mapping.len() != 1 {
+            return Err(format!(
+                "parameter default mapping must have exactly one key, got {}",
+                mapping.len()
+            ));
+        }
+        let (key, val) = mapping.iter().next().unwrap();
+        let key_str = key
+            .as_str()
+            .ok_or_else(|| "parameter default mapping key must be a string".to_string())?;
+        if key_str != "derive_key" {
+            return Err(format!(
+                "unknown parameter default key '{}', expected 'derive_key'",
+                key_str
+            ));
+        }
+        let slot_name = val
+            .as_str()
+            .ok_or_else(|| "derive_key value must be a string".to_string())?;
+        if slot_name.is_empty() {
+            return Err("derive_key slot_name must not be empty".to_string());
+        }
+        return Ok(ParameterDefault::DeriveKey {
+            slot_name: slot_name.to_string(),
+        });
+    }
+
+    // Scalar → Literal default
+    parse_typed_parameter_value(value, ty).map(ParameterDefault::Literal)
 }
 
 fn parse_typed_parameter_value(
@@ -2545,6 +2589,73 @@ outputs:
         assert!(
             err.contains("defined by multiple files"),
             "unexpected error: {err}"
+        );
+    }
+
+    // ---- derive_key YAML parsing tests ----
+
+    #[test]
+    fn parse_cluster_parameter_default_derive_key() {
+        let yaml = "derive_key: has_fired";
+        let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        let result = parse_cluster_parameter_default(&value, &ParameterType::String).unwrap();
+        assert_eq!(
+            result,
+            ParameterDefault::DeriveKey {
+                slot_name: "has_fired".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn parse_derive_key_rejects_non_string_slot() {
+        let yaml = "derive_key: 42";
+        let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        let err = parse_cluster_parameter_default(&value, &ParameterType::String).unwrap_err();
+        assert!(
+            err.contains("derive_key value must be a string"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_derive_key_rejects_empty_slot() {
+        let yaml = "derive_key: ''";
+        let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        let err = parse_cluster_parameter_default(&value, &ParameterType::String).unwrap_err();
+        assert!(
+            err.contains("slot_name must not be empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_derive_key_rejects_unknown_default_mapping_key() {
+        let yaml = "unknown_key: value";
+        let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        let err = parse_cluster_parameter_default(&value, &ParameterType::String).unwrap_err();
+        assert!(
+            err.contains("unknown parameter default key"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_derive_key_rejects_multi_key_mapping() {
+        let yaml = "derive_key: slot\nextra: bad";
+        let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        let err = parse_cluster_parameter_default(&value, &ParameterType::String).unwrap_err();
+        assert!(err.contains("exactly one key"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_scalar_parameter_default_still_works() {
+        let yaml = "42.0";
+        let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        let result = parse_cluster_parameter_default(&value, &ParameterType::Number).unwrap();
+        assert_eq!(
+            result,
+            ParameterDefault::Literal(ParameterValue::Number(42.0))
         );
     }
 }

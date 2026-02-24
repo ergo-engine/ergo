@@ -442,6 +442,22 @@ const SOURCE_RULES: &[RuleDefinition] = &[
         status: RuleStatus::Enforced,
     },
     RuleDefinition {
+        id: "SRC-16",
+        phase: Phase::Registration,
+        summary: "$key context references bound to declared parameter",
+        predicate: "∀ ctx where name starts with \"$\": referenced param exists",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-16",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "SRC-17",
+        phase: Phase::Registration,
+        summary: "$key context references must be String type",
+        predicate: "∀ ctx where name starts with \"$\": referenced param.type == String",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-17",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
         id: "SRC-10",
         phase: Phase::Composition,
         summary: "Required context keys exist in adapter",
@@ -898,6 +914,38 @@ const ACTION_RULES: &[RuleDefinition] = &[
         doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-19",
         status: RuleStatus::Enforced,
     },
+    RuleDefinition {
+        id: "ACT-20",
+        phase: Phase::Registration,
+        summary: "$key write references bound to declared parameter",
+        predicate: "∀ write where name starts with \"$\": referenced param exists",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-20",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "ACT-21",
+        phase: Phase::Registration,
+        summary: "$key write references must be String type",
+        predicate: "∀ write where name starts with \"$\": referenced param.type == String",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-21",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "ACT-22",
+        phase: Phase::Registration,
+        summary: "Write from_input references declared input",
+        predicate: "∀ write: from_input ∈ inputs[].name",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-22",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "ACT-23",
+        phase: Phase::Registration,
+        summary: "Write from_input type compatible with write type",
+        predicate: "∀ write: inputs[from_input].type is scalar AND matches write.value_type",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-23",
+        status: RuleStatus::Enforced,
+    },
 ];
 
 const COMPOSITION_RULES: &[RuleDefinition] = &[
@@ -1021,6 +1069,14 @@ const COMPOSITION_RULES: &[RuleDefinition] = &[
             "writes.len > 0 => (\"effect.set_context\" ∈ capture.fields AND ∀n: \"context.\" + n ∈ capture.fields)",
         doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-15",
         status: RuleStatus::Deferred,
+    },
+    RuleDefinition {
+        id: "COMP-16",
+        phase: Phase::Composition,
+        summary: "Parameter-bound manifest names resolve",
+        predicate: "$-prefixed names resolve to String parameter values",
+        doc_anchor: "CANONICAL/PHASE_INVARIANTS.md#COMP-16",
+        status: RuleStatus::Enforced,
     },
 ];
 
