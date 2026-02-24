@@ -214,7 +214,7 @@ Division by zero produces `ComputeError::DivisionByZero`, not IEEE 754 inf/NaN.
 
 ### Notes
 
-- **D.5–D.9:** Enforced in `cluster.rs::validate_cluster_definition` (returns `ExpandError::DuplicateInputPort|DuplicateOutputPort|DuplicateParameter|ParameterDefaultTypeMismatch`). Tests: `duplicate_input_ports_rejected`, `duplicate_output_ports_rejected`, `duplicate_parameters_rejected`, `parameter_default_type_mismatch_rejected`.
+- **D.5–D.9:** Enforced in `cluster.rs::validate_cluster_definition` (returns `ExpandError::DuplicateInputPort|DuplicateOutputPort|DuplicateParameter|ParameterDefaultTypeMismatch|InvalidDeriveKeySlot`). Tests: `duplicate_input_ports_rejected`, `duplicate_output_ports_rejected`, `duplicate_parameters_rejected`, `parameter_default_type_mismatch_rejected`. D.8 also covers `derive_key` defaults: `DeriveKey` on non-String parameter triggers `ParameterDefaultTypeMismatch`; empty `slot_name` triggers `InvalidDeriveKeySlot`. Tests: `cluster_derive_key_on_non_string_param_rejected`, `cluster_derive_key_empty_slot_name_rejected`.
 - **D.10–D.11:** Enforced during `expand()` via `infer_signature` + `validate_declared_signature` (`ExpandError::DeclaredSignatureInvalid`). Test: `declared_wireability_cannot_exceed_inferred`.
 
 ---

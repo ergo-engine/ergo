@@ -1603,9 +1603,10 @@ derive_key(authoring_path, slot_name) → string
 
 `authoring_path` is `Vec<(ClusterId, NodeId)>` as defined in CLUSTER_SPEC.md §7.2.
 
-Recommended key format:
+Key format uses length-prefixed (UTF-8 byte length) segments to guarantee injectivity
+(identifiers may contain `#`, `/`, etc.):
 ```
-"__ergo/" + join(authoring_path.map(|(cluster_id, node_id)| cluster_id + "#" + node_id), "/") + "/" + slot_name
+__ergo/<len>:<cluster_id>/<len>:<node_id>/.../<len>:<slot_name>
 ```
 
 **Example:**
@@ -1613,7 +1614,7 @@ Recommended key format:
 authoring_path = [("root_cluster", "entry_node"), ("once_cluster", "gate_trigger")]
 slot_name = "has_fired"
 
-derive_key(...) → "__ergo/root_cluster#entry_node/once_cluster#gate_trigger/has_fired"
+derive_key(...) → "__ergo/12:root_cluster/10:entry_node/12:once_cluster/12:gate_trigger/9:has_fired"
 ```
 
 ### 9.2 Usage in Temporal Clusters
@@ -1623,7 +1624,8 @@ OnceCluster:
   parameters:
     - name: state_key
       type: String
-      default: derive_key(authoring_path, "has_fired")  # Auto-unique
+      default:
+        derive_key: has_fired  # Auto-unique per instantiation path
 
   input_ports:
     - name: signal
