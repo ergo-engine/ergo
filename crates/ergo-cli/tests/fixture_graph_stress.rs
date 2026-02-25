@@ -43,7 +43,22 @@ fn repo_root() -> PathBuf {
 }
 
 fn dual_ma_graph_path() -> PathBuf {
-    repo_root().join("dual_ma_crossover.yaml")
+    let root = repo_root();
+    let legacy = root.join("dual_ma_crossover.yaml");
+    if legacy.exists() {
+        return legacy;
+    }
+
+    let sandbox = root.join("sandbox/trading_vertical/dual_ma_crossover.yaml");
+    if sandbox.exists() {
+        return sandbox;
+    }
+
+    panic!(
+        "dual_ma_crossover.yaml not found at '{}' or '{}'",
+        legacy.display(),
+        sandbox.display()
+    );
 }
 
 fn ergo_bin() -> &'static str {

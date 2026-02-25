@@ -266,6 +266,45 @@ fn comp_source_optional_dollar_key_non_string_param_rejected() {
     assert_comp(&err, "COMP-16", Some("$.requires.context[0].name"));
 }
 
+#[test]
+fn comp_source_optional_context_missing_key_allowed() {
+    let adapter = make_adapter_provides(vec![("price", "Number")]);
+    let source = make_source_requires(vec![("fast_ema_prev", ValueType::Number, false)]);
+
+    assert!(validate_source_adapter_composition(&source, &adapter, &no_params()).is_ok());
+}
+
+#[test]
+fn comp_source_optional_context_type_mismatch_rejected() {
+    let adapter = make_adapter_provides(vec![("fast_ema_prev", "String")]);
+    let source = make_source_requires(vec![("fast_ema_prev", ValueType::Number, false)]);
+
+    let err = validate_source_adapter_composition(&source, &adapter, &no_params()).unwrap_err();
+    assert_comp(&err, "COMP-2", Some("$.requires.context[0].type"));
+}
+
+#[test]
+fn comp_source_optional_context_unknown_adapter_type_rejected() {
+    let adapter = make_adapter_provides(vec![("fast_ema_prev", "Object")]);
+    let source = make_source_requires(vec![("fast_ema_prev", ValueType::Number, false)]);
+
+    let err = validate_source_adapter_composition(&source, &adapter, &no_params()).unwrap_err();
+    assert_comp(&err, "COMP-2", Some("$.requires.context[0].type"));
+}
+
+#[test]
+fn comp_source_optional_dollar_key_type_mismatch_rejected() {
+    let adapter = make_adapter_provides(vec![("fast_ema_prev", "String")]);
+    let source = make_source_requires(vec![("$key", ValueType::Number, false)]);
+    let params = HashMap::from([(
+        "key".to_string(),
+        ParameterValue::String("fast_ema_prev".to_string()),
+    )]);
+
+    let err = validate_source_adapter_composition(&source, &adapter, &params).unwrap_err();
+    assert_comp(&err, "COMP-2", Some("$.requires.context[0].type"));
+}
+
 // --- $key resolution tests for action composition ---
 
 #[test]

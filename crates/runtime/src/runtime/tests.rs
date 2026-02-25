@@ -103,6 +103,54 @@ fn compute_metadata_with_input_type(value_type: ValueType) -> PrimitiveMetadata 
     }
 }
 
+fn trigger_metadata_with_optional_input_type(value_type: ValueType) -> PrimitiveMetadata {
+    let mut outputs = HashMap::new();
+    outputs.insert(
+        "event".to_string(),
+        OutputMetadata {
+            value_type: ValueType::Event,
+            cardinality: crate::cluster::Cardinality::Single,
+        },
+    );
+
+    PrimitiveMetadata {
+        kind: PrimitiveKind::Trigger,
+        inputs: vec![InputMetadata {
+            name: "input".to_string(),
+            value_type,
+            required: false,
+        }],
+        outputs,
+        parameters: Vec::new(),
+    }
+}
+
+fn action_metadata_with_gate_and_payload(payload_type: ValueType) -> PrimitiveMetadata {
+    PrimitiveMetadata {
+        kind: PrimitiveKind::Action,
+        inputs: vec![
+            InputMetadata {
+                name: "event".to_string(),
+                value_type: ValueType::Event,
+                required: false,
+            },
+            InputMetadata {
+                name: "value".to_string(),
+                value_type: payload_type,
+                required: true,
+            },
+        ],
+        outputs: HashMap::from([(
+            "outcome".to_string(),
+            OutputMetadata {
+                value_type: ValueType::Event,
+                cardinality: crate::cluster::Cardinality::Single,
+            },
+        )]),
+        parameters: Vec::new(),
+    }
+}
+
 #[derive(Clone)]
 struct ConstSource {
     manifest: SourcePrimitiveManifest,
@@ -1023,7 +1071,7 @@ fn validate_rejects_cycle_detected() {
 }
 
 #[test]
-fn validate_rejects_invalid_edge_kind() {
+fn validate_rejects_source_event_edge_to_action() {
     let mut nodes = HashMap::new();
     nodes.insert(
         "src".to_string(),
@@ -1052,7 +1100,8 @@ fn validate_rejects_invalid_edge_kind() {
         },
     );
 
-    // Source -> Action is forbidden by the wiring matrix.
+    // Source -> Action is only allowed for scalar payload inputs; event inputs
+    // must be gated by Trigger outputs.
     let edges = vec![crate::cluster::ExpandedEdge {
         from: ExpandedEndpoint::NodePort {
             node_id: "src".to_string(),
@@ -1100,6 +1149,335 @@ fn validate_rejects_invalid_edge_kind() {
     assert_eq!(err.rule_id(), "V.2");
     assert_eq!(err.path().as_deref(), Some("$.edges"));
     assert!(matches!(err, ValidationError::InvalidEdgeKind { .. }));
+}
+
+#[test]
+fn validate_allows_source_scalar_payload_to_action_when_gated() {
+    let mut nodes = HashMap::new();
+    nodes.insert(
+        "src".to_string(),
+        ExpandedNode {
+            runtime_id: "src".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "source".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+    nodes.insert(
+        "trg".to_string(),
+        ExpandedNode {
+            runtime_id: "trg".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "trigger".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+    nodes.insert(
+        "act".to_string(),
+        ExpandedNode {
+            runtime_id: "act".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "action".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+
+    let edges = vec![
+        crate::cluster::ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "src".to_string(),
+                port_name: "out".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "act".to_string(),
+                port_name: "value".to_string(),
+            },
+        },
+        crate::cluster::ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "trg".to_string(),
+                port_name: "event".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "act".to_string(),
+                port_name: "event".to_string(),
+            },
+        },
+    ];
+
+    let expanded = ExpandedGraph {
+        nodes,
+        edges,
+        boundary_inputs: Vec::new(),
+        boundary_outputs: Vec::new(),
+    };
+
+    let mut catalog = TestCatalog::default();
+    catalog.metadata.insert(
+        ("source".to_string(), "0.1.0".to_string()),
+        source_metadata_with_type(ValueType::Number),
+    );
+    catalog.metadata.insert(
+        ("trigger".to_string(), "0.1.0".to_string()),
+        trigger_metadata_with_optional_input_type(ValueType::Bool),
+    );
+    catalog.metadata.insert(
+        ("action".to_string(), "0.1.0".to_string()),
+        action_metadata_with_gate_and_payload(ValueType::Number),
+    );
+
+    crate::runtime::validate(&expanded, &catalog)
+        .expect("source scalar payload edge into action should be valid when gated");
+}
+
+#[test]
+fn validate_allows_compute_scalar_payload_to_action_when_gated() {
+    let mut nodes = HashMap::new();
+    for (id, impl_id) in [
+        ("src_num", "source_num"),
+        ("cmp", "compute"),
+        ("trg", "trigger"),
+        ("act", "action"),
+    ] {
+        nodes.insert(
+            id.to_string(),
+            ExpandedNode {
+                runtime_id: id.to_string(),
+                authoring_path: vec![],
+                implementation: crate::cluster::ImplementationInstance {
+                    impl_id: impl_id.to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::new(),
+            },
+        );
+    }
+
+    let edges = vec![
+        crate::cluster::ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "src_num".to_string(),
+                port_name: "out".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "cmp".to_string(),
+                port_name: "in".to_string(),
+            },
+        },
+        crate::cluster::ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "cmp".to_string(),
+                port_name: "out".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "act".to_string(),
+                port_name: "value".to_string(),
+            },
+        },
+        crate::cluster::ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "trg".to_string(),
+                port_name: "event".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "act".to_string(),
+                port_name: "event".to_string(),
+            },
+        },
+    ];
+
+    let expanded = ExpandedGraph {
+        nodes,
+        edges,
+        boundary_inputs: Vec::new(),
+        boundary_outputs: Vec::new(),
+    };
+
+    let mut catalog = TestCatalog::default();
+    catalog.metadata.insert(
+        ("source_num".to_string(), "0.1.0".to_string()),
+        source_metadata_with_type(ValueType::Number),
+    );
+    catalog.metadata.insert(
+        ("compute".to_string(), "0.1.0".to_string()),
+        compute_metadata_with_input_type(ValueType::Number),
+    );
+    catalog.metadata.insert(
+        ("trigger".to_string(), "0.1.0".to_string()),
+        trigger_metadata_with_optional_input_type(ValueType::Bool),
+    );
+    catalog.metadata.insert(
+        ("action".to_string(), "0.1.0".to_string()),
+        action_metadata_with_gate_and_payload(ValueType::Number),
+    );
+
+    crate::runtime::validate(&expanded, &catalog)
+        .expect("compute scalar payload edge into action should be valid when gated");
+}
+
+#[test]
+fn validate_rejects_compute_event_edge_to_action_event_input() {
+    let mut nodes = HashMap::new();
+    nodes.insert(
+        "cmp".to_string(),
+        ExpandedNode {
+            runtime_id: "cmp".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "compute".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+    nodes.insert(
+        "act".to_string(),
+        ExpandedNode {
+            runtime_id: "act".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "action".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+
+    let edges = vec![crate::cluster::ExpandedEdge {
+        from: ExpandedEndpoint::NodePort {
+            node_id: "cmp".to_string(),
+            port_name: "out".to_string(),
+        },
+        to: ExpandedEndpoint::NodePort {
+            node_id: "act".to_string(),
+            port_name: "event".to_string(),
+        },
+    }];
+
+    let expanded = ExpandedGraph {
+        nodes,
+        edges,
+        boundary_inputs: Vec::new(),
+        boundary_outputs: Vec::new(),
+    };
+
+    let mut catalog = TestCatalog::default();
+    catalog.metadata.insert(
+        ("compute".to_string(), "0.1.0".to_string()),
+        PrimitiveMetadata {
+            kind: PrimitiveKind::Compute,
+            inputs: vec![],
+            outputs: HashMap::from([(
+                "out".to_string(),
+                OutputMetadata {
+                    value_type: ValueType::Event,
+                    cardinality: crate::cluster::Cardinality::Single,
+                },
+            )]),
+            parameters: Vec::new(),
+        },
+    );
+    catalog.metadata.insert(
+        ("action".to_string(), "0.1.0".to_string()),
+        PrimitiveMetadata {
+            kind: PrimitiveKind::Action,
+            inputs: vec![InputMetadata {
+                name: "event".to_string(),
+                value_type: ValueType::Event,
+                required: false,
+            }],
+            outputs: HashMap::from([(
+                "outcome".to_string(),
+                OutputMetadata {
+                    value_type: ValueType::Event,
+                    cardinality: crate::cluster::Cardinality::Single,
+                },
+            )]),
+            parameters: Vec::new(),
+        },
+    );
+
+    let err = crate::runtime::validate(&expanded, &catalog).unwrap_err();
+    assert_eq!(err.rule_id(), "V.2");
+    assert!(matches!(err, ValidationError::InvalidEdgeKind { .. }));
+}
+
+#[test]
+fn validate_rejects_action_with_scalar_payload_edge_but_no_trigger_gate() {
+    let mut nodes = HashMap::new();
+    nodes.insert(
+        "src".to_string(),
+        ExpandedNode {
+            runtime_id: "src".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "source".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+    nodes.insert(
+        "act".to_string(),
+        ExpandedNode {
+            runtime_id: "act".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "action".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+
+    let edges = vec![crate::cluster::ExpandedEdge {
+        from: ExpandedEndpoint::NodePort {
+            node_id: "src".to_string(),
+            port_name: "out".to_string(),
+        },
+        to: ExpandedEndpoint::NodePort {
+            node_id: "act".to_string(),
+            port_name: "value".to_string(),
+        },
+    }];
+
+    let expanded = ExpandedGraph {
+        nodes,
+        edges,
+        boundary_inputs: Vec::new(),
+        boundary_outputs: Vec::new(),
+    };
+
+    let mut catalog = TestCatalog::default();
+    catalog.metadata.insert(
+        ("source".to_string(), "0.1.0".to_string()),
+        source_metadata_with_type(ValueType::Number),
+    );
+    catalog.metadata.insert(
+        ("action".to_string(), "0.1.0".to_string()),
+        action_metadata_with_gate_and_payload(ValueType::Number),
+    );
+
+    let err = crate::runtime::validate(&expanded, &catalog).unwrap_err();
+    assert_eq!(err.rule_id(), "V.5");
+    assert!(matches!(err, ValidationError::ActionNotGated(node) if node == "act"));
 }
 
 #[test]
