@@ -1427,19 +1427,19 @@ fn adp_5_duplicate_context_key_rejected() {
 
 **Why:** Close the state threading loop with two canonical implementations.
 
-### Core Freeze Exception
+### Core Freeze Clarification
 
-**PHASE_INVARIANTS declares:** "Action implementations in core = zero by design; capability atoms live in verticals."
+**PHASE_INVARIANTS now declares:** "Infrastructure actions (ack, annotate, context_set_*) live in core; domain-specific capability actions live in verticals."
 
-**This phase requires an unfreeze exception** because:
+**This phase remains doctrine-sensitive** because:
 
-1. **Vertical proof:** State threading is required for any vertical that implements temporal patterns (once, count, latch, debounce). Without `ctx_set_*`, every vertical must implement its own context-write action, creating duplication and consistency risks.
+1. **Vertical proof:** State threading is required for any vertical that implements temporal patterns (once, count, latch, debounce). Without `context_set_*`, every vertical must implement its own context-write action, creating duplication and consistency risks.
 
-2. **Domain neutrality:** `ctx_set_*` is domain-agnostic (writes typed values to keyed context). It has no trading/vertical-specific semantics. It is infrastructure, not capability.
+2. **Domain neutrality:** `context_set_*` is domain-agnostic (writes typed values to keyed context). It has no trading/vertical-specific semantics. It is infrastructure, not capability.
 
 3. **Minimal surface:** Three type-specific implementations (number, bool, string) with no behavioral parameters.
 
-**To proceed:** Requires Sebastian authorization before implementation begins.
+**To proceed:** Requires doctrine review and Sebastian authorization before merge/landing in core history.
 
 ### 8.1 Context Sources (Source Implementation Family)
 
@@ -1505,14 +1505,14 @@ requires:
 **Kind:** Action (terminal, emits effects)
 
 These are a family of implementations, one per supported type:
-- `ctx_set_number`
-- `ctx_set_bool`
-- `ctx_set_string`
+- `context_set_number`
+- `context_set_bool`
+- `context_set_string`
 
-**Manifest (ctx_set_bool):**
+**Manifest (context_set_bool):**
 ```yaml
 kind: action
-id: ctx_set_bool
+id: context_set_bool
 version: 0.1.0
 
 inputs:
@@ -1797,7 +1797,7 @@ fn golden_spike_once_cluster_state_threading() {
 | 5. Action | Complete from ~60% | 15 ACT + 5 COMP | 2 days | Phase 1 |
 | 6. Cluster | Complete from ~70% | existing + updates | 1 day | Phases 1-5 |
 | 7. Tooling | New CLI + rule registry | integration tests | 2-3 days | Phases 1-6 |
-| 8. Stdlib | ctx_get_or_default_*, ctx_set_* | 6 impl tests | 1-2 days | Phase 1 |
+| 8. Stdlib | ctx_get_or_default_*, context_set_* | 6 impl tests | 1-2 days | Phase 1 |
 | 9. Key derivation | derive_key convention | 2 tests | 0.5 day | Phase 8 |
 | 10. Golden spike | End-to-end test | 1 golden spike | 0.5 day | Phases 8, 9 |
 

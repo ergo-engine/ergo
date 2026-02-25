@@ -823,7 +823,7 @@ This freeze applies to:
 ### Notes
 
 - **COMP-10:** Enforced by Validation Phase invariant **V.2** (coarse boundary-kind wiring matrix) in `crates/runtime/src/runtime/validate.rs`.
-- **COMP-9 (split Action inputs):** STABLE contract now distinguishes Trigger-gated `event` inputs from scalar payload inputs (`Source`/`Compute`). Current runtime validation still enforces the legacy stricter Trigger-only Action input rule via **V.2** until destination-input-type-aware validation is implemented.
+- **COMP-9 (split Action inputs):** STABLE contract distinguishes Trigger-gated `event` inputs from scalar payload inputs (`Source`/`Compute`), and runtime validation now enforces this destination-input-type-aware split within **V.2**.
 - **COMP-15:** Deferred until REP-SCOPE expansion (capture includes context/effect).
 - **Enforcement location:** `crates/adapter/src/composition.rs` (invoked by `ergo_adapter::RuntimeHandle::run`).
 - **Test location:** `crates/adapter/tests/composition_tests.rs`

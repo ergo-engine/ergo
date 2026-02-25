@@ -50,6 +50,9 @@ Exact implementation inventory is maintained in the runtime catalog and manifest
 
 - `ack_action` — Acknowledges execution
 - `annotate_action` — Adds annotation to execution context
+- `context_set_number` — Emits a context write effect for a number payload
+- `context_set_bool` — Emits a context write effect for a boolean payload
+- `context_set_string` — Emits a context write effect for a string payload
 
 **Catalog:** `crates/runtime/src/catalog.rs`
 
@@ -61,7 +64,7 @@ New core implementations require:
 
 1. Vertical proof demonstrating necessity
 2. New invariant with explicit enforcement locus
-3. Action implementations in core = zero by design
+3. Infrastructure actions (ack, annotate, context_set_*) may live in core; domain-specific capability actions belong in verticals
 
 **Source:** [PHASE_INVARIANTS.md](../CANONICAL/PHASE_INVARIANTS.md) Core v0.1 Freeze Declaration
 

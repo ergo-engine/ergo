@@ -261,7 +261,7 @@ Rules:
 
 **Composition enforcement:**
 - COMP-10 is enforced by wiring matrix validation (`runtime/validate.rs`).
-- COMP-9 refines Action input legality by destination input type (event gate vs scalar payload). This requires destination-input-type-aware validation in addition to the coarse wiring matrix check. Legacy runtime validation may still enforce the stricter Trigger-only rule until the split-input validator lands.
+- COMP-9 refines Action input legality by destination input type (event gate vs scalar payload). Runtime validation implements this with destination-input-type-aware checks in `runtime/validate.rs` in addition to the coarse wiring matrix path.
 - COMP-11 through COMP-14 are enforced in `crates/adapter/src/composition.rs` when binding adapter ↔ graph.
 - COMP-15 is deferred until REP-SCOPE expands.
 
