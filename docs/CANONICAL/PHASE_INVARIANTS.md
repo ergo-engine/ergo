@@ -794,6 +794,7 @@ This freeze applies to:
 - **ACT-12:** Enforced during graph validation in `crates/runtime/src/runtime/validate.rs` (ValidationError::ActionNotGated).
 - **ACT-19:** Enforced in `action/registry.rs::validate_manifest` by rejecting manifests where a parameter default value type does not match the declared parameter type (`ActionValidationError::InvalidParameterType`).
 - **ACT-20/ACT-21:** Registration-time cross-check for parameter-bound write names (`$key` convention). Ensures `$`-prefixed write spec names reference declared String-typed parameters.
+- **ACT-22/ACT-23:** Registration-time checks for write payload binding (`from_input`) and scalar type compatibility. These define the declarative "what" channel for action writes; they do not by themselves authorize upstream wiring.
 - **Registration enforcement location:** `crates/runtime/src/action/registry.rs`
 - **Registration test location:** `crates/runtime/src/action/registry.rs`
 - **Validation test location:** `crates/runtime/src/runtime/tests.rs`
@@ -821,7 +822,8 @@ This freeze applies to:
 
 ### Notes
 
-- **COMP-9/COMP-10:** Enforced by Validation Phase invariant **V.2** (wiring matrix) in `crates/runtime/src/runtime/validate.rs`.
+- **COMP-10:** Enforced by Validation Phase invariant **V.2** (coarse boundary-kind wiring matrix) in `crates/runtime/src/runtime/validate.rs`.
+- **COMP-9 (split Action inputs):** STABLE contract now distinguishes Trigger-gated `event` inputs from scalar payload inputs (`Source`/`Compute`). Current runtime validation still enforces the legacy stricter Trigger-only Action input rule via **V.2** until destination-input-type-aware validation is implemented.
 - **COMP-15:** Deferred until REP-SCOPE expansion (capture includes context/effect).
 - **Enforcement location:** `crates/adapter/src/composition.rs` (invoked by `ergo_adapter::RuntimeHandle::run`).
 - **Test location:** `crates/adapter/tests/composition_tests.rs`

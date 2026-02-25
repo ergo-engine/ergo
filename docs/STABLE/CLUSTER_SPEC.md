@@ -279,14 +279,21 @@ The wiring matrix for clusters mirrors the ontological primitive wiring matrix:
 ```
 SourceLike  → ComputeLike  : allowed
 SourceLike  → TriggerLike  : forbidden (v0)
+SourceLike  → ActionLike   : allowed for scalar payload inputs only (TriggerLike event gate still required)
 ComputeLike → ComputeLike  : allowed
 ComputeLike → TriggerLike  : allowed
-ComputeLike → ActionLike   : forbidden (must be mediated by Trigger)
+ComputeLike → ActionLike   : allowed for scalar payload inputs only (TriggerLike event gate still required)
 TriggerLike → TriggerLike  : allowed
 TriggerLike → ActionLike   : allowed
 ActionLike  → *            : forbidden (terminal)
 *           → SourceLike   : forbidden (origin)
 ```
+
+`ActionLike` rows are a coarse boundary-level summary. The executable rule is refined by
+expanded Action input type:
+- `event` inputs are gating inputs and must originate from `Trigger`
+- scalar inputs are payload inputs and may originate from `Source` or `Compute`
+- scalar payload inputs do not satisfy trigger gating; `V.5` still requires Trigger-gated action execution
 
 This matrix applies at every nesting level.
 
@@ -429,7 +436,7 @@ Behavior:
 | ID | Rule | Enforcement Locus | Error Type / Notes |
 |----|------|-------------------|--------------------|
 | V.1 | No cycles in graph | `runtime/validate.rs::topological_sort` | `ValidationError::CycleDetected` |
-| V.2 | Edges satisfy wiring matrix | `runtime/validate.rs::enforce_wiring_matrix` | `ValidationError::InvalidEdgeKind` |
+| V.2 | Edges satisfy coarse boundary-kind wiring matrix | `runtime/validate.rs::enforce_wiring_matrix` | `ValidationError::InvalidEdgeKind` |
 | V.3 | Required inputs connected | `runtime/validate.rs::enforce_required_inputs` | `ValidationError::MissingRequiredInput` |
 | V.4 | Type constraints satisfied at edges | `runtime/validate.rs::enforce_types` | `ValidationError::TypeMismatch` |
 | V.5 | Actions gated by triggers | `runtime/validate.rs::enforce_action_gating` | `ValidationError::ActionNotGated` |
@@ -438,6 +445,11 @@ Behavior:
 | V.8 | Referenced primitive implementations exist in catalog | `runtime/validate.rs::validate` (catalog lookup per node) | `ValidationError::MissingPrimitive` |
 
 ---
+
+**Action input split refinement (COMP-9):** In addition to `V.2`, validation must inspect
+destination Action input types to distinguish Trigger-gated `event` inputs from scalar
+payload inputs. Legacy implementations may temporarily enforce the stricter Trigger-only
+Action input rule until this refinement is implemented.
 
 ## 7. Expansion Algorithm
 

@@ -142,14 +142,17 @@ The following wiring rules are authoritative for v0:
 ```
 Source → Compute     : allowed
 Source → Trigger     : forbidden (v0)
+Source → Action      : allowed only for non-Event payload inputs (v0 non-Event payload types: Number/Bool/String); does not satisfy Action gate requirement
 Compute → Compute    : allowed
 Compute → Trigger    : allowed
-Compute → Action     : forbidden (must be mediated by Trigger)
+Compute → Action     : allowed only for non-Event payload inputs (v0 non-Event payload types: Number/Bool/String); does not satisfy Action gate requirement
 Trigger → Trigger    : allowed
-Trigger → Action     : allowed
+Trigger → Action     : allowed for Event gate inputs only (Event → Event); every Action must have at least one Trigger-provided Event input
 Action → *           : forbidden (terminal)
 * → Source           : forbidden
 ```
+
+For Action edges, wiring legality is determined per edge by the destination Action input port type: Action execution is gated solely by Event inputs, and non-Event payload inputs (v0: Number/Bool/String) are values only and do not determine whether an Action runs.
 
 Graphs violating these rules are invalid.
 

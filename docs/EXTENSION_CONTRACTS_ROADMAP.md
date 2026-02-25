@@ -1167,7 +1167,7 @@ effects:                      # What effects this action may emit
 
 | Rule ID | Rule | Predicate |
 |---------|------|-----------|
-| COMP-9 | Action input from Trigger only | `upstream.kind == "trigger"` (all inputs today) |
+| COMP-9 | Action inputs follow gate/payload split | `∀ action input i: (i.type == Event => upstream(i).kind == "trigger") ∧ (i.type != Event => upstream(i).kind ∈ {"source","compute"})` |
 | COMP-10 | Action output not wireable | `downstream.len == 0` (terminal) |
 | COMP-11 | Action writes target provided keys | `action.effects.writes.names ⊆ adapter.context_keys.names` |
 | COMP-12 | Action writes only writable keys | `∀n ∈ writes: adapter.key[n].writable == true` |
@@ -1177,8 +1177,13 @@ effects:                      # What effects this action may emit
 
 **Note (planned):** COMP-15 depends on capture including context/effect; it is deferred until REP-SCOPE expands.
 
-**Note (CURRENT):** Wiring only permits Trigger → Action, and triggers emit only event outputs.
-Non-event action inputs are therefore not satisfiable without wiring changes.
+**Decision (2026-02-25):** Action inputs are split into two channels:
+- `event` inputs are Trigger-gated causal inputs (`when`)
+- scalar inputs are payload inputs (`what`) and may be wired from Source/Compute
+
+This preserves Trigger gating while allowing scalar payload delivery to actions. Runtime
+validation and frozen wiring text must be updated to replace the legacy Trigger-only Action
+input check.
 
 **Deliverables:**
 - [x] Composition rules in `action.md`
@@ -1538,6 +1543,7 @@ effects:
   writes:
     - name: $key              # Bound from parameter at instantiation
       type: Bool
+      from_input: value       # Scalar payload input supplying the write value
 ```
 
 **Note:** `effects.writes[].name` is bound from the `key` parameter at instantiation time.

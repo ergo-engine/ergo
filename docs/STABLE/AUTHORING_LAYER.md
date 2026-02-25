@@ -97,7 +97,12 @@ BoundaryKind is **inferred** from the cluster's boundary signature, never declar
 
 BoundaryKind is inferred from the full expanded graph, not from the declared or exposed boundary alone. Hiding outputs cannot coerce one kind into another.
 
-The wiring matrix for clusters is identical to the wiring matrix for primitives.
+The wiring contract for clusters mirrors the primitive wiring contract.
+For `ActionLike` inputs, the primitive contract includes a per-port refinement:
+- `event` inputs are gating inputs and must be wired from `TriggerLike`
+- scalar inputs (`number | bool | string`) are payload inputs and may be wired from `SourceLike` or `ComputeLike`
+
+This refines the coarse kind matrix; it does not introduce a fifth boundary kind.
 
 ### 4.3 Boundary Flags
 

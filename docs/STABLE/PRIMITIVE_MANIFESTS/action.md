@@ -67,6 +67,9 @@ inputs:
 
 Rules:
 - At least one input must be an event
+- Event inputs are **gating inputs** (causal `when`) and are wired from Trigger outputs
+- Non-event inputs are **payload inputs** (command `what`) and may be wired from Source or Compute outputs
+- Payload inputs are non-gating; action execution timing is determined only by trigger event inputs
 - Inputs are explicit, named, and typed
 - No implicit access to external state or context
 
@@ -151,12 +154,14 @@ effects:
   writes:
     - name: string
       type: number | bool | string
+      from_input: optional string   # Scalar action input supplying the write value
 ```
 
 Rules:
 - `effects` block must exist (may contain empty `writes`)
 - Write names must be unique
 - Write types must be Number, Bool, or String
+- `from_input` is optional, but when present it must name a declared scalar input (ACT-22/ACT-23)
 
 ---
 
@@ -246,7 +251,7 @@ Rules:
 
 | Rule ID | Rule | Predicate |
 |---------|------|-----------|
-| COMP-9 | Action input from Trigger only | `upstream.kind == "trigger"` |
+| COMP-9 | Action inputs follow gate/payload split | `∀ action input i: (i.type == event => upstream(i).kind == "trigger") ∧ (i.type != event => upstream(i).kind ∈ {"source","compute"})` |
 | COMP-10 | Action output not wireable | `downstream.len == 0` |
 | COMP-11 | Action writes target provided keys | `effects.writes.names ⊆ adapter.context_keys.names` |
 | COMP-12 | Action writes only writable keys | `∀n ∈ writes: adapter.key[n].writable == true` |
@@ -255,7 +260,8 @@ Rules:
 | COMP-15 | Writes captured (planned) | `writes.len > 0 => capture includes effect + keys` (deferred: REP-SCOPE) |
 
 **Composition enforcement:**
-- COMP-9/COMP-10 are enforced by wiring matrix validation (`runtime/validate.rs`).
+- COMP-10 is enforced by wiring matrix validation (`runtime/validate.rs`).
+- COMP-9 refines Action input legality by destination input type (event gate vs scalar payload). This requires destination-input-type-aware validation in addition to the coarse wiring matrix check. Legacy runtime validation may still enforce the stricter Trigger-only rule until the split-input validator lands.
 - COMP-11 through COMP-14 are enforced in `crates/adapter/src/composition.rs` when binding adapter ↔ graph.
 - COMP-15 is deferred until REP-SCOPE expands.
 
@@ -311,6 +317,10 @@ inputs:
     type: event
     required: true
     cardinality: single
+  - name: price
+    type: number
+    required: true
+    cardinality: single
 
 outputs:
   - name: outcome
@@ -331,4 +341,5 @@ effects:
   writes:
     - name: price
       type: number
+      from_input: price
 ```
