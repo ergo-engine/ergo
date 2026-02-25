@@ -1,12 +1,12 @@
 //! Integration tests for Supervisor with real RuntimeHandle execution path.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ergo_adapter::{
-    AdapterProvides, EventId, EventTime, ExternalEvent, ExternalEventKind, FaultRuntimeHandle,
-    GraphId, RunTermination, RuntimeHandle,
+    AdapterProvides, ContextKeyProvision, EventId, EventTime, ExternalEvent, ExternalEventKind,
+    FaultRuntimeHandle, GraphId, RunTermination, RuntimeHandle,
 };
 use ergo_runtime::action::ActionOutcome;
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
@@ -16,6 +16,7 @@ use ergo_runtime::cluster::{
 };
 use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceScheme};
 use ergo_supervisor::demo::demo_1;
+use ergo_supervisor::replay::compare_decisions;
 use ergo_supervisor::replay::replay;
 use ergo_supervisor::{
     CapturingSession, Constraints, Decision, DecisionLog, DecisionLogEntry, Supervisor,
@@ -174,6 +175,119 @@ fn build_hello_world_graph() -> ExpandedGraph {
             name: "action_outcome".to_string(),
             maps_to: OutputRef {
                 node_id: "act".to_string(),
+                port_name: "outcome".to_string(),
+            },
+        }],
+    }
+}
+
+/// Build a minimal graph that emits a real set_context effect through context_set_bool.
+/// Structure:
+///   const_bool(true) ----> emit_if_true -> context_set_bool:event
+///   boolean_source(false) ----------------> context_set_bool:value
+fn build_context_set_bool_graph() -> ExpandedGraph {
+    let mut nodes = HashMap::new();
+
+    nodes.insert(
+        "gate".to_string(),
+        ExpandedNode {
+            runtime_id: "gate".to_string(),
+            authoring_path: vec![],
+            implementation: ImplementationInstance {
+                impl_id: "const_bool".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::from([("value".to_string(), ParameterValue::Bool(true))]),
+        },
+    );
+
+    nodes.insert(
+        "payload".to_string(),
+        ExpandedNode {
+            runtime_id: "payload".to_string(),
+            authoring_path: vec![],
+            implementation: ImplementationInstance {
+                impl_id: "boolean_source".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::from([("value".to_string(), ParameterValue::Bool(false))]),
+        },
+    );
+
+    nodes.insert(
+        "emit".to_string(),
+        ExpandedNode {
+            runtime_id: "emit".to_string(),
+            authoring_path: vec![],
+            implementation: ImplementationInstance {
+                impl_id: "emit_if_true".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+
+    nodes.insert(
+        "ctx_set".to_string(),
+        ExpandedNode {
+            runtime_id: "ctx_set".to_string(),
+            authoring_path: vec![],
+            implementation: ImplementationInstance {
+                impl_id: "context_set_bool".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::from([(
+                "key".to_string(),
+                ParameterValue::String("armed".to_string()),
+            )]),
+        },
+    );
+
+    let edges = vec![
+        ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "gate".to_string(),
+                port_name: "value".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "emit".to_string(),
+                port_name: "input".to_string(),
+            },
+        },
+        ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "emit".to_string(),
+                port_name: "event".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "ctx_set".to_string(),
+                port_name: "event".to_string(),
+            },
+        },
+        ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "payload".to_string(),
+                port_name: "value".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "ctx_set".to_string(),
+                port_name: "value".to_string(),
+            },
+        },
+    ];
+
+    ExpandedGraph {
+        nodes,
+        edges,
+        boundary_inputs: Vec::new(),
+        boundary_outputs: vec![OutputPortSpec {
+            name: "outcome".to_string(),
+            maps_to: OutputRef {
+                node_id: "ctx_set".to_string(),
                 port_name: "outcome".to_string(),
             },
         }],
@@ -368,6 +482,78 @@ fn demo_1_complex_graph_executes_and_replays() {
     let replay_matches = replay_decisions == bundle.decisions;
     println!("{}", demo_1::format_replay_identity(replay_matches));
     assert!(replay_matches, "replay decisions must match capture");
+}
+
+#[test]
+fn context_set_bool_effect_is_captured_and_replayed_with_real_runtime() {
+    let graph = Arc::new(build_context_set_bool_graph());
+    let catalog = Arc::new(build_core_catalog());
+    let core_registries = Arc::new(core_registries().expect("core registries should build"));
+
+    let mut adapter_provides = AdapterProvides::default();
+    adapter_provides.context.insert(
+        "armed".to_string(),
+        ContextKeyProvision {
+            ty: "Bool".to_string(),
+            required: false,
+            writable: true,
+        },
+    );
+    adapter_provides.effects = HashSet::from(["set_context".to_string()]);
+
+    let runtime = RuntimeHandle::new(
+        graph.clone(),
+        catalog.clone(),
+        core_registries.clone(),
+        adapter_provides,
+    );
+    let runtime_provenance = compute_runtime_provenance(
+        RuntimeProvenanceScheme::Rpv1,
+        "context_set_bool_capture",
+        graph.as_ref(),
+        catalog.as_ref(),
+    )
+    .expect("runtime provenance should compute");
+
+    let mut session = CapturingSession::new(
+        GraphId::new("context_set_bool_capture"),
+        Constraints::default(),
+        CapturingLog::new(),
+        runtime.clone(),
+        runtime_provenance,
+    );
+
+    session.on_event(ExternalEvent::mechanical(
+        EventId::new("context_set_bool_event"),
+        ExternalEventKind::Command,
+    ));
+
+    let bundle = session.into_bundle();
+    assert_eq!(bundle.decisions.len(), 1, "one decision should be captured");
+
+    let captured_effects = bundle.decisions[0]
+        .effects
+        .as_ref()
+        .expect("effect-aware capture must store effects");
+    assert_eq!(captured_effects.len(), 1, "one effect expected");
+    assert_eq!(captured_effects[0].effect.kind, "set_context");
+    assert_eq!(captured_effects[0].effect.writes.len(), 1);
+    assert_eq!(captured_effects[0].effect.writes[0].key, "armed");
+    assert_eq!(
+        captured_effects[0].effect.writes[0].value,
+        ergo_runtime::common::Value::Bool(false)
+    );
+    assert!(
+        !captured_effects[0].effect_hash.is_empty(),
+        "captured effect hash must be present"
+    );
+
+    let replayed = replay(&bundle, runtime);
+    assert_eq!(replayed.len(), 1, "one replayed decision expected");
+    assert!(
+        compare_decisions(&bundle.decisions, &replayed).unwrap(),
+        "capture/replay decisions (including effects) should match"
+    );
 }
 
 /// Test that a deferred episode is retried when a Tick event arrives.

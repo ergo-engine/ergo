@@ -497,7 +497,9 @@ pub trait ActionPrimitive {
     ) -> HashMap<String, ActionValue>;
 }
 
-pub use implementations::{AckAction, AnnotateAction};
+pub use implementations::{
+    AckAction, AnnotateAction, ContextSetBoolAction, ContextSetNumberAction, ContextSetStringAction,
+};
 pub use registry::ActionRegistry;
 
 #[cfg(test)]

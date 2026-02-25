@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::action::{
     AckAction, ActionPrimitive, ActionRegistry, ActionValidationError, ActionValueType,
-    AnnotateAction,
+    AnnotateAction, ContextSetBoolAction, ContextSetNumberAction, ContextSetStringAction,
 };
 use crate::cluster::{
     Cardinality, InputMetadata, OutputMetadata, ParameterMetadata, ParameterType, ParameterValue,
@@ -97,7 +97,13 @@ fn core_trigger_primitives() -> Vec<Box<dyn TriggerPrimitive>> {
 }
 
 fn core_action_primitives() -> Vec<Box<dyn ActionPrimitive>> {
-    vec![Box::new(AckAction::new()), Box::new(AnnotateAction::new())]
+    vec![
+        Box::new(AckAction::new()),
+        Box::new(AnnotateAction::new()),
+        Box::new(ContextSetNumberAction::new()),
+        Box::new(ContextSetBoolAction::new()),
+        Box::new(ContextSetStringAction::new()),
+    ]
 }
 
 pub fn build_core() -> Result<(CoreRegistries, CorePrimitiveCatalog), CoreRegistrationError> {
