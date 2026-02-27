@@ -6,7 +6,8 @@ use crate::source::{ParameterValue, SourcePrimitive, SourcePrimitiveManifest};
 
 use super::manifest::context_number_source_manifest;
 
-const CONTEXT_KEY: &str = "x";
+const DEFAULT_CONTEXT_KEY: &str = "x";
+const KEY_PARAMETER: &str = "key";
 
 pub struct ContextNumberSource {
     manifest: SourcePrimitiveManifest,
@@ -33,11 +34,19 @@ impl SourcePrimitive for ContextNumberSource {
 
     fn produce(
         &self,
-        _parameters: &HashMap<String, ParameterValue>,
+        parameters: &HashMap<String, ParameterValue>,
         ctx: &ExecutionContext,
     ) -> HashMap<String, Value> {
+        let context_key = parameters
+            .get(KEY_PARAMETER)
+            .and_then(|v| match v {
+                ParameterValue::String(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .unwrap_or(DEFAULT_CONTEXT_KEY);
+
         let value = ctx
-            .value(CONTEXT_KEY)
+            .value(context_key)
             .and_then(|v| v.as_number())
             .unwrap_or(0.0);
 

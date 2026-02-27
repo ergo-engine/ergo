@@ -1,7 +1,7 @@
 use crate::common::ValueType;
 use crate::source::{
-    Cadence, ContextRequirement, ExecutionSpec, OutputSpec, SourceKind, SourcePrimitiveManifest,
-    SourceRequires, StateSpec,
+    Cadence, ContextRequirement, ExecutionSpec, OutputSpec, ParameterSpec, ParameterValue,
+    SourceKind, SourcePrimitiveManifest, SourceRequires, StateSpec,
 };
 
 pub fn context_number_source_manifest() -> SourcePrimitiveManifest {
@@ -14,10 +14,15 @@ pub fn context_number_source_manifest() -> SourcePrimitiveManifest {
             name: "value".to_string(),
             value_type: ValueType::Number,
         }],
-        parameters: vec![],
+        parameters: vec![ParameterSpec {
+            name: "key".to_string(),
+            value_type: ParameterValue::String(String::new()).value_type(),
+            default: Some(ParameterValue::String("x".to_string())),
+            bounds: None,
+        }],
         requires: SourceRequires {
             context: vec![ContextRequirement {
-                name: "x".to_string(),
+                name: "$key".to_string(),
                 ty: ValueType::Number,
                 required: false,
             }],

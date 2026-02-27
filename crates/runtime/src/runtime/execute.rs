@@ -134,14 +134,17 @@ fn execute_source(
             })?;
 
     let manifest = primitive.manifest();
+    let manifest_name_parameters = source_manifest_name_parameters(node, manifest);
     for req in &manifest.requires.context {
         // Resolve $key bindings before the required check so optional
         // parameter-bound keys are still resolved.
-        let resolved_name = crate::common::resolve_manifest_name(&req.name, &node.parameters)
-            .map_err(|_| ExecError::MissingRequiredContextKey {
-                node: node.runtime_id.clone(),
-                key: req.name.clone(),
-            })?;
+        let resolved_name =
+            crate::common::resolve_manifest_name(&req.name, &manifest_name_parameters).map_err(
+                |_| ExecError::MissingRequiredContextKey {
+                    node: node.runtime_id.clone(),
+                    key: req.name.clone(),
+                },
+            )?;
         if !req.required {
             continue;
         }
@@ -556,6 +559,45 @@ fn map_to_source_parameter_value(
         }
         crate::cluster::ParameterValue::Enum(e) => {
             Some(crate::source::ParameterValue::Enum(e.clone()))
+        }
+    }
+}
+
+fn source_manifest_name_parameters(
+    node: &ValidatedNode,
+    manifest: &crate::source::SourcePrimitiveManifest,
+) -> HashMap<String, crate::cluster::ParameterValue> {
+    let mut resolved = node.parameters.clone();
+
+    for spec in &manifest.parameters {
+        if resolved.contains_key(&spec.name) {
+            continue;
+        }
+        let Some(default) = &spec.default else {
+            continue;
+        };
+        if let Some(mapped) = map_source_default_to_cluster_parameter_value(default) {
+            resolved.insert(spec.name.clone(), mapped);
+        }
+    }
+
+    resolved
+}
+
+fn map_source_default_to_cluster_parameter_value(
+    v: &crate::source::ParameterValue,
+) -> Option<crate::cluster::ParameterValue> {
+    match v {
+        crate::source::ParameterValue::Int(i) => Some(crate::cluster::ParameterValue::Int(*i)),
+        crate::source::ParameterValue::Number(n) => {
+            Some(crate::cluster::ParameterValue::Number(*n))
+        }
+        crate::source::ParameterValue::Bool(b) => Some(crate::cluster::ParameterValue::Bool(*b)),
+        crate::source::ParameterValue::String(s) => {
+            Some(crate::cluster::ParameterValue::String(s.clone()))
+        }
+        crate::source::ParameterValue::Enum(e) => {
+            Some(crate::cluster::ParameterValue::Enum(e.clone()))
         }
     }
 }

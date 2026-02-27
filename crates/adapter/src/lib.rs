@@ -500,10 +500,12 @@ impl RuntimeHandle {
             };
 
             let manifest = primitive.manifest();
+            let source_params =
+                source_parameters_with_manifest_defaults(manifest, &node.parameters);
             validate_source_adapter_composition(
                 &manifest.requires,
                 &self.adapter_provides,
-                &node.parameters,
+                &source_params,
             )?;
         }
 
@@ -526,6 +528,43 @@ impl RuntimeHandle {
 
         Ok(())
     }
+}
+
+fn source_parameters_with_manifest_defaults(
+    manifest: &ergo_runtime::source::SourcePrimitiveManifest,
+    node_parameters: &HashMap<String, ergo_runtime::cluster::ParameterValue>,
+) -> HashMap<String, ergo_runtime::cluster::ParameterValue> {
+    let mut resolved = node_parameters.clone();
+
+    for spec in &manifest.parameters {
+        if resolved.contains_key(&spec.name) {
+            continue;
+        }
+        let Some(default) = &spec.default else {
+            continue;
+        };
+
+        let mapped = match default {
+            ergo_runtime::source::ParameterValue::Int(i) => {
+                ergo_runtime::cluster::ParameterValue::Int(*i)
+            }
+            ergo_runtime::source::ParameterValue::Number(n) => {
+                ergo_runtime::cluster::ParameterValue::Number(*n)
+            }
+            ergo_runtime::source::ParameterValue::Bool(b) => {
+                ergo_runtime::cluster::ParameterValue::Bool(*b)
+            }
+            ergo_runtime::source::ParameterValue::String(s) => {
+                ergo_runtime::cluster::ParameterValue::String(s.clone())
+            }
+            ergo_runtime::source::ParameterValue::Enum(e) => {
+                ergo_runtime::cluster::ParameterValue::Enum(e.clone())
+            }
+        };
+        resolved.insert(spec.name.clone(), mapped);
+    }
+
+    resolved
 }
 
 pub trait RuntimeInvoker {

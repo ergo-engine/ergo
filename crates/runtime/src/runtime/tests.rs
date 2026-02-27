@@ -2665,7 +2665,7 @@ fn execute_source_precheck_resolves_dollar_key() {
                 )]),
                 parameters: HashMap::from([(
                     "key".to_string(),
-                    crate::cluster::ParameterValue::String("fast_sma".to_string()),
+                    crate::cluster::ParameterValue::String("sample_key".to_string()),
                 )]),
             },
         )]),
@@ -2687,9 +2687,9 @@ fn execute_source_precheck_resolves_dollar_key() {
         actions: &crate::action::ActionRegistry::new(),
     };
 
-    // Context provides the resolved key "fast_sma" with correct type.
+    // Context provides the resolved key "sample_key" with correct type.
     let ctx = ExecutionContext::from_values(HashMap::from([(
-        "fast_sma".to_string(),
+        "sample_key".to_string(),
         crate::common::Value::Number(42.0),
     )]));
 
@@ -2775,7 +2775,7 @@ fn execute_source_dollar_key_missing_context_rejected() {
                 )]),
                 parameters: HashMap::from([(
                     "key".to_string(),
-                    crate::cluster::ParameterValue::String("fast_sma".to_string()),
+                    crate::cluster::ParameterValue::String("sample_key".to_string()),
                 )]),
             },
         )]),
@@ -2791,14 +2791,14 @@ fn execute_source_dollar_key_missing_context_rejected() {
         actions: &crate::action::ActionRegistry::new(),
     };
 
-    // Empty context — resolved key "fast_sma" is not present.
+    // Empty context — resolved key "sample_key" is not present.
     let ctx = ExecutionContext::default();
     let err = crate::runtime::execute(&graph, &registries, &ctx).unwrap_err();
     assert_eq!(err.rule_id(), "SRC-10");
     match err {
         ExecError::MissingRequiredContextKey { node, key } => {
             assert_eq!(node, "s");
-            assert_eq!(key, "fast_sma");
+            assert_eq!(key, "sample_key");
         }
         other => panic!("expected MissingRequiredContextKey, got {:?}", other),
     }
@@ -3859,10 +3859,10 @@ fn effect_action_write_key_dollar_binding_resolves_from_parameters() {
                             cardinality: crate::cluster::Cardinality::Single,
                         },
                     )]),
-                    // Node parameter resolves $key -> "fast_sma"
+                    // Node parameter resolves $key -> "sample_key"
                     parameters: HashMap::from([(
                         "key".to_string(),
-                        crate::cluster::ParameterValue::String("fast_sma".to_string()),
+                        crate::cluster::ParameterValue::String("sample_key".to_string()),
                     )]),
                 },
             ),
@@ -3920,8 +3920,8 @@ fn effect_action_write_key_dollar_binding_resolves_from_parameters() {
 
     assert_eq!(report.effects.len(), 1);
     assert_eq!(report.effects[0].writes.len(), 1);
-    // Key should be resolved "fast_sma", not literal "$key"
-    assert_eq!(report.effects[0].writes[0].key, "fast_sma");
+    // Key should be resolved "sample_key", not literal "$key"
+    assert_eq!(report.effects[0].writes[0].key, "sample_key");
     assert_eq!(
         report.effects[0].writes[0].value,
         crate::common::Value::Number(77.0)
@@ -4115,4 +4115,97 @@ fn context_set_string_runtime_emits_effect_with_resolved_key_and_string_value() 
         effect.writes[0].value,
         crate::common::Value::String("ready".to_string())
     );
+}
+
+#[test]
+fn context_number_source_runtime_reads_custom_key_parameter() {
+    let expanded = ExpandedGraph {
+        nodes: HashMap::from([(
+            "src".to_string(),
+            ExpandedNode {
+                runtime_id: "src".to_string(),
+                authoring_path: vec![],
+                implementation: crate::cluster::ImplementationInstance {
+                    impl_id: "context_number_source".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::from([(
+                    "key".to_string(),
+                    crate::cluster::ParameterValue::String("sample_key".to_string()),
+                )]),
+            },
+        )]),
+        edges: vec![],
+        boundary_inputs: Vec::new(),
+        boundary_outputs: vec![crate::cluster::OutputPortSpec {
+            name: "out".to_string(),
+            maps_to: crate::cluster::OutputRef {
+                node_id: "src".to_string(),
+                port_name: "value".to_string(),
+            },
+        }],
+    };
+
+    let catalog = build_core_catalog();
+    let core = core_registries().unwrap();
+    let registries = Registries {
+        sources: &core.sources,
+        computes: &core.computes,
+        triggers: &core.triggers,
+        actions: &core.actions,
+    };
+
+    let ctx = ExecutionContext::from_values(HashMap::from([(
+        "sample_key".to_string(),
+        crate::common::Value::Number(42.5),
+    )]));
+
+    let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
+    assert_eq!(report.outputs.get("out"), Some(&RuntimeValue::Number(42.5)));
+}
+
+#[test]
+fn context_number_source_runtime_uses_default_key_when_parameter_omitted() {
+    let expanded = ExpandedGraph {
+        nodes: HashMap::from([(
+            "src".to_string(),
+            ExpandedNode {
+                runtime_id: "src".to_string(),
+                authoring_path: vec![],
+                implementation: crate::cluster::ImplementationInstance {
+                    impl_id: "context_number_source".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::new(),
+            },
+        )]),
+        edges: vec![],
+        boundary_inputs: Vec::new(),
+        boundary_outputs: vec![crate::cluster::OutputPortSpec {
+            name: "out".to_string(),
+            maps_to: crate::cluster::OutputRef {
+                node_id: "src".to_string(),
+                port_name: "value".to_string(),
+            },
+        }],
+    };
+
+    let catalog = build_core_catalog();
+    let core = core_registries().unwrap();
+    let registries = Registries {
+        sources: &core.sources,
+        computes: &core.computes,
+        triggers: &core.triggers,
+        actions: &core.actions,
+    };
+
+    let ctx = ExecutionContext::from_values(HashMap::from([(
+        "x".to_string(),
+        crate::common::Value::Number(7.0),
+    )]));
+
+    let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
+    assert_eq!(report.outputs.get("out"), Some(&RuntimeValue::Number(7.0)));
 }

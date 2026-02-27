@@ -292,11 +292,14 @@ outputs:
   - name: value
     type: Number
 
-parameters: []
+parameters:
+  - name: key
+    type: string
+    default: "x"
 
 requires:
   context:
-    - name: x
+    - name: $key
       type: Number
       required: false
 
@@ -310,7 +313,8 @@ state:
 side_effects: false
 ```
 
-This source reads context key `x` (Number) from the adapter. Since `required: false`, the source uses a default value when `x` is absent.
+This source reads the context key named by parameter `key` (default `"x"`). Since
+`required: false`, the source uses a default value when the resolved key is absent.
 
 ### Source without context requirements
 
@@ -543,7 +547,7 @@ side_effects: true
 
 #### SRC-10 — Required context key missing in adapter (composition)
 
-Source manifest (requires `x`):
+Source manifest (requires `$key`, defaulting to `x`):
 ```yaml
 kind: source
 id: context_number_source
@@ -552,10 +556,13 @@ inputs: []
 outputs:
   - name: value
     type: Number
-parameters: []
+parameters:
+  - name: key
+    type: string
+    default: "x"
 requires:
   context:
-    - name: x
+    - name: $key
       type: Number
       required: true
 execution:
@@ -573,7 +580,7 @@ context_keys: []
 
 #### SRC-11 — Required context type mismatch (composition)
 
-Source manifest (requires `x: Number`):
+Source manifest (requires `$key: Number`, defaulting to `x`):
 ```yaml
 kind: source
 id: context_number_source
@@ -582,10 +589,13 @@ inputs: []
 outputs:
   - name: value
     type: Number
-parameters: []
+parameters:
+  - name: key
+    type: string
+    default: "x"
 requires:
   context:
-    - name: x
+    - name: $key
       type: Number
       required: true
 execution:
