@@ -16,6 +16,7 @@ Exact implementation inventory is maintained in the runtime catalog and manifest
 - `boolean_source` — Produces a configured boolean value
 - `string_source` — Produces a configured string value (STRING-SOURCE-1)
 - `context_number_source` — Reads number from ExecutionContext (CONTEXT-NUMBER-SOURCE-1)
+- `context_bool_source` — Reads boolean from ExecutionContext
 
 ### Computes
 
@@ -45,6 +46,7 @@ Exact implementation inventory is maintained in the runtime catalog and manifest
 ### Triggers
 
 - `emit_if_true` — Emits when input is true
+- `emit_if_event_and_true` — Emits incoming event only when condition is true
 
 ### Actions
 
@@ -90,7 +92,7 @@ Every `ValueType` must have at least one source producer (X.12).
 | ValueType | Source |
 |-----------|--------|
 | Number | number_source, context_number_source |
-| Bool | boolean_source |
+| Bool | boolean_source, context_bool_source |
 | String | string_source |
 | Series | (derived from compute) |
 | Event | (derived from trigger) |

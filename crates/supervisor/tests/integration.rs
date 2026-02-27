@@ -294,6 +294,195 @@ fn build_context_set_bool_graph() -> ExpandedGraph {
     }
 }
 
+/// Build a graph equivalent to OnceCluster's compiled behavior for one event gate:
+///   const_bool(true) -> emit_if_true:event -> emit_if_event_and_true:event
+///   context_bool_source(key=once_state) -> not -> emit_if_event_and_true:condition
+///   emit_if_event_and_true:event -> context_set_bool:event
+///   boolean_source(true) -> context_set_bool:value
+fn build_once_cluster_behavior_graph() -> ExpandedGraph {
+    let mut nodes = HashMap::new();
+
+    nodes.insert(
+        "event_signal".to_string(),
+        ExpandedNode {
+            runtime_id: "event_signal".to_string(),
+            authoring_path: vec![],
+            implementation: ImplementationInstance {
+                impl_id: "const_bool".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::from([("value".to_string(), ParameterValue::Bool(true))]),
+        },
+    );
+
+    nodes.insert(
+        "emit_source_event".to_string(),
+        ExpandedNode {
+            runtime_id: "emit_source_event".to_string(),
+            authoring_path: vec![],
+            implementation: ImplementationInstance {
+                impl_id: "emit_if_true".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+
+    nodes.insert(
+        "state_source".to_string(),
+        ExpandedNode {
+            runtime_id: "state_source".to_string(),
+            authoring_path: vec![],
+            implementation: ImplementationInstance {
+                impl_id: "context_bool_source".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::from([(
+                "key".to_string(),
+                ParameterValue::String("once_state".to_string()),
+            )]),
+        },
+    );
+
+    nodes.insert(
+        "not_state".to_string(),
+        ExpandedNode {
+            runtime_id: "not_state".to_string(),
+            authoring_path: vec![],
+            implementation: ImplementationInstance {
+                impl_id: "not".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+
+    nodes.insert(
+        "gate_event".to_string(),
+        ExpandedNode {
+            runtime_id: "gate_event".to_string(),
+            authoring_path: vec![],
+            implementation: ImplementationInstance {
+                impl_id: "emit_if_event_and_true".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+
+    nodes.insert(
+        "set_value".to_string(),
+        ExpandedNode {
+            runtime_id: "set_value".to_string(),
+            authoring_path: vec![],
+            implementation: ImplementationInstance {
+                impl_id: "boolean_source".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::from([("value".to_string(), ParameterValue::Bool(true))]),
+        },
+    );
+
+    nodes.insert(
+        "set_state".to_string(),
+        ExpandedNode {
+            runtime_id: "set_state".to_string(),
+            authoring_path: vec![],
+            implementation: ImplementationInstance {
+                impl_id: "context_set_bool".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::from([(
+                "key".to_string(),
+                ParameterValue::String("once_state".to_string()),
+            )]),
+        },
+    );
+
+    let edges = vec![
+        ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "event_signal".to_string(),
+                port_name: "value".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "emit_source_event".to_string(),
+                port_name: "input".to_string(),
+            },
+        },
+        ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "emit_source_event".to_string(),
+                port_name: "event".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "gate_event".to_string(),
+                port_name: "event".to_string(),
+            },
+        },
+        ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "state_source".to_string(),
+                port_name: "value".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "not_state".to_string(),
+                port_name: "value".to_string(),
+            },
+        },
+        ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "not_state".to_string(),
+                port_name: "result".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "gate_event".to_string(),
+                port_name: "condition".to_string(),
+            },
+        },
+        ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "gate_event".to_string(),
+                port_name: "event".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "set_state".to_string(),
+                port_name: "event".to_string(),
+            },
+        },
+        ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "set_value".to_string(),
+                port_name: "value".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "set_state".to_string(),
+                port_name: "value".to_string(),
+            },
+        },
+    ];
+
+    ExpandedGraph {
+        nodes,
+        edges,
+        boundary_inputs: Vec::new(),
+        boundary_outputs: vec![OutputPortSpec {
+            name: "event".to_string(),
+            maps_to: OutputRef {
+                node_id: "gate_event".to_string(),
+                port_name: "event".to_string(),
+            },
+        }],
+    }
+}
+
 /// SUP-2 verification: Supervisor::new() -> RuntimeHandle::new() -> runtime::run() -> Completed
 ///
 /// This test proves the full execution path works:
@@ -479,7 +668,7 @@ fn demo_1_complex_graph_executes_and_replays() {
     }
 
     let replay_decisions = replay(&bundle, FaultRuntimeHandle::new(RunTermination::Completed));
-    let replay_matches = replay_decisions == bundle.decisions;
+    let replay_matches = compare_decisions(&bundle.decisions, &replay_decisions).unwrap();
     println!("{}", demo_1::format_replay_identity(replay_matches));
     assert!(replay_matches, "replay decisions must match capture");
 }
@@ -542,6 +731,78 @@ fn context_set_bool_effect_is_captured_and_replayed_with_real_runtime() {
     assert_eq!(
         captured_effects[0].effect.writes[0].value,
         ergo_runtime::common::Value::Bool(false)
+    );
+    assert!(
+        !captured_effects[0].effect_hash.is_empty(),
+        "captured effect hash must be present"
+    );
+
+    let replayed = replay(&bundle, runtime);
+    assert_eq!(replayed.len(), 1, "one replayed decision expected");
+    assert!(
+        compare_decisions(&bundle.decisions, &replayed).unwrap(),
+        "capture/replay decisions (including effects) should match"
+    );
+}
+
+#[test]
+fn once_cluster_effect_is_captured_and_replayed_with_real_runtime() {
+    let graph = Arc::new(build_once_cluster_behavior_graph());
+    let catalog = Arc::new(build_core_catalog());
+    let core_registries = Arc::new(core_registries().expect("core registries should build"));
+
+    let mut adapter_provides = AdapterProvides::default();
+    adapter_provides.context.insert(
+        "once_state".to_string(),
+        ContextKeyProvision {
+            ty: "Bool".to_string(),
+            required: false,
+            writable: true,
+        },
+    );
+    adapter_provides.effects = HashSet::from(["set_context".to_string()]);
+
+    let runtime = RuntimeHandle::new(
+        graph.clone(),
+        catalog.clone(),
+        core_registries.clone(),
+        adapter_provides,
+    );
+    let runtime_provenance = compute_runtime_provenance(
+        RuntimeProvenanceScheme::Rpv1,
+        "once_cluster_capture",
+        graph.as_ref(),
+        catalog.as_ref(),
+    )
+    .expect("runtime provenance should compute");
+
+    let mut session = CapturingSession::new(
+        GraphId::new("once_cluster_capture"),
+        Constraints::default(),
+        CapturingLog::new(),
+        runtime.clone(),
+        runtime_provenance,
+    );
+
+    session.on_event(ExternalEvent::mechanical(
+        EventId::new("once_cluster_event"),
+        ExternalEventKind::Command,
+    ));
+
+    let bundle = session.into_bundle();
+    assert_eq!(bundle.decisions.len(), 1, "one decision should be captured");
+
+    let captured_effects = bundle.decisions[0]
+        .effects
+        .as_ref()
+        .expect("effect-aware capture must store effects");
+    assert_eq!(captured_effects.len(), 1, "one effect expected");
+    assert_eq!(captured_effects[0].effect.kind, "set_context");
+    assert_eq!(captured_effects[0].effect.writes.len(), 1);
+    assert_eq!(captured_effects[0].effect.writes[0].key, "once_state");
+    assert_eq!(
+        captured_effects[0].effect.writes[0].value,
+        ergo_runtime::common::Value::Bool(true)
     );
     assert!(
         !captured_effects[0].effect_hash.is_empty(),

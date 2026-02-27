@@ -4417,6 +4417,314 @@ mod tests {
         );
     }
 
+    fn once_cluster_definition() -> ClusterDefinition {
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "state_source".to_string(),
+            NodeInstance {
+                id: "state_source".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "context_bool_source".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "key".to_string(),
+                    ParameterBinding::Exposed {
+                        parent_param: "state_key".to_string(),
+                    },
+                )]),
+            },
+        );
+        nodes.insert(
+            "not_state".to_string(),
+            NodeInstance {
+                id: "not_state".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "not".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+        nodes.insert(
+            "gate".to_string(),
+            NodeInstance {
+                id: "gate".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "emit_if_event_and_true".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+        nodes.insert(
+            "true_value".to_string(),
+            NodeInstance {
+                id: "true_value".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "boolean_source".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "value".to_string(),
+                    ParameterBinding::Literal {
+                        value: ParameterValue::Bool(true),
+                    },
+                )]),
+            },
+        );
+        nodes.insert(
+            "set_state".to_string(),
+            NodeInstance {
+                id: "set_state".to_string(),
+                kind: NodeKind::Impl {
+                    impl_id: "context_set_bool".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "key".to_string(),
+                    ParameterBinding::Exposed {
+                        parent_param: "state_key".to_string(),
+                    },
+                )]),
+            },
+        );
+
+        ClusterDefinition {
+            id: "once_cluster".to_string(),
+            version: "0.1.0".to_string(),
+            nodes,
+            edges: vec![
+                Edge {
+                    from: OutputRef {
+                        node_id: "incoming_event".to_string(),
+                        port_name: "event".to_string(),
+                    },
+                    to: InputRef {
+                        node_id: "gate".to_string(),
+                        port_name: "event".to_string(),
+                    },
+                },
+                Edge {
+                    from: OutputRef {
+                        node_id: "state_source".to_string(),
+                        port_name: "value".to_string(),
+                    },
+                    to: InputRef {
+                        node_id: "not_state".to_string(),
+                        port_name: "value".to_string(),
+                    },
+                },
+                Edge {
+                    from: OutputRef {
+                        node_id: "not_state".to_string(),
+                        port_name: "result".to_string(),
+                    },
+                    to: InputRef {
+                        node_id: "gate".to_string(),
+                        port_name: "condition".to_string(),
+                    },
+                },
+                Edge {
+                    from: OutputRef {
+                        node_id: "gate".to_string(),
+                        port_name: "event".to_string(),
+                    },
+                    to: InputRef {
+                        node_id: "set_state".to_string(),
+                        port_name: "event".to_string(),
+                    },
+                },
+                Edge {
+                    from: OutputRef {
+                        node_id: "true_value".to_string(),
+                        port_name: "value".to_string(),
+                    },
+                    to: InputRef {
+                        node_id: "set_state".to_string(),
+                        port_name: "value".to_string(),
+                    },
+                },
+            ],
+            input_ports: vec![InputPortSpec {
+                name: "event".to_string(),
+                maps_to: GraphInputPlaceholder {
+                    name: "incoming_event".to_string(),
+                    ty: ValueType::Event,
+                    required: true,
+                },
+            }],
+            output_ports: vec![OutputPortSpec {
+                name: "event".to_string(),
+                maps_to: OutputRef {
+                    node_id: "gate".to_string(),
+                    port_name: "event".to_string(),
+                },
+            }],
+            parameters: vec![ParameterSpec {
+                name: "state_key".to_string(),
+                ty: ParameterType::String,
+                default: Some(ParameterDefault::DeriveKey {
+                    slot_name: "has_fired".to_string(),
+                }),
+                required: false,
+            }],
+            declared_signature: None,
+        }
+    }
+
+    #[test]
+    fn once_cluster_expands_with_unique_derived_keys_per_instance() {
+        let once = once_cluster_definition();
+
+        let mut root_nodes = HashMap::new();
+        root_nodes.insert(
+            "once_a".to_string(),
+            NodeInstance {
+                id: "once_a".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "once_cluster".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+        root_nodes.insert(
+            "once_b".to_string(),
+            NodeInstance {
+                id: "once_b".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "once_cluster".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameter_bindings: HashMap::new(),
+            },
+        );
+
+        let root = ClusterDefinition {
+            id: "root".to_string(),
+            version: "0.1.0".to_string(),
+            nodes: root_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: vec![OutputPortSpec {
+                name: "out".to_string(),
+                maps_to: OutputRef {
+                    node_id: "once_a".to_string(),
+                    port_name: "event".to_string(),
+                },
+            }],
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new().with_cluster(once);
+        let catalog = TestCatalog::default();
+        let expanded = expand(&root, &loader, &catalog).unwrap();
+
+        assert_eq!(expanded.nodes.len(), 10);
+        assert!(
+            expanded
+                .nodes
+                .values()
+                .all(|node| node.implementation.impl_id != "once_cluster"),
+            "clusters must compile away to primitive nodes only"
+        );
+
+        let mut keys = expanded
+            .nodes
+            .values()
+            .filter(|node| node.implementation.impl_id == "context_set_bool")
+            .map(|node| {
+                node.parameters
+                    .get("key")
+                    .expect("context_set_bool must have resolved key parameter")
+            })
+            .map(|value| match value {
+                ParameterValue::String(s) => s.clone(),
+                _ => panic!("expected String key parameter"),
+            })
+            .collect::<Vec<_>>();
+
+        keys.sort();
+        keys.dedup();
+        assert_eq!(keys.len(), 2, "each instance must derive a unique key");
+        assert!(
+            keys.iter().all(|key| key.starts_with("__ergo/")),
+            "derived keys must use __ergo namespace"
+        );
+
+        let mapped = expanded
+            .boundary_outputs
+            .first()
+            .expect("root output should exist");
+        let output_node = expanded
+            .nodes
+            .get(&mapped.maps_to.node_id)
+            .expect("mapped output node should exist");
+        assert_eq!(output_node.implementation.impl_id, "emit_if_event_and_true");
+    }
+
+    #[test]
+    fn once_cluster_explicit_state_key_binding_overrides_derive_key() {
+        let once = once_cluster_definition();
+
+        let mut root_nodes = HashMap::new();
+        root_nodes.insert(
+            "once".to_string(),
+            NodeInstance {
+                id: "once".to_string(),
+                kind: NodeKind::Cluster {
+                    cluster_id: "once_cluster".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameter_bindings: HashMap::from([(
+                    "state_key".to_string(),
+                    ParameterBinding::Literal {
+                        value: ParameterValue::String("explicit_once_key".to_string()),
+                    },
+                )]),
+            },
+        );
+
+        let root = ClusterDefinition {
+            id: "root".to_string(),
+            version: "0.1.0".to_string(),
+            nodes: root_nodes,
+            edges: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: empty_parameters(),
+            declared_signature: None,
+        };
+
+        let loader = TestLoader::new().with_cluster(once);
+        let catalog = TestCatalog::default();
+        let expanded = expand(&root, &loader, &catalog).unwrap();
+
+        let mut found_state_sources = 0usize;
+        let mut found_set_actions = 0usize;
+        for node in expanded.nodes.values() {
+            if node.implementation.impl_id == "context_bool_source" {
+                found_state_sources += 1;
+                assert_eq!(
+                    node.parameters.get("key"),
+                    Some(&ParameterValue::String("explicit_once_key".to_string()))
+                );
+            }
+            if node.implementation.impl_id == "context_set_bool" {
+                found_set_actions += 1;
+                assert_eq!(
+                    node.parameters.get("key"),
+                    Some(&ParameterValue::String("explicit_once_key".to_string()))
+                );
+            }
+        }
+
+        assert_eq!(found_state_sources, 1);
+        assert_eq!(found_set_actions, 1);
+    }
+
     // ---- Validation tests (defense in depth) ----
 
     #[test]

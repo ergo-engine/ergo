@@ -18,11 +18,12 @@ use crate::compute::{
     ComputePrimitive, ComputePrimitiveManifest, PrimitiveRegistry as ComputeRegistry,
 };
 use crate::source::{
-    BooleanSource, ContextNumberSource, NumberSource, SourcePrimitive, SourceRegistry,
-    SourceValidationError, StringSource,
+    BooleanSource, ContextBoolSource, ContextNumberSource, NumberSource, SourcePrimitive,
+    SourceRegistry, SourceValidationError, StringSource,
 };
 use crate::trigger::{
-    EmitIfTrue, TriggerPrimitive, TriggerRegistry, TriggerValidationError, TriggerValueType,
+    EmitIfEventAndTrue, EmitIfTrue, TriggerPrimitive, TriggerRegistry, TriggerValidationError,
+    TriggerValueType,
 };
 
 #[derive(Debug)]
@@ -60,6 +61,7 @@ fn core_source_primitives() -> Vec<Box<dyn SourcePrimitive>> {
     vec![
         Box::new(NumberSource::new()),
         Box::new(ContextNumberSource::new()),
+        Box::new(ContextBoolSource::new()),
         Box::new(BooleanSource::new()),
         Box::new(StringSource::new()),
     ]
@@ -93,7 +95,10 @@ fn core_compute_primitives() -> Vec<Box<dyn ComputePrimitive>> {
 }
 
 fn core_trigger_primitives() -> Vec<Box<dyn TriggerPrimitive>> {
-    vec![Box::new(EmitIfTrue::new())]
+    vec![
+        Box::new(EmitIfTrue::new()),
+        Box::new(EmitIfEventAndTrue::new()),
+    ]
 }
 
 fn core_action_primitives() -> Vec<Box<dyn ActionPrimitive>> {
