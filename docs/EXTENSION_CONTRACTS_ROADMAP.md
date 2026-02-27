@@ -1446,9 +1446,9 @@ fn adp_5_duplicate_context_key_rejected() {
 **Kind:** Source (no inputs, reads ExecutionContext)
 
 These are a family of implementations, one per supported type:
-- `context_number_source` (replaces existing hardcoded implementation, bumps to 0.2.0)
-- `context_bool_source`
-- `context_string_source`
+- `context_number_source@0.1.0` (parameterized key, default `"x"`)
+- `context_bool_source@0.1.0`
+- `context_string_source` (future extension)
 
 A context source reads a value from the execution context — a key-value map provided by the adapter at each event. The source does not know or care whether the adapter populated that key from external data (market feed, user command) or from a prior episode's `context_set_*` write. Both paths are identical from the source's perspective.
 
@@ -1456,7 +1456,7 @@ A context source reads a value from the execution context — a key-value map pr
 ```yaml
 kind: source
 id: context_number_source
-version: 0.2.0
+version: 0.1.0
 
 inputs: []                    # Sources have no inputs
 
@@ -1467,10 +1467,7 @@ outputs:
 parameters:
   - name: key
     type: String
-    required: true
-  - name: default
-    type: Number
-    required: true
+    default: "x"
 
 execution:
   deterministic: true
@@ -1484,15 +1481,15 @@ side_effects: false
 requires:
   context:
     - name: $key              # Bound at instantiation from parameter
-      type: Number
-      required: false         # Key may be absent (default used)
+      type: Number            # String parameter resolves concrete key name
+      required: false
 ```
 
-**Note:** `requires.context[].name` is bound from the `key` parameter at instantiation time. The `required: false` allows the key to be absent, in which case `default` is used.
+**Note:** `requires.context[].name` is bound from the `key` parameter at instantiation time. Since `required: false`, the source falls back when the resolved key is absent.
 
 **Semantics:**
 1. If `ExecutionContext[key]` exists and is Number → output it
-2. Else → output `default`
+2. Else → output `0.0`
 
 **Runtime invariants:**
 - Deterministic given ExecutionContext snapshot
@@ -1562,29 +1559,25 @@ effects:
 3. Next episode's context snapshot reflects the write
 
 **Runtime invariants:**
-- Effect emitted to adapter only; supervisor never sees it
+- Runtime emits deterministic effect payloads; supervisor captures those payloads for replay integrity
 - Deterministic command emission given inputs
 
 ### 8.3 Implementation Deliverables
 
-- [ ] `context_number_source@0.2.0`, `context_bool_source@0.1.0`, `context_string_source@0.1.0` in `crates/runtime/src/source/implementations/`
-- [ ] Remove `context_number_source@0.1.0` (hardcoded `"x"`)
-- [ ] `context_set_number@0.1.0`, `context_set_bool@0.1.0`, `context_set_string@0.1.0` in `crates/runtime/src/action/implementations/`
-- [ ] `$key` parameter resolution in manifest/composition validation
-- [ ] Effect routing: runtime collects effects → adapter applies
-- [ ] Tests: source reads default, source reads existing, source reads parameterized key, action emits effect (per type)
-- [ ] Tests: composition validation catches missing adapter provision for resolved `$key`
+- [x] `context_number_source@0.1.0` parameterized with `key` default `"x"` in `crates/runtime/src/source/implementations/context_number/`
+- [x] `context_bool_source@0.1.0` in `crates/runtime/src/source/implementations/context_bool/`
+- [ ] `context_string_source@0.1.0` (deferred)
+- [x] `context_set_number@0.1.0`, `context_set_bool@0.1.0`, `context_set_string@0.1.0` in `crates/runtime/src/action/implementations/`
+- [x] `$key` parameter resolution in manifest/composition validation
+- [x] Effect routing/capture/replay integrity tests with real stdlib implementations
+- [x] Tests: source default + key override + missing/wrong-type fallback, action effect emission (per type), and replay smoke
 
-### 8.4 Breaking Change Migration
+### 8.4 Compatibility Note
 
-`context_number_source` bumps from 0.1.0 to 0.2.0. The hardcoded key `"x"` is removed. The `key` and `default` parameters are now required. Existing graphs using `context_number_source@0.1.0` without parameters will fail semver resolution against `0.2.0` and must be updated.
-
-**Files requiring migration (same PR as source implementations):**
-- [ ] `dual_ma_crossover.yaml:7` — bump version, add `params: { key: "x", default: 0.0 }`
-- [ ] `sandbox/trading_vertical/price_breakout.yaml:7` — bump version, add `params: { key: "x", default: 0.0 }`
-- [ ] `docs/STABLE/YAML_GRAPH_FORMAT.md:54` — update example
-- [ ] `crates/ergo-cli/src/graph_yaml.rs:2240` — update inline test YAML
-- [ ] `crates/supervisor/src/demo/demo_1.rs:20` — remove `CONTEXT_NUMBER_KEY` constant, update graph builder
+`context_number_source` remains `0.1.0` and is backward compatible:
+- Omitting `key` still reads `"x"` via manifest default.
+- Existing graphs that relied on the old hardcoded key continue to work.
+- Graphs may now override `key` to read a different context value.
 
 ---
 
@@ -1634,82 +1627,55 @@ OnceCluster:
         derive_key: has_fired  # Auto-unique per instantiation path
 
   input_ports:
-    - name: signal
-      type: Bool           # Incoming signal to gate
+    - name: event
+      type: Event          # Incoming event gate
 
   output_ports:
-    - name: outcome
+    - name: event
       type: Event
-      maps_to: ack.outcome
+      maps_to: gate.event
 
   nodes:
-    has_fired_source:
+    state_source:
       impl: context_bool_source@0.1.0
       params:
         key: $state_key
-        default: false
 
-    not_fired:
-      impl: not@0.1.0       # Negate: true when has NOT fired
-      # inputs wired below
-
-    should_fire:
-      impl: and@0.1.0       # AND: signal is active AND has not fired
-      # inputs wired below
+    not_state:
+      impl: not@0.1.0
 
     gate:
-      impl: emit_if_true@0.1.0
-      # inputs wired below
+      impl: emit_if_event_and_true@0.1.0
 
-    fired_value:
-      impl: bool_source@0.1.0
+    true_value:
+      impl: boolean_source@0.1.0
       params:
-        value: true          # Constant: "I have fired"
+        value: true
 
-    ack:
-      impl: ack_action@0.1.0
-      params:
-        accept: true
-
-    set_fired:
+    set_state:
       impl: context_set_bool@0.1.0
       params:
         key: $state_key
 
   edges:
-    # State read → negate
-    - from: has_fired_source.value
-      to: not_fired.a
-
-    # Incoming signal + not-fired → AND gate
-    - from: $signal                    # Cluster input port
-      to: should_fire.a
-    - from: not_fired.value
-      to: should_fire.b
-
-    # AND result → trigger
-    - from: should_fire.value
-      to: gate.value
-
-    # Trigger gates both actions
+    - from: $event
+      to: gate.event
+    - from: state_source.value
+      to: not_state.value
+    - from: not_state.result
+      to: gate.condition
     - from: gate.event
-      to: ack.event
-    - from: gate.event
-      to: set_fired.event
-
-    # Constant true feeds the write action
-    - from: fired_value.value
-      to: set_fired.value
+      to: set_state.event
+    - from: true_value.value
+      to: set_state.value
 ```
 
 **Data flow:**
-1. `has_fired_source` reads `$state_key` from context (default: `false`)
-2. `not_fired` inverts it — `true` on first episode, `false` after firing
-3. `should_fire` ANDs the incoming signal with not-fired
-4. `gate` emits event only when both conditions hold
-5. `ack` acknowledges the event (output exposed as cluster outcome)
-6. `set_fired` writes `true` to `$state_key` — adapter persists it
-7. Next episode: `has_fired_source` reads `true`, `not_fired` outputs `false`, gate stays closed
+1. `state_source` reads `$state_key` from context (`false` fallback when missing/wrong type)
+2. `not_state` inverts it — `true` before first fire, `false` after firing
+3. `gate` (`emit_if_event_and_true`) forwards the incoming event only when `not_state` is `true`
+4. Forwarded event writes `true` through `context_set_bool` to `$state_key`
+5. Next episode: `state_source` reads `true`, `not_state` is `false`, gate suppresses output
 
 ### 9.3 Collision Rules
 
@@ -1721,9 +1687,9 @@ OnceCluster:
 
 ### 9.4 Deliverables
 
-- [ ] `derive_key` function in cluster expansion
-- [ ] Documentation in CLUSTER_SPEC.md
-- [ ] Test: same cluster twice → different keys
+- [x] `derive_key` function in cluster expansion
+- [x] Documentation in CLUSTER_SPEC.md
+- [x] Test: same cluster twice → different keys
 
 ---
 
@@ -1780,9 +1746,9 @@ fn golden_spike_once_cluster_state_threading() {
 
 ### 10.3 Deliverables
 
-- [ ] Golden spike test implemented
-- [ ] Documents end-to-end state threading flow
-- [ ] Serves as reference for cluster authors
+- [x] Golden spike coverage implemented (cluster expansion + runtime behavior + supervisor replay)
+- [x] Documents end-to-end state threading flow
+- [x] Serves as reference for cluster authors
 
 ---
 

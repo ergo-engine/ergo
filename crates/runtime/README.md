@@ -33,14 +33,15 @@ Sources may read values from `ExecutionContext` via the `value(key)` method. The
 | Condition | Behavior |
 |-----------|----------|
 | Key exists, correct type | Returns value |
-| Key missing | Returns type-specific default (0.0 for numbers) |
-| Key exists, wrong type | Returns type-specific default (0.0 for numbers) |
+| Key missing | Returns type-specific default (`0.0` for numbers, `false` for bools) |
+| Key exists, wrong type | Returns type-specific default (`0.0` for numbers, `false` for bools) |
 
 ### Supported Types
 
 | Type | Default | Access Pattern |
 |------|---------|----------------|
-| Number (f64) | 0.0 | `ctx.value(key).and_then(\|v\| v.as_number())` |
+| Number (f64) | `0.0` | `ctx.value(key).and_then(\|v\| v.as_number())` |
+| Bool | `false` | `ctx.value(key).and_then(\|v\| v.as_bool())` |
 
 ### Payload Hydration Path
 
@@ -55,18 +56,19 @@ ExternalEvent::with_payload()
 ### Key Naming
 
 Context keys are strings. Current implementations:
-- `context_number_source`: reads key `"x"`
+- `context_number_source`: reads key from parameter `key` (default `"x"`)
+- `context_bool_source`: reads key from parameter `key` (default `"x"`)
 
 ### Determinism
 
 All default behaviors are deterministic. Missing or malformed payload data produces consistent outputs across replay.
 
-## Core stdlib wiring (30 implementations)
+## Core stdlib wiring (34 implementations)
 
-- **Sources (4):** `number_source`, `boolean_source`, `string_source`, `context_number_source`
-- **Computes (23):** `const_number`, `const_bool`, `add`, `subtract`, `multiply`, `divide`, `safe_divide`, `abs`, `negate`, `gt`, `gte`, `lt`, `lte`, `eq`, `neq`, `min`, `max`, `and`, `or`, `not`, `select`, `select_bool`
-- **Trigger (1):** `emit_if_true`
-- **Actions (2):** `ack_action`, `annotate_action`
+- **Sources (5):** `number_source`, `boolean_source`, `string_source`, `context_number_source`, `context_bool_source`
+- **Computes (22):** `const_number`, `const_bool`, `add`, `subtract`, `multiply`, `divide`, `safe_divide`, `abs`, `negate`, `gt`, `gte`, `lt`, `lte`, `eq`, `neq`, `min`, `max`, `and`, `or`, `not`, `select`, `select_bool`
+- **Trigger (2):** `emit_if_true`, `emit_if_event_and_true`
+- **Actions (5):** `ack_action`, `annotate_action`, `context_set_number`, `context_set_bool`, `context_set_string`
 
 Helpers:
 - `catalog::build_core_catalog()` builds a `PrimitiveCatalog` for validation/inference

@@ -316,6 +316,42 @@ side_effects: false
 This source reads the context key named by parameter `key` (default `"x"`). Since
 `required: false`, the source uses a default value when the resolved key is absent.
 
+### Source with bool context requirements
+
+```yaml
+kind: source
+id: context_bool_source
+version: 0.1.0
+
+outputs:
+  - name: value
+    type: Bool
+
+parameters:
+  - name: key
+    type: string
+    default: "x"
+
+requires:
+  context:
+    - name: $key
+      type: Bool
+      required: false
+
+execution:
+  cadence: continuous
+  deterministic: true
+
+state:
+  allowed: false
+
+side_effects: false
+```
+
+This source reads the context key named by parameter `key` (default `"x"`). Since
+`required: false`, missing keys and wrong-type values resolve to the source default
+(`false`).
+
 ### Source without context requirements
 
 ```yaml

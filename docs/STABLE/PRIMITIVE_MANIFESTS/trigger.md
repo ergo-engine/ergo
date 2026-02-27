@@ -148,6 +148,39 @@ TRG-STATE-1 (PHASE_INVARIANTS.md) formalizes this requirement.
 side_effects: false
 ```
 
+### 6.2 Event + Bool Gated Trigger
+
+```yaml
+kind: trigger
+id: emit_if_event_and_true
+version: 0.1.0
+
+inputs:
+  - name: event
+    type: event
+    required: true
+    cardinality: single
+  - name: condition
+    type: bool
+    required: true
+    cardinality: single
+
+outputs:
+  - name: event
+    type: event
+
+parameters: []
+
+execution:
+  cadence: continuous
+  deterministic: true
+
+state:
+  allowed: false
+
+side_effects: false
+```
+
 Rules:
 - Triggers may not perform I/O or access external state
 - If it touches the world, it is not a trigger
