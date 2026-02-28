@@ -390,5 +390,6 @@ pub trait TriggerPrimitive: Send + Sync {
     ) -> HashMap<String, TriggerValue>;
 }
 
+pub use implementations::emit_if_event_and_true::EmitIfEventAndTrue;
 pub use implementations::emit_if_true::EmitIfTrue;
 pub use registry::TriggerRegistry;

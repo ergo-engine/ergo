@@ -1016,8 +1016,8 @@ const COMPOSITION_RULES: &[RuleDefinition] = &[
     RuleDefinition {
         id: "COMP-9",
         phase: Phase::Composition,
-        summary: "Action input from Trigger only",
-        predicate: "upstream.kind == \"trigger\"",
+        summary: "Action inputs follow gate/payload split",
+        predicate: "∀ action input i: (i.type == event => upstream(i).kind == \"trigger\") ∧ (i.type != event => upstream(i).kind ∈ {\"source\",\"compute\"})",
         doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-9",
         status: RuleStatus::Alias { enforced_by: "V.2" },
     },
@@ -1180,8 +1180,8 @@ const CLUSTER_RULES: &[RuleDefinition] = &[
     RuleDefinition {
         id: "V.2",
         phase: Phase::Composition,
-        summary: "Edges satisfy wiring matrix",
-        predicate: "wiring_allowed(from.kind, to.kind)",
+        summary: "Edges satisfy wiring matrix (including Action gate/payload input refinement)",
+        predicate: "wiring_allowed(from.kind, to.kind) OR (to.kind == action AND to.input.type ∈ {number,bool,string} AND from.kind ∈ {source,compute})",
         doc_anchor: "STABLE/CLUSTER_SPEC.md#V.2",
         status: RuleStatus::Enforced,
     },

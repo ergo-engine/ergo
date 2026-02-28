@@ -209,14 +209,14 @@ pub fn validate_source_adapter_composition(
             }
         })?;
 
-        if !req.required {
-            continue;
-        }
-
-        // COMP-1: Check key exists
         let provided = match adapter.context.get(&resolved_name) {
             Some(p) => p,
             None => {
+                if !req.required {
+                    continue;
+                }
+
+                // COMP-1: Check key exists (required only)
                 return Err(CompositionError::MissingContextKey {
                     key: resolved_name,
                     index,

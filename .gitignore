@@ -2,3 +2,5 @@
 **/target
 Cargo.lock
 .DS_Store
+tools/ergo-mcp/
+tools/ralph/

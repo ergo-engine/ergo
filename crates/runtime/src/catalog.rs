@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::action::{
     AckAction, ActionPrimitive, ActionRegistry, ActionValidationError, ActionValueType,
-    AnnotateAction,
+    AnnotateAction, ContextSetBoolAction, ContextSetNumberAction, ContextSetStringAction,
 };
 use crate::cluster::{
     Cardinality, InputMetadata, OutputMetadata, ParameterMetadata, ParameterType, ParameterValue,
@@ -18,11 +18,12 @@ use crate::compute::{
     ComputePrimitive, ComputePrimitiveManifest, PrimitiveRegistry as ComputeRegistry,
 };
 use crate::source::{
-    BooleanSource, ContextNumberSource, NumberSource, SourcePrimitive, SourceRegistry,
-    SourceValidationError, StringSource,
+    BooleanSource, ContextBoolSource, ContextNumberSource, NumberSource, SourcePrimitive,
+    SourceRegistry, SourceValidationError, StringSource,
 };
 use crate::trigger::{
-    EmitIfTrue, TriggerPrimitive, TriggerRegistry, TriggerValidationError, TriggerValueType,
+    EmitIfEventAndTrue, EmitIfTrue, TriggerPrimitive, TriggerRegistry, TriggerValidationError,
+    TriggerValueType,
 };
 
 #[derive(Debug)]
@@ -60,6 +61,7 @@ fn core_source_primitives() -> Vec<Box<dyn SourcePrimitive>> {
     vec![
         Box::new(NumberSource::new()),
         Box::new(ContextNumberSource::new()),
+        Box::new(ContextBoolSource::new()),
         Box::new(BooleanSource::new()),
         Box::new(StringSource::new()),
     ]
@@ -93,11 +95,20 @@ fn core_compute_primitives() -> Vec<Box<dyn ComputePrimitive>> {
 }
 
 fn core_trigger_primitives() -> Vec<Box<dyn TriggerPrimitive>> {
-    vec![Box::new(EmitIfTrue::new())]
+    vec![
+        Box::new(EmitIfTrue::new()),
+        Box::new(EmitIfEventAndTrue::new()),
+    ]
 }
 
 fn core_action_primitives() -> Vec<Box<dyn ActionPrimitive>> {
-    vec![Box::new(AckAction::new()), Box::new(AnnotateAction::new())]
+    vec![
+        Box::new(AckAction::new()),
+        Box::new(AnnotateAction::new()),
+        Box::new(ContextSetNumberAction::new()),
+        Box::new(ContextSetBoolAction::new()),
+        Box::new(ContextSetStringAction::new()),
+    ]
 }
 
 pub fn build_core() -> Result<(CoreRegistries, CorePrimitiveCatalog), CoreRegistrationError> {

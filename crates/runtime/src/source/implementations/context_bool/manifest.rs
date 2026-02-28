@@ -4,15 +4,15 @@ use crate::source::{
     SourceKind, SourcePrimitiveManifest, SourceRequires, StateSpec,
 };
 
-pub fn context_number_source_manifest() -> SourcePrimitiveManifest {
+pub fn context_bool_source_manifest() -> SourcePrimitiveManifest {
     SourcePrimitiveManifest {
-        id: "context_number_source".to_string(),
+        id: "context_bool_source".to_string(),
         version: "0.1.0".to_string(),
         kind: SourceKind::Source,
         inputs: vec![],
         outputs: vec![OutputSpec {
             name: "value".to_string(),
-            value_type: ValueType::Number,
+            value_type: ValueType::Bool,
         }],
         parameters: vec![ParameterSpec {
             name: "key".to_string(),
@@ -23,7 +23,7 @@ pub fn context_number_source_manifest() -> SourcePrimitiveManifest {
         requires: SourceRequires {
             context: vec![ContextRequirement {
                 name: "$key".to_string(),
-                ty: ValueType::Number,
+                ty: ValueType::Bool,
                 required: false,
             }],
         },

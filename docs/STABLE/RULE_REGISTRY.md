@@ -151,7 +151,7 @@ Primary spec: `STABLE/PRIMITIVE_MANIFESTS (distributed)`
 | COMP-6 | Composition | alias -> V.4 | Output type equals downstream input type | `compute.output.type == downstream.input.type` | `STABLE/PRIMITIVE_MANIFESTS/compute.md#COMP-6` |
 | COMP-7 | Composition | alias -> V.2 | Trigger input from Compute or Trigger | `upstream.kind ∈ {"compute", "trigger"}` | `STABLE/PRIMITIVE_MANIFESTS/trigger.md#COMP-7` |
 | COMP-8 | Composition | alias -> V.2 | Trigger output to Action or Trigger | `downstream.kind ∈ {"action", "trigger"}` | `STABLE/PRIMITIVE_MANIFESTS/trigger.md#COMP-8` |
-| COMP-9 | Composition | alias -> V.2 | Action input from Trigger only | `upstream.kind == "trigger"` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-9` |
+| COMP-9 | Composition | alias -> V.2 | Action inputs follow gate/payload split | `∀ action input i: (i.type == event => upstream(i).kind == "trigger") ∧ (i.type != event => upstream(i).kind ∈ {"source","compute"})` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-9` |
 | COMP-10 | Composition | alias -> V.2 | Action output not wireable | `downstream.len == 0` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-10` |
 | COMP-11 | Composition | enforced | Action writes target provided keys | `effects.writes.names ⊆ adapter.context_keys.names` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-11` |
 | COMP-12 | Composition | enforced | Action writes only writable keys | `∀n ∈ writes: adapter.key[n].writable == true` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-12` |
@@ -178,7 +178,7 @@ Primary spec: `STABLE/CLUSTER_SPEC.md`
 | D.11 | Composition | enforced | Declared wireability <= inferred | `declared.wireable <= inferred.wireable` | `STABLE/CLUSTER_SPEC.md#D.11` |
 | E.3 | Composition | enforced | ExternalInput not an edge sink | `no ExpandedEndpoint::ExternalInput in expanded.edges` | `STABLE/CLUSTER_SPEC.md#E.3` |
 | V.1 | Composition | enforced | No cycles in graph | `topological_sort succeeds` | `STABLE/CLUSTER_SPEC.md#V.1` |
-| V.2 | Composition | enforced | Edges satisfy wiring matrix | `wiring_allowed(from.kind, to.kind)` | `STABLE/CLUSTER_SPEC.md#V.2` |
+| V.2 | Composition | enforced | Edges satisfy wiring matrix (including Action gate/payload input refinement) | `wiring_allowed(from.kind, to.kind) OR (to.kind == action AND to.input.type ∈ {number,bool,string} AND from.kind ∈ {source,compute})` | `STABLE/CLUSTER_SPEC.md#V.2` |
 | V.3 | Composition | enforced | Required inputs connected | `all required inputs have inbound edge` | `STABLE/CLUSTER_SPEC.md#V.3` |
 | V.4 | Composition | enforced | Type constraints satisfied at edges | `edge output type == input expected type` | `STABLE/CLUSTER_SPEC.md#V.4` |
 | V.5 | Composition | enforced | Actions gated by triggers | `every action has inbound trigger event edge` | `STABLE/CLUSTER_SPEC.md#V.5` |

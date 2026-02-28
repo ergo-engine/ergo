@@ -160,22 +160,26 @@ fn enforce_wiring_matrix(
     edges: &[ValidatedEdge],
 ) -> Result<(), ValidationError> {
     for edge in edges {
-        let Endpoint::NodePort { node_id: from, .. } = &edge.from;
-        let Endpoint::NodePort { node_id: to, .. } = &edge.to;
+        let Endpoint::NodePort {
+            node_id: from,
+            port_name: _from_port,
+        } = &edge.from;
+        let Endpoint::NodePort {
+            node_id: to,
+            port_name: to_port,
+        } = &edge.to;
 
-        let from_kind = &nodes
+        let from_node = nodes
             .get(from)
-            .ok_or_else(|| ValidationError::UnknownNode(from.clone()))?
-            .kind;
-        let to_kind = &nodes
+            .ok_or_else(|| ValidationError::UnknownNode(from.clone()))?;
+        let to_node = nodes
             .get(to)
-            .ok_or_else(|| ValidationError::UnknownNode(to.clone()))?
-            .kind;
+            .ok_or_else(|| ValidationError::UnknownNode(to.clone()))?;
 
-        if !wiring_allowed(from_kind, to_kind) {
+        if !wiring_allowed_for_edge(from_node, to_node, to_port)? {
             return Err(ValidationError::InvalidEdgeKind {
-                from: from_kind.clone(),
-                to: to_kind.clone(),
+                from: from_node.kind.clone(),
+                to: to_node.kind.clone(),
             });
         }
     }
@@ -335,6 +339,43 @@ fn wiring_allowed(from: &PrimitiveKind, to: &PrimitiveKind) -> bool {
 
         _ => false,
     }
+}
+
+fn wiring_allowed_for_edge(
+    from_node: &ValidatedNode,
+    to_node: &ValidatedNode,
+    to_port: &str,
+) -> Result<bool, ValidationError> {
+    if wiring_allowed(&from_node.kind, &to_node.kind) {
+        return Ok(true);
+    }
+
+    // Payload values may flow into actions from Source/Compute, but only into
+    // scalar action inputs. Trigger event inputs remain the causal gate.
+    if matches!(
+        from_node.kind,
+        PrimitiveKind::Source | PrimitiveKind::Compute
+    ) && to_node.kind == PrimitiveKind::Action
+    {
+        let target_input = to_node
+            .inputs
+            .iter()
+            .find(|input| input.name == to_port)
+            .ok_or_else(|| ValidationError::MissingInputMetadata {
+                node: to_node.runtime_id.clone(),
+                input: to_port.to_string(),
+            })?;
+
+        if matches!(
+            target_input.value_type,
+            ValueType::Number | ValueType::Bool | ValueType::String
+        ) {
+            // Leave exact type compatibility (including source/compute output type) to V.4.
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 /// V.MULTI-EDGE: Reject multiple edges targeting the same input port.

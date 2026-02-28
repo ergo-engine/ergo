@@ -24,16 +24,22 @@ The system has exactly four ontological primitives. This set is closed.
 ```
 Source  → Compute   : allowed
 Source  → Trigger   : forbidden (v0)
+Source  → Action    : allowed for scalar payload inputs only (trigger event gate still required)
 Compute → Compute   : allowed
 Compute → Trigger   : allowed
-Compute → Action    : forbidden (must be mediated by Trigger)
+Compute → Action    : allowed for scalar payload inputs only (trigger event gate still required)
 Trigger → Trigger   : allowed
-Trigger → Action    : allowed
+Trigger → Action    : allowed (event gating)
 Action  → *         : forbidden (terminal)
 *       → Source    : forbidden
 ```
 
 **Source:** [ontology.md](../FROZEN/ontology.md) §3
+
+**Pending freeze amendment note:** `FROZEN/ontology.md` still contains the legacy coarse row
+`Compute → Action : forbidden`. STABLE Action/Cluster contracts now refine Action inputs into
+Trigger-gated `event` inputs and scalar payload inputs from `Source`/`Compute` without
+changing primitive roles.
 
 ---
 

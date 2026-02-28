@@ -4,30 +4,30 @@ use crate::common::Value;
 use crate::runtime::ExecutionContext;
 use crate::source::{ParameterValue, SourcePrimitive, SourcePrimitiveManifest};
 
-use super::manifest::context_number_source_manifest;
+use super::manifest::context_bool_source_manifest;
 
 const DEFAULT_CONTEXT_KEY: &str = "x";
 const KEY_PARAMETER: &str = "key";
 
-pub struct ContextNumberSource {
+pub struct ContextBoolSource {
     manifest: SourcePrimitiveManifest,
 }
 
-impl ContextNumberSource {
+impl ContextBoolSource {
     pub fn new() -> Self {
         Self {
-            manifest: context_number_source_manifest(),
+            manifest: context_bool_source_manifest(),
         }
     }
 }
 
-impl Default for ContextNumberSource {
+impl Default for ContextBoolSource {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl SourcePrimitive for ContextNumberSource {
+impl SourcePrimitive for ContextBoolSource {
     fn manifest(&self) -> &SourcePrimitiveManifest {
         &self.manifest
     }
@@ -47,9 +47,9 @@ impl SourcePrimitive for ContextNumberSource {
 
         let value = ctx
             .value(context_key)
-            .and_then(|v| v.as_number())
-            .unwrap_or(0.0);
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
-        HashMap::from([("value".to_string(), Value::Number(value))])
+        HashMap::from([("value".to_string(), Value::Bool(value))])
     }
 }
