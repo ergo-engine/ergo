@@ -16,35 +16,24 @@ use crate::adapter_manifest_io::parse_adapter_manifest;
 use crate::error_format::{cli_error_from_error_info, render_cli_error, CliErrorInfo};
 use ergo_adapter::fixture;
 #[cfg(test)]
-use ergo_adapter::EventPayload;
+use ergo_adapter::EventId;
 use ergo_adapter::{
-    adapter_fingerprint, ensure_demo_sources_have_no_required_context, AdapterProvides, EventId,
-    ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
+    adapter_fingerprint, compile_event_binder, ensure_demo_sources_have_no_required_context,
+    AdapterProvides, EventTime, GraphId, RuntimeHandle,
 };
-#[cfg(test)]
-use ergo_runtime::action::ActionOutcome;
+use ergo_host::{
+    decision_counts, replay_bundle_strict, HostedAdapterConfig, HostedEvent, HostedReplayError,
+    HostedRunner,
+};
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
 use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceScheme};
 use ergo_supervisor::demo::demo_1;
-use ergo_supervisor::fixture_runner;
-use ergo_supervisor::replay::{
-    compare_decisions, replay_checked_strict, ReplayError, StrictReplayExpectations,
-};
+use ergo_supervisor::replay::{ReplayError, StrictReplayExpectations};
 use ergo_supervisor::{
-    write_capture_bundle, CaptureBundle, CaptureJsonStyle, CapturingSession, Constraints, Decision,
-    DecisionLog, DecisionLogEntry, NO_ADAPTER_PROVENANCE,
+    write_capture_bundle, CaptureBundle, CaptureJsonStyle, Constraints, NO_ADAPTER_PROVENANCE,
 };
-#[cfg(test)]
-use std::collections::HashMap;
 
 const DEMO_GRAPH_ID: &str = "demo_1";
-const DEFAULT_CAPTURE_PATH: &str = "target/demo-1-capture.json";
-
-struct NullLog;
-
-impl DecisionLog for NullLog {
-    fn log(&self, _entry: DecisionLogEntry) {}
-}
 
 fn main() {
     if let Err(message) = run() {
@@ -163,12 +152,6 @@ fn run() -> Result<(), String> {
             "run" => {
                 let target = args.next().ok_or_else(usage)?;
                 match target.as_str() {
-                    "demo-1" => {
-                        let rest: Vec<String> = args.collect();
-                        let run_opts = parse_run_artifact_options(&rest, "demo-1")?;
-                        run_demo_1(run_opts.pretty_capture, run_opts.capture_output.as_deref())
-                            .map(|_| ())
-                    }
                     "fixture" => Err(render_cli_error(
                         &CliErrorInfo::new(
                             "cli.command_removed",
@@ -445,12 +428,15 @@ fn load_bundle(path: &Path) -> Result<CaptureBundle, String> {
     })
 }
 
-fn run_demo_1(pretty_capture: bool, output_override: Option<&Path>) -> Result<PathBuf, String> {
+fn run_fixture(
+    path: &Path,
+    output_override: Option<&Path>,
+    pretty_capture: bool,
+) -> Result<PathBuf, String> {
     let graph = Arc::new(demo_1::build_demo_1_graph());
     let catalog = Arc::new(build_core_catalog());
     let core_registries =
         Arc::new(core_registries().map_err(|err| format!("core registries: {err:?}"))?);
-
     ensure_demo_sources_have_no_required_context(&graph, &catalog, &core_registries)?;
 
     let runtime = RuntimeHandle::new(
@@ -466,60 +452,72 @@ fn run_demo_1(pretty_capture: bool, output_override: Option<&Path>) -> Result<Pa
         catalog.as_ref(),
     )
     .map_err(|err| format!("runtime provenance compute failed: {err}"))?;
-    let mut session = CapturingSession::new_with_provenance(
+    let mut runner = HostedRunner::new(
         GraphId::new(DEMO_GRAPH_ID),
         Constraints::default(),
-        NullLog,
         runtime,
-        NO_ADAPTER_PROVENANCE.to_string(),
         runtime_provenance,
-    );
-
-    let events = [
-        ExternalEvent::mechanical(EventId::new("demo_evt_1"), ExternalEventKind::Command),
-        ExternalEvent::mechanical(EventId::new("demo_evt_2"), ExternalEventKind::Command),
-    ];
-
-    for event in events {
-        session.on_event(event);
-    }
-
-    let bundle = session.into_bundle();
-    let summary = demo_1::compute_summary(&graph, &catalog, &core_registries);
-
-    for record in &bundle.decisions {
-        println!(
-            "{}",
-            demo_1::format_episode_summary(record.episode_id, &record.event_id, &summary)
-        );
-    }
-
-    let artifact_path = output_override
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_CAPTURE_PATH));
-    let style = if pretty_capture {
-        CaptureJsonStyle::Pretty
-    } else {
-        CaptureJsonStyle::Compact
-    };
-    write_capture_bundle(&artifact_path, &bundle, style)?;
-
-    println!("capture artifact: {}", artifact_path.display());
-    Ok(artifact_path)
-}
-
-fn run_fixture(
-    path: &Path,
-    output_override: Option<&Path>,
-    pretty_capture: bool,
-) -> Result<PathBuf, String> {
-    let graph = Arc::new(demo_1::build_demo_1_graph());
-    let catalog = Arc::new(build_core_catalog());
-    let core_registries =
-        Arc::new(core_registries().map_err(|err| format!("core registries: {err:?}"))?);
+        None,
+    )
+    .map_err(|err| format!("failed to initialize hosted fixture runner: {err}"))?;
 
     let items =
-        fixture::parse_fixture(path).map_err(|err| format!("Failed to parse fixture: {err}"))?;
+        fixture::parse_fixture(path).map_err(|err| format!("failed to parse fixture: {err}"))?;
+    let mut episodes: Vec<(String, usize)> = Vec::new();
+    let mut current_episode: Option<usize> = None;
+    let mut event_counter = 0usize;
+    for item in items {
+        match item {
+            fixture::FixtureItem::EpisodeStart { label } => {
+                episodes.push((label, 0));
+                current_episode = Some(episodes.len() - 1);
+            }
+            fixture::FixtureItem::Event {
+                id,
+                kind,
+                payload,
+                semantic_kind,
+            } => {
+                if semantic_kind.is_some() {
+                    return Err(format!(
+                        "fixture event '{}' set semantic_kind but fixture run is adapter-independent",
+                        id.as_deref().unwrap_or("<auto>")
+                    ));
+                }
+                if current_episode.is_none() {
+                    let label = format!("E{}", episodes.len() + 1);
+                    episodes.push((label, 0));
+                    current_episode = Some(episodes.len() - 1);
+                }
+
+                event_counter += 1;
+                let event_id = id.unwrap_or_else(|| format!("fixture_evt_{}", event_counter));
+                runner
+                    .step(HostedEvent {
+                        event_id,
+                        kind,
+                        at: EventTime::default(),
+                        semantic_kind: None,
+                        payload,
+                    })
+                    .map_err(|err| format!("fixture host step failed: {err}"))?;
+                let episode_index = current_episode.expect("episode index set");
+                episodes[episode_index].1 += 1;
+            }
+        }
+    }
+
+    if episodes.is_empty() {
+        return Err("fixture contained no episodes".to_string());
+    }
+    if event_counter == 0 {
+        return Err("fixture contained no events".to_string());
+    }
+    if let Some((label, _)) = episodes.iter().find(|(_, count)| *count == 0) {
+        return Err(format!("episode '{}' has no events", label));
+    }
+
+    let bundle = runner.into_capture_bundle();
     let output_path = output_override
         .map(PathBuf::from)
         .unwrap_or_else(|| fixture::fixture_output_path(path));
@@ -528,65 +526,13 @@ fn run_fixture(
     } else {
         CaptureJsonStyle::Compact
     };
-    let result = fixture_runner::run_fixture(
-        items,
-        graph,
-        catalog,
-        core_registries,
-        Some(output_path),
-        style,
-    )?;
+    write_capture_bundle(&output_path, &bundle, style)?;
 
-    for episode in &result.episodes {
-        println!(
-            "episode {}: decision={} TriggerA={} TriggerB={} ActionA={} ActionB={}",
-            episode.label,
-            episode.decision,
-            episode.trigger_a,
-            episode.trigger_b,
-            episode.action_a,
-            episode.action_b
-        );
+    for (label, count) in &episodes {
+        println!("episode {label}: events={count}");
     }
-
-    println!("capture artifact: {}", result.artifact_path.display());
-    Ok(result.artifact_path)
-}
-
-#[cfg(test)]
-fn action_status(outcome: ActionOutcome) -> &'static str {
-    if outcome == ActionOutcome::Skipped {
-        "skipped"
-    } else {
-        "executed"
-    }
-}
-
-#[cfg(test)]
-fn trigger_status(outcome: ActionOutcome) -> &'static str {
-    if outcome == ActionOutcome::Skipped {
-        "not_emitted"
-    } else {
-        "emitted"
-    }
-}
-
-#[cfg(test)]
-fn context_value_from_json(payload: &serde_json::Value) -> Option<f64> {
-    payload
-        .as_object()
-        .and_then(|object| object.get(demo_1::CONTEXT_NUMBER_KEY))
-        .and_then(|value| value.as_f64())
-}
-
-#[cfg(test)]
-fn context_value_from_payload(payload: &EventPayload) -> Option<f64> {
-    if payload.data.is_empty() {
-        return None;
-    }
-
-    let parsed: serde_json::Value = serde_json::from_slice(&payload.data).ok()?;
-    context_value_from_json(&parsed)
+    println!("capture artifact: {}", output_path.display());
+    Ok(output_path)
 }
 
 fn format_replay_error(err: &ReplayError) -> String {
@@ -695,6 +641,37 @@ fn format_replay_error(err: &ReplayError) -> String {
     }
 }
 
+fn format_host_replay_error(err: &HostedReplayError) -> String {
+    match err {
+        HostedReplayError::Preflight(replay_err) | HostedReplayError::Compare(replay_err) => {
+            format_replay_error(replay_err)
+        }
+        HostedReplayError::EventRehydrate { event_id, detail } => render_cli_error(
+            &CliErrorInfo::new(
+                "replay.event_rehydrate_failed",
+                format!("event '{}' failed rehydration during replay", event_id),
+            )
+            .with_where(format!("event '{}'", event_id))
+            .with_fix("inspect capture payload/hash integrity and recapture if needed")
+            .with_detail(detail.clone()),
+        ),
+        HostedReplayError::Step(step_err) => render_cli_error(
+            &CliErrorInfo::new("replay.host_step_failed", "host replay step failed")
+                .with_where("ergo-host replay lifecycle")
+                .with_fix("inspect host lifecycle/effect handler failures and retry")
+                .with_detail(step_err.to_string()),
+        ),
+        HostedReplayError::DecisionMismatch => render_cli_error(
+            &CliErrorInfo::new(
+                "replay.decision_mismatch",
+                "replay decisions do not match capture decisions",
+            )
+            .with_where("decision stream comparison")
+            .with_fix("inspect runtime/adapter drift and regenerate capture if needed"),
+        ),
+    }
+}
+
 fn replay_graph(
     path: &Path,
     graph_path: &Path,
@@ -718,7 +695,7 @@ fn replay_graph(
         ));
     }
 
-    let (adapter_provides, replay_fingerprint) = if let Some(path) = adapter_path {
+    let (adapter_provides, adapter_config, replay_fingerprint) = if let Some(path) = adapter_path {
         let manifest = parse_adapter_manifest(path)?;
         ergo_adapter::validate_adapter(&manifest).map_err(|err| {
             cli_error_from_error_info(
@@ -735,9 +712,26 @@ fn replay_graph(
             &prepared.registries,
             &provides,
         )?;
-        (provides, Some(adapter_fingerprint(&manifest)))
+        let adapter_provenance = adapter_fingerprint(&manifest);
+        let binder = compile_event_binder(&provides).map_err(|err| {
+            render_cli_error(
+                &CliErrorInfo::new(
+                    "adapter.binder_compile_failed",
+                    "adapter event binder compilation failed",
+                )
+                .with_where(format!("path '{}'", path.display()))
+                .with_fix("fix adapter event schema/mapping and retry")
+                .with_detail(err.to_string()),
+            )
+        })?;
+        let adapter_config = HostedAdapterConfig {
+            provides: provides.clone(),
+            binder,
+            adapter_provenance: adapter_provenance.clone(),
+        };
+        (provides, Some(adapter_config), Some(adapter_provenance))
     } else {
-        (AdapterProvides::default(), None)
+        (AdapterProvides::default(), None, None)
     };
 
     let runtime = RuntimeHandle::new(
@@ -746,34 +740,39 @@ fn replay_graph(
         Arc::new(prepared.registries),
         adapter_provides,
     );
+    let runner = HostedRunner::new(
+        GraphId::new(bundle.graph_id.as_str().to_string()),
+        bundle.config.clone(),
+        runtime,
+        prepared.runtime_provenance.clone(),
+        adapter_config,
+    )
+    .map_err(|err| {
+        render_cli_error(
+            &CliErrorInfo::new(
+                "host.runner_init_failed",
+                "failed to initialize canonical host replay runner",
+            )
+            .with_where("canonical host replay setup")
+            .with_fix("check adapter coverage and host configuration")
+            .with_detail(err.to_string()),
+        )
+    })?;
 
     let expected_adapter_provenance = replay_fingerprint
         .as_deref()
         .unwrap_or(NO_ADAPTER_PROVENANCE);
-    let replayed = replay_checked_strict(
+    let replayed_bundle = replay_bundle_strict(
         &bundle,
-        runtime,
+        runner,
         StrictReplayExpectations {
             expected_adapter_provenance,
             expected_runtime_provenance: &prepared.runtime_provenance,
         },
     )
-    .map_err(|err| format_replay_error(&err))?;
-    let replay_matches =
-        compare_decisions(&bundle.decisions, &replayed).map_err(|err| format_replay_error(&err))?;
+    .map_err(|err| format_host_replay_error(&err))?;
 
-    let invoke_count = replayed
-        .iter()
-        .filter(|record| record.decision == Decision::Invoke)
-        .count();
-    let defer_count = replayed
-        .iter()
-        .filter(|record| record.decision == Decision::Defer)
-        .count();
-    let skip_count = replayed
-        .iter()
-        .filter(|record| record.decision == Decision::Skip)
-        .count();
+    let (invoke_count, defer_count, skip_count) = decision_counts(&replayed_bundle);
 
     println!(
         "replay graph_id={} events={} invoked={} deferred={} skipped={}",
@@ -783,146 +782,7 @@ fn replay_graph(
         defer_count,
         skip_count
     );
-    println!(
-        "replay identity: {}",
-        if replay_matches { "match" } else { "mismatch" }
-    );
-
-    if !replay_matches {
-        return Err(render_cli_error(
-            &CliErrorInfo::new(
-                "replay.decision_mismatch",
-                "replay decisions do not match capture decisions",
-            )
-            .with_where("decision stream comparison")
-            .with_fix("inspect runtime/adapter drift and regenerate capture if needed"),
-        ));
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-fn replay_demo_1(path: &Path, adapter_path: Option<&Path>) -> Result<(), String> {
-    let bundle = load_bundle(path)?;
-
-    if bundle.graph_id.as_str() != DEMO_GRAPH_ID {
-        return Err(format!(
-            "expected graph_id '{DEMO_GRAPH_ID}', got '{}'",
-            bundle.graph_id.as_str()
-        ));
-    }
-
-    let graph = Arc::new(demo_1::build_demo_1_graph());
-    let catalog = Arc::new(build_core_catalog());
-    let core_registries =
-        Arc::new(core_registries().map_err(|err| format!("core registries: {err:?}"))?);
-
-    let (adapter_provides, replay_fingerprint) = if let Some(path) = adapter_path {
-        let manifest = parse_adapter_manifest(path)?;
-        ergo_adapter::validate_adapter(&manifest).map_err(|err| {
-            cli_error_from_error_info(
-                "adapter.invalid_manifest",
-                "adapter manifest validation failed",
-                format!("path '{}'", path.display()),
-                &err,
-            )
-        })?;
-        (
-            AdapterProvides::from_manifest(&manifest),
-            Some(adapter_fingerprint(&manifest)),
-        )
-    } else {
-        (AdapterProvides::default(), None)
-    };
-
-    let runtime = RuntimeHandle::new(
-        graph.clone(),
-        catalog.clone(),
-        core_registries.clone(),
-        adapter_provides,
-    );
-    let expected_runtime_provenance = compute_runtime_provenance(
-        RuntimeProvenanceScheme::Rpv1,
-        DEMO_GRAPH_ID,
-        graph.as_ref(),
-        catalog.as_ref(),
-    )
-    .map_err(|err| format!("runtime provenance compute failed: {err}"))?;
-    let expected_adapter_provenance = replay_fingerprint
-        .as_deref()
-        .unwrap_or(NO_ADAPTER_PROVENANCE);
-    let replay_result = replay_checked_strict(
-        &bundle,
-        runtime,
-        StrictReplayExpectations {
-            expected_adapter_provenance,
-            expected_runtime_provenance: &expected_runtime_provenance,
-        },
-    );
-    let replay_matches = match &replay_result {
-        Ok(records) => compare_decisions(&bundle.decisions, records).unwrap_or(false),
-        Err(_) => false,
-    };
-
-    let mut context_by_event: HashMap<String, Option<f64>> = HashMap::new();
-    for record in &bundle.events {
-        context_by_event.insert(
-            record.event_id.as_str().to_string(),
-            context_value_from_payload(&record.payload),
-        );
-    }
-
-    for record in &bundle.decisions {
-        let invoked = record.decision == Decision::Invoke;
-        let decision_label = match record.decision {
-            Decision::Invoke => "invoke",
-            Decision::Defer => "defer",
-            Decision::Skip => "skip",
-        };
-        let (trigger_a_status, trigger_b_status, action_a_status, action_b_status) = if invoked {
-            let context_value = context_by_event
-                .get(record.event_id.as_str())
-                .copied()
-                .flatten();
-            let summary = demo_1::summary_for_context_value(context_value);
-            (
-                trigger_status(summary.action_a_outcome.clone()),
-                trigger_status(summary.action_b_outcome.clone()),
-                action_status(summary.action_a_outcome.clone()),
-                action_status(summary.action_b_outcome),
-            )
-        } else {
-            ("deferred", "deferred", "deferred", "deferred")
-        };
-        let label = format!("E{}", record.episode_id.as_u64() + 1);
-
-        println!(
-            "episode {}: decision={} TriggerA={} TriggerB={} ActionA={} ActionB={}",
-            label,
-            decision_label,
-            trigger_a_status,
-            trigger_b_status,
-            action_a_status,
-            action_b_status
-        );
-    }
-
-    if let Err(err) = replay_result {
-        return Err(format_replay_error(&err));
-    }
-
-    println!("{}", demo_1::format_replay_identity(replay_matches));
-    if !replay_matches {
-        return Err(render_cli_error(
-            &CliErrorInfo::new(
-                "replay.decision_mismatch",
-                "replay decisions do not match capture decisions",
-            )
-            .with_where("decision stream comparison")
-            .with_fix("inspect runtime/adapter drift and regenerate capture if needed"),
-        ));
-    }
+    println!("replay identity: match");
 
     Ok(())
 }
@@ -935,7 +795,7 @@ mod tests {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     #[test]
-    fn fixture_run_creates_replay_and_replays_ok() -> Result<(), String> {
+    fn fixture_run_creates_capture_via_host_runner() -> Result<(), String> {
         let index = COUNTER.fetch_add(1, Ordering::SeqCst);
         let temp_dir = std::env::temp_dir().join(format!(
             "ergo-cli-fixture-test-{}-{}",
@@ -957,8 +817,24 @@ mod tests {
         let artifact_path = run_fixture(&fixture_path, Some(&output_path), false)?;
         assert_eq!(artifact_path, output_path);
         assert!(artifact_path.exists(), "expected capture artifact to exist");
-
-        replay_demo_1(&artifact_path, None)?;
+        let raw =
+            fs::read_to_string(&artifact_path).map_err(|err| format!("read capture: {err}"))?;
+        let value: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|err| format!("parse capture json: {err}"))?;
+        let decisions = value
+            .get("decisions")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "capture decisions missing".to_string())?;
+        assert!(
+            decisions
+                .iter()
+                .all(|record| record.get("effects").is_some()),
+            "serialized capture decisions must include effects field"
+        );
+        let bundle = load_bundle(&artifact_path)?;
+        assert_eq!(bundle.graph_id.as_str(), DEMO_GRAPH_ID);
+        assert_eq!(bundle.events.len(), 2, "two events expected");
+        assert_eq!(bundle.decisions.len(), 2, "two decisions expected");
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
@@ -1007,6 +883,144 @@ outputs:
         graph_yaml::run_graph_command(&graph_path, &run_args)?;
 
         replay_graph(&capture_path, &graph_path, &[], None)?;
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn replay_graph_uses_host_rehydrate_path() -> Result<(), String> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-cli-replay-host-rehydrate-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
+
+        let graph_path = temp_dir.join("graph.yaml");
+        let fixture_path = temp_dir.join("fixture.jsonl");
+        let capture_path = temp_dir.join("capture.json");
+
+        let graph = r#"
+kind: cluster
+id: replay_basic
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#;
+        let fixture = "\
+{\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
+{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n";
+
+        fs::write(&graph_path, graph).map_err(|err| format!("write graph: {err}"))?;
+        fs::write(&fixture_path, fixture).map_err(|err| format!("write fixture: {err}"))?;
+
+        let run_args = vec![
+            "--fixture".to_string(),
+            fixture_path.to_string_lossy().to_string(),
+            "--capture-output".to_string(),
+            capture_path.to_string_lossy().to_string(),
+        ];
+        graph_yaml::run_graph_command(&graph_path, &run_args)?;
+
+        let mut bundle = load_bundle(&capture_path)?;
+        bundle.events[0].payload.data = br#""not-an-object""#.to_vec();
+        bundle.events[0].payload_hash =
+            ergo_adapter::capture::hash_payload(&bundle.events[0].payload);
+        fs::write(
+            &capture_path,
+            serde_json::to_vec_pretty(&bundle)
+                .map_err(|err| format!("serialize capture: {err}"))?,
+        )
+        .map_err(|err| format!("rewrite capture: {err}"))?;
+
+        let err = replay_graph(&capture_path, &graph_path, &[], None)
+            .expect_err("host replay should reject invalid rehydrated event payload");
+        assert!(
+            err.contains("code: replay.event_rehydrate_failed"),
+            "unexpected err: {err}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn replay_graph_detects_effect_drift() -> Result<(), String> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-cli-replay-effect-drift-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
+
+        let graph_path = temp_dir.join("graph.yaml");
+        let fixture_path = temp_dir.join("fixture.jsonl");
+        let capture_path = temp_dir.join("capture.json");
+
+        let graph = r#"
+kind: cluster
+id: replay_basic
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#;
+        let fixture = "\
+{\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
+{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n";
+
+        fs::write(&graph_path, graph).map_err(|err| format!("write graph: {err}"))?;
+        fs::write(&fixture_path, fixture).map_err(|err| format!("write fixture: {err}"))?;
+
+        let run_args = vec![
+            "--fixture".to_string(),
+            fixture_path.to_string_lossy().to_string(),
+            "--capture-output".to_string(),
+            capture_path.to_string_lossy().to_string(),
+        ];
+        graph_yaml::run_graph_command(&graph_path, &run_args)?;
+
+        let mut bundle = load_bundle(&capture_path)?;
+        let fake_effect = ergo_runtime::common::ActionEffect {
+            kind: "set_context".to_string(),
+            writes: vec![ergo_runtime::common::EffectWrite {
+                key: "drifted".to_string(),
+                value: ergo_runtime::common::Value::Number(42.0),
+            }],
+        };
+        bundle.decisions[0]
+            .effects
+            .push(ergo_supervisor::CapturedActionEffect {
+                effect_hash: ergo_supervisor::replay::hash_effect(&fake_effect),
+                effect: fake_effect,
+            });
+        fs::write(
+            &capture_path,
+            serde_json::to_vec_pretty(&bundle)
+                .map_err(|err| format!("serialize capture: {err}"))?,
+        )
+        .map_err(|err| format!("rewrite capture: {err}"))?;
+
+        let err = replay_graph(&capture_path, &graph_path, &[], None)
+            .expect_err("effect drift should fail canonical replay");
+        assert!(
+            err.contains("code: replay.effect_mismatch"),
+            "unexpected err: {err}"
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
@@ -1173,7 +1187,7 @@ outputs:
                 "-o".to_string(),
                 "demo-short.json".to_string(),
             ],
-            "demo-1",
+            "fixture",
         )?;
         assert!(opts.pretty_capture);
         assert_eq!(
@@ -1187,7 +1201,7 @@ outputs:
                 "demo-alias.json".to_string(),
                 "--pretty-capture".to_string(),
             ],
-            "demo-1",
+            "fixture",
         )?;
         assert!(alias_opts.pretty_capture);
         assert_eq!(
@@ -1206,7 +1220,7 @@ outputs:
                 "demo-long.json".to_string(),
                 "--pretty-capture".to_string(),
             ],
-            "demo-1",
+            "fixture",
         )?;
         assert!(opts.pretty_capture);
         assert_eq!(
@@ -1218,12 +1232,12 @@ outputs:
 
     #[test]
     fn parse_run_artifact_options_unknown_flag_is_actionable() {
-        let err = parse_run_artifact_options(&["--wat".to_string()], "demo-1")
+        let err = parse_run_artifact_options(&["--wat".to_string()], "fixture")
             .expect_err("unknown run option should fail");
         assert!(
             err.contains("code: cli.invalid_option")
                 && err.contains("where: arg '--wat'")
-                && err.contains("fix: for 'ergo run demo-1'"),
+                && err.contains("fix: for 'ergo run fixture'"),
             "unexpected err: {err}"
         );
     }
@@ -1343,58 +1357,6 @@ outputs:
     }
 
     #[test]
-    fn demo_run_pretty_capture_writes_multiline_json() -> Result<(), String> {
-        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let temp_dir = std::env::temp_dir().join(format!(
-            "ergo-cli-demo-pretty-{}-{}",
-            std::process::id(),
-            index
-        ));
-        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
-        let output_path = temp_dir.join("demo-capture.json");
-
-        run_demo_1(true, Some(&output_path))?;
-        let raw = fs::read_to_string(&output_path).map_err(|err| format!("read output: {err}"))?;
-        assert!(
-            raw.matches('\n').count() > 1,
-            "pretty capture should be multiline json"
-        );
-
-        let _ = fs::remove_dir_all(&temp_dir);
-        Ok(())
-    }
-
-    #[test]
-    fn demo_run_short_o_overrides_output_path() -> Result<(), String> {
-        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let temp_dir = std::env::temp_dir().join(format!(
-            "ergo-cli-demo-short-o-{}-{}",
-            std::process::id(),
-            index
-        ));
-        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
-        let output_path = temp_dir.join("demo-short-output.json");
-
-        let opts = parse_run_artifact_options(
-            &[
-                "-o".to_string(),
-                output_path.to_string_lossy().to_string(),
-                "-p".to_string(),
-            ],
-            "demo-1",
-        )?;
-        let artifact_path = run_demo_1(opts.pretty_capture, opts.capture_output.as_deref())?;
-        assert_eq!(artifact_path, output_path);
-        assert!(
-            artifact_path.exists(),
-            "expected demo output override to exist"
-        );
-
-        let _ = fs::remove_dir_all(&temp_dir);
-        Ok(())
-    }
-
-    #[test]
     fn fixture_run_pretty_capture_writes_multiline_json() -> Result<(), String> {
         let index = COUNTER.fetch_add(1, Ordering::SeqCst);
         let temp_dir = std::env::temp_dir().join(format!(
@@ -1459,17 +1421,6 @@ outputs:
         );
 
         let _ = fs::remove_dir_all(&temp_dir);
-        Ok(())
-    }
-
-    #[test]
-    fn demo_run_default_output_path_is_capture_named() -> Result<(), String> {
-        let artifact_path = run_demo_1(false, None)?;
-        assert_eq!(artifact_path, PathBuf::from(DEFAULT_CAPTURE_PATH));
-        assert!(
-            artifact_path.ends_with("demo-1-capture.json"),
-            "expected capture-named artifact path"
-        );
         Ok(())
     }
 

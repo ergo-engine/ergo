@@ -15,15 +15,13 @@ pub fn enrich_bundle_with_effects(
             continue;
         };
 
-        record.effects = Some(
-            effects
-                .iter()
-                .map(|effect| CapturedActionEffect {
-                    effect_hash: hash_effect(effect),
-                    effect: effect.clone(),
-                })
-                .collect(),
-        );
+        record.effects = effects
+            .iter()
+            .map(|effect| CapturedActionEffect {
+                effect_hash: hash_effect(effect),
+                effect: effect.clone(),
+            })
+            .collect();
     }
 }
 

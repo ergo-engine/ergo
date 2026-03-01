@@ -137,6 +137,21 @@ impl HostedRunner {
     }
 
     pub fn step(&mut self, event: HostedEvent) -> Result<HostedStepOutcome, HostedStepError> {
+        let external_event = self.build_external_event(event)?;
+        self.execute_step(external_event)
+    }
+
+    pub fn replay_step(
+        &mut self,
+        external_event: ExternalEvent,
+    ) -> Result<HostedStepOutcome, HostedStepError> {
+        self.execute_step(external_event)
+    }
+
+    fn execute_step(
+        &mut self,
+        external_event: ExternalEvent,
+    ) -> Result<HostedStepOutcome, HostedStepError> {
         if self.runtime.pending_effect_count() != 0 {
             return Err(HostedStepError::LifecycleViolation {
                 detail: "pending effect buffer must be drained before next on_event".to_string(),
@@ -146,7 +161,6 @@ impl HostedRunner {
         let pre_entry_len = self.decision_log.len();
         let pre_run_calls = self.runtime.run_call_count();
 
-        let external_event = self.build_external_event(event)?;
         self.session.on_event(external_event);
 
         let post_entry_len = self.decision_log.len();
@@ -469,6 +483,142 @@ mod tests {
         }
     }
 
+    fn build_merge_precedence_graph() -> ExpandedGraph {
+        let mut nodes = HashMap::new();
+
+        nodes.insert(
+            "armed_src".to_string(),
+            ExpandedNode {
+                runtime_id: "armed_src".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "context_bool_source".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::from([(
+                    "key".to_string(),
+                    ParameterValue::String("armed".to_string()),
+                )]),
+            },
+        );
+
+        nodes.insert(
+            "not_state".to_string(),
+            ExpandedNode {
+                runtime_id: "not_state".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "not".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::new(),
+            },
+        );
+
+        nodes.insert(
+            "emit".to_string(),
+            ExpandedNode {
+                runtime_id: "emit".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "emit_if_true".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::new(),
+            },
+        );
+
+        nodes.insert(
+            "set_value".to_string(),
+            ExpandedNode {
+                runtime_id: "set_value".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "boolean_source".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::from([("value".to_string(), ParameterValue::Bool(true))]),
+            },
+        );
+
+        nodes.insert(
+            "set_armed".to_string(),
+            ExpandedNode {
+                runtime_id: "set_armed".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "context_set_bool".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::from([(
+                    "key".to_string(),
+                    ParameterValue::String("armed".to_string()),
+                )]),
+            },
+        );
+
+        let edges = vec![
+            ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "armed_src".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "not_state".to_string(),
+                    port_name: "value".to_string(),
+                },
+            },
+            ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "not_state".to_string(),
+                    port_name: "result".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "input".to_string(),
+                },
+            },
+            ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "event".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "set_armed".to_string(),
+                    port_name: "event".to_string(),
+                },
+            },
+            ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "set_value".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "set_armed".to_string(),
+                    port_name: "value".to_string(),
+                },
+            },
+        ];
+
+        ExpandedGraph {
+            nodes,
+            edges,
+            boundary_inputs: vec![],
+            boundary_outputs: vec![OutputPortSpec {
+                name: "outcome".to_string(),
+                maps_to: OutputRef {
+                    node_id: "set_armed".to_string(),
+                    port_name: "outcome".to_string(),
+                },
+            }],
+        }
+    }
+
     fn runtime_for_graph(graph: ExpandedGraph, provides: AdapterProvides) -> RuntimeHandle {
         RuntimeHandle::new(
             Arc::new(graph),
@@ -570,10 +720,7 @@ mod tests {
         );
 
         let bundle = runner.into_capture_bundle();
-        let effects = bundle.decisions[0]
-            .effects
-            .as_ref()
-            .expect("host enrichment should attach effects");
+        let effects = &bundle.decisions[0].effects;
         assert_eq!(effects.len(), 1);
         assert_eq!(effects[0].effect.kind, "set_context");
     }
@@ -639,6 +786,153 @@ mod tests {
         assert_eq!(outcome.termination, Some(RunTermination::Completed));
         assert!(outcome.effects.is_empty());
         assert!(outcome.applied_writes.is_empty());
+    }
+
+    #[test]
+    fn replay_step_runs_shared_lifecycle_and_effect_application() {
+        let provides = adapter_provides_with_effects(&[]);
+        let runtime = runtime_for_graph(build_context_set_bool_graph(), provides.clone());
+        let adapter = adapter_config(provides);
+
+        let mut runner = HostedRunner::new(
+            GraphId::new("g"),
+            Constraints::default(),
+            runtime,
+            "runtime:test".to_string(),
+            Some(adapter),
+        )
+        .expect("hosted runner should initialize");
+
+        let event = ergo_adapter::ExternalEvent::with_payload(
+            EventId::new("e1"),
+            ExternalEventKind::Command,
+            EventTime::default(),
+            ergo_adapter::EventPayload {
+                data: br#"{"price":101.5}"#.to_vec(),
+            },
+        )
+        .expect("payload should produce external event");
+
+        let outcome = runner
+            .replay_step(event)
+            .expect("replay_step should execute");
+
+        assert_eq!(outcome.decision, Decision::Invoke);
+        assert_eq!(outcome.termination, Some(RunTermination::Completed));
+        assert_eq!(outcome.retry_count, 0);
+        assert_eq!(outcome.effects.len(), 1);
+        assert_eq!(outcome.effects[0].kind, "set_context");
+        assert_eq!(
+            runner.context_snapshot().get("armed"),
+            Some(&serde_json::json!(false))
+        );
+    }
+
+    #[test]
+    fn merged_payload_incoming_overrides_store() {
+        let provides = adapter_provides_with_effects(&[]);
+        let runtime = runtime_for_graph(build_merge_precedence_graph(), provides.clone());
+        let adapter = adapter_config(provides);
+
+        let mut runner = HostedRunner::new(
+            GraphId::new("g"),
+            Constraints::default(),
+            runtime,
+            "runtime:test".to_string(),
+            Some(adapter),
+        )
+        .expect("hosted runner should initialize");
+
+        let first = runner
+            .step(HostedEvent {
+                event_id: "e1".to_string(),
+                kind: ExternalEventKind::Command,
+                at: EventTime::default(),
+                semantic_kind: Some("price_bar".to_string()),
+                payload: Some(serde_json::json!({"armed": false, "price": 10.0})),
+            })
+            .expect("first step should execute");
+        assert_eq!(first.effects.len(), 1);
+        assert_eq!(
+            runner.context_snapshot().get("armed"),
+            Some(&serde_json::json!(true))
+        );
+
+        let second = runner
+            .step(HostedEvent {
+                event_id: "e2".to_string(),
+                kind: ExternalEventKind::Command,
+                at: EventTime::default(),
+                semantic_kind: Some("price_bar".to_string()),
+                payload: Some(serde_json::json!({"price": 11.0})),
+            })
+            .expect("second step should execute");
+        assert!(
+            second.effects.is_empty(),
+            "store-sourced armed=true should suppress emit on second step"
+        );
+
+        let third = runner
+            .step(HostedEvent {
+                event_id: "e3".to_string(),
+                kind: ExternalEventKind::Command,
+                at: EventTime::default(),
+                semantic_kind: Some("price_bar".to_string()),
+                payload: Some(serde_json::json!({"armed": false, "price": 12.0})),
+            })
+            .expect("third step should execute");
+        assert_eq!(
+            third.effects.len(),
+            1,
+            "incoming armed=false must override stored armed=true"
+        );
+    }
+
+    #[test]
+    fn lifecycle_guard_rejects_step_when_pending_effects_exist() {
+        let provides = adapter_provides_with_effects(&[]);
+        let runtime = runtime_for_graph(build_context_set_bool_graph(), provides.clone());
+        let adapter = adapter_config(provides);
+
+        let mut runner = HostedRunner::new(
+            GraphId::new("g"),
+            Constraints::default(),
+            runtime,
+            "runtime:test".to_string(),
+            Some(adapter),
+        )
+        .expect("hosted runner should initialize");
+
+        let bypass = ergo_adapter::ExternalEvent::with_payload(
+            EventId::new("bypass"),
+            ExternalEventKind::Command,
+            EventTime::default(),
+            ergo_adapter::EventPayload {
+                data: br#"{"price":101.5}"#.to_vec(),
+            },
+        )
+        .expect("bypass event should construct");
+        runner.session.on_event(bypass);
+
+        let err = runner
+            .step(HostedEvent {
+                event_id: "e1".to_string(),
+                kind: ExternalEventKind::Command,
+                at: EventTime::default(),
+                semantic_kind: Some("price_bar".to_string()),
+                payload: Some(serde_json::json!({"price": 11.0})),
+            })
+            .expect_err("pending buffer should trigger lifecycle guard");
+
+        match err {
+            HostedStepError::LifecycleViolation { detail } => {
+                assert!(
+                    detail.contains("pending effect buffer must be drained"),
+                    "unexpected detail: {detail}"
+                );
+            }
+            other => panic!("expected lifecycle violation, got {:?}", other),
+        }
     }
 
     #[test]

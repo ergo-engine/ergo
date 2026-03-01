@@ -39,7 +39,7 @@ impl MemoryDecisionLog {
                         effect: effect.clone(),
                     })
                     .collect();
-                record.effects = Some(captured);
+                record.effects = captured;
                 record
             })
             .collect()
@@ -114,9 +114,17 @@ pub fn replay_checked_strict<R: RuntimeInvoker + Clone>(
     runtime: R,
     expectations: StrictReplayExpectations<'_>,
 ) -> Result<Vec<EpisodeInvocationRecord>, ReplayError> {
+    validate_bundle_strict(bundle, expectations)?;
+    replay_inner(bundle, runtime)
+}
+
+pub fn validate_bundle_strict(
+    bundle: &CaptureBundle,
+    expectations: StrictReplayExpectations<'_>,
+) -> Result<(), ReplayError> {
     validate_bundle(bundle)?;
     validate_replay_provenance(bundle, expectations)?;
-    replay_inner(bundle, runtime)
+    Ok(())
 }
 
 pub fn replay<R: RuntimeInvoker + Clone>(
@@ -173,12 +181,9 @@ fn validate_replay_provenance(
     Ok(())
 }
 
-/// Compare replayed decisions against captured decisions with backward-compatible effect semantics.
+/// Compare replayed decisions against captured decisions with strict effect semantics.
 ///
-/// - If captured effects is `None` (legacy bundle): skip effect comparison for that record.
-/// - If captured effects is `Some`: verify effect count, structured content, and hash.
-///
-/// Returns `Ok(true)` if all decisions match (including effects where applicable),
+/// Returns `Ok(true)` if all decisions match (including effects),
 /// `Ok(false)` for decision-stream mismatch (non-effect fields), or `Err` for effect mismatch.
 pub fn compare_decisions(
     captured: &[EpisodeInvocationRecord],
@@ -201,60 +206,39 @@ pub fn compare_decisions(
             return Ok(false);
         }
 
-        // Effect comparison: only if captured has effect data (backward compat with legacy bundles).
-        if let Some(captured_effects) = &cap.effects {
-            // MemoryDecisionLog::records() hashes replayed effects into CapturedActionEffect,
-            // so replayed records always have effects = Some(...) for effect-aware captures.
-            let replayed_effects = match &rep.effects {
-                Some(effs) => effs,
-                None => {
-                    if !captured_effects.is_empty() {
-                        return Err(ReplayError::EffectMismatch {
-                            event_id: cap.event_id.clone(),
-                            effect_index: 0,
-                            expected: captured_effects.first().cloned(),
-                            actual: None,
-                            detail: format!(
-                                "expected {} effects, replayed record has no effect data",
-                                captured_effects.len()
-                            ),
-                        });
-                    }
-                    continue;
-                }
-            };
+        let captured_effects = &cap.effects;
+        let replayed_effects = &rep.effects;
 
-            if captured_effects.len() != replayed_effects.len() {
+        if captured_effects.len() != replayed_effects.len() {
+            return Err(ReplayError::EffectMismatch {
+                event_id: cap.event_id.clone(),
+                effect_index: captured_effects.len().min(replayed_effects.len()),
+                expected: captured_effects.get(replayed_effects.len()).cloned(),
+                actual: replayed_effects.get(captured_effects.len()).cloned(),
+                detail: format!(
+                    "expected {} effects, got {}",
+                    captured_effects.len(),
+                    replayed_effects.len()
+                ),
+            });
+        }
+
+        for (idx, (cap_eff, rep_eff)) in captured_effects
+            .iter()
+            .zip(replayed_effects.iter())
+            .enumerate()
+        {
+            if cap_eff.effect != rep_eff.effect || cap_eff.effect_hash != rep_eff.effect_hash {
                 return Err(ReplayError::EffectMismatch {
                     event_id: cap.event_id.clone(),
-                    effect_index: captured_effects.len().min(replayed_effects.len()),
-                    expected: captured_effects.get(replayed_effects.len()).cloned(),
-                    actual: replayed_effects.get(captured_effects.len()).cloned(),
+                    effect_index: idx,
+                    expected: Some(cap_eff.clone()),
+                    actual: Some(rep_eff.clone()),
                     detail: format!(
-                        "expected {} effects, got {}",
-                        captured_effects.len(),
-                        replayed_effects.len()
+                        "effect mismatch at index {}: expected hash '{}', got '{}'",
+                        idx, cap_eff.effect_hash, rep_eff.effect_hash
                     ),
                 });
-            }
-
-            for (idx, (cap_eff, rep_eff)) in captured_effects
-                .iter()
-                .zip(replayed_effects.iter())
-                .enumerate()
-            {
-                if cap_eff.effect != rep_eff.effect || cap_eff.effect_hash != rep_eff.effect_hash {
-                    return Err(ReplayError::EffectMismatch {
-                        event_id: cap.event_id.clone(),
-                        effect_index: idx,
-                        expected: Some(cap_eff.clone()),
-                        actual: Some(rep_eff.clone()),
-                        detail: format!(
-                            "effect mismatch at index {}: expected hash '{}', got '{}'",
-                            idx, cap_eff.effect_hash, rep_eff.effect_hash
-                        ),
-                    });
-                }
             }
         }
     }
@@ -276,10 +260,7 @@ mod tests {
     use crate::{Decision, EpisodeId};
     use ergo_runtime::common::{EffectWrite, Value};
 
-    fn make_record(
-        event_id: &str,
-        effects: Option<Vec<CapturedActionEffect>>,
-    ) -> EpisodeInvocationRecord {
+    fn make_record(event_id: &str, effects: Vec<CapturedActionEffect>) -> EpisodeInvocationRecord {
         EpisodeInvocationRecord {
             event_id: EventId::new(event_id),
             decision: Decision::Invoke,
@@ -307,17 +288,17 @@ mod tests {
     }
 
     #[test]
-    fn compare_decisions_legacy_effects_none_skips_comparison() {
-        let captured = vec![make_record("e1", None)];
-        let replayed = vec![make_record("e1", Some(vec![]))];
+    fn compare_decisions_matching_empty_effect_vectors_succeeds() {
+        let captured = vec![make_record("e1", vec![])];
+        let replayed = vec![make_record("e1", vec![])];
         assert_eq!(compare_decisions(&captured, &replayed).unwrap(), true);
     }
 
     #[test]
     fn compare_decisions_matching_effects_succeeds() {
         let eff = make_captured_effect("price", 42.0);
-        let captured = vec![make_record("e1", Some(vec![eff.clone()]))];
-        let replayed = vec![make_record("e1", Some(vec![eff]))];
+        let captured = vec![make_record("e1", vec![eff.clone()])];
+        let replayed = vec![make_record("e1", vec![eff])];
         assert_eq!(compare_decisions(&captured, &replayed).unwrap(), true);
     }
 
@@ -326,8 +307,8 @@ mod tests {
         let cap_eff = make_captured_effect("price", 42.0);
         let rep_eff = make_captured_effect("corrupted_key", 42.0);
         // Hash will differ because the key differs
-        let captured = vec![make_record("e1", Some(vec![cap_eff]))];
-        let replayed = vec![make_record("e1", Some(vec![rep_eff]))];
+        let captured = vec![make_record("e1", vec![cap_eff])];
+        let replayed = vec![make_record("e1", vec![rep_eff])];
         let err = compare_decisions(&captured, &replayed).unwrap_err();
         assert!(matches!(err, ReplayError::EffectMismatch { .. }));
     }
@@ -336,8 +317,8 @@ mod tests {
     fn compare_decisions_corrupted_value_returns_effect_mismatch() {
         let cap_eff = make_captured_effect("price", 42.0);
         let rep_eff = make_captured_effect("price", 99.0);
-        let captured = vec![make_record("e1", Some(vec![cap_eff]))];
-        let replayed = vec![make_record("e1", Some(vec![rep_eff]))];
+        let captured = vec![make_record("e1", vec![cap_eff])];
+        let replayed = vec![make_record("e1", vec![rep_eff])];
         let err = compare_decisions(&captured, &replayed).unwrap_err();
         assert!(matches!(err, ReplayError::EffectMismatch { .. }));
     }
@@ -345,8 +326,8 @@ mod tests {
     #[test]
     fn compare_decisions_missing_effect_entry_returns_mismatch() {
         let eff = make_captured_effect("price", 42.0);
-        let captured = vec![make_record("e1", Some(vec![eff]))];
-        let replayed = vec![make_record("e1", Some(vec![]))];
+        let captured = vec![make_record("e1", vec![eff])];
+        let replayed = vec![make_record("e1", vec![])];
         let err = compare_decisions(&captured, &replayed).unwrap_err();
         assert!(matches!(err, ReplayError::EffectMismatch { .. }));
     }
@@ -358,8 +339,8 @@ mod tests {
         // Tamper with captured hash but leave effect content identical
         cap_eff.effect_hash =
             "0000000000000000000000000000000000000000000000000000000000000000".to_string();
-        let captured = vec![make_record("e1", Some(vec![cap_eff]))];
-        let replayed = vec![make_record("e1", Some(vec![rep_eff]))];
+        let captured = vec![make_record("e1", vec![cap_eff])];
+        let replayed = vec![make_record("e1", vec![rep_eff])];
         let err = compare_decisions(&captured, &replayed).unwrap_err();
         assert!(matches!(err, ReplayError::EffectMismatch { .. }));
     }

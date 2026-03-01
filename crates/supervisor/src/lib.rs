@@ -112,9 +112,7 @@ pub struct EpisodeInvocationRecord {
     #[serde(default)]
     pub termination: Option<RunTermination>,
     pub retry_count: usize,
-    /// Effect-aware captures: Some(vec) for effect data, None for legacy bundles.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub effects: Option<Vec<CapturedActionEffect>>,
+    pub effects: Vec<CapturedActionEffect>,
 }
 
 impl From<&DecisionLogEntry> for EpisodeInvocationRecord {
@@ -127,9 +125,7 @@ impl From<&DecisionLogEntry> for EpisodeInvocationRecord {
             deadline: entry.deadline,
             termination: entry.termination.clone(),
             retry_count: entry.retry_count,
-            // Non-capturing logs (e.g. MemoryDecisionLog in replay) don't hash effects.
-            // CapturingDecisionLog overrides this in its own log() impl.
-            effects: None,
+            effects: vec![],
         }
     }
 }

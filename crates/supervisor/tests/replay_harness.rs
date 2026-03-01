@@ -238,6 +238,37 @@ fn legacy_adapter_version_field_fails_deserialization() {
 }
 
 #[test]
+fn missing_effects_field_fails_deserialization() {
+    let legacy = r#"{
+        "capture_version":"v2",
+        "graph_id":"g",
+        "config":{"max_in_flight":null,"max_per_window":null,"rate_window":null,"deadline":null,"max_retries":0},
+        "events":[],
+        "decisions":[
+            {
+                "event_id":"e1",
+                "decision":"Invoke",
+                "schedule_at":null,
+                "episode_id":0,
+                "deadline":null,
+                "termination":"Completed",
+                "retry_count":0
+            }
+        ],
+        "adapter_provenance":"none",
+        "runtime_provenance":"rpv1:sha256:test"
+    }"#;
+
+    let err =
+        serde_json::from_str::<CaptureBundle>(legacy).expect_err("missing effects should fail");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("missing field `effects`"),
+        "unexpected error: {msg}"
+    );
+}
+
+#[test]
 fn replay_rejects_corrupted_bundle() {
     let events = vec![make_payload_record("e_bad", Duration::from_secs(0), b"abc")];
     let mut bundle = baseline_bundle(events, Constraints::default());
@@ -446,19 +477,13 @@ fn e2e_termination_only_capture_and_replay_integrity() {
 
     // Verify capture stores no supervisor-sourced effects on termination-only boundary.
     assert_eq!(bundle.decisions.len(), 1);
-    let captured_effects = bundle.decisions[0]
-        .effects
-        .as_ref()
-        .expect("effect-aware capture must have effects = Some(...)");
+    let captured_effects = &bundle.decisions[0].effects;
     assert_eq!(captured_effects.len(), 0, "no effects expected");
 
     // Replay phase — same runtime produces same effects
     let replayed = ergo_supervisor::replay::replay(&bundle, runtime);
     assert_eq!(replayed.len(), 1);
-    let replayed_effects = replayed[0]
-        .effects
-        .as_ref()
-        .expect("replayed record must have effects");
+    let replayed_effects = &replayed[0].effects;
     assert_eq!(replayed_effects.len(), 0);
 
     // Compare should succeed
