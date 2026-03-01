@@ -15,7 +15,7 @@ use ergo_supervisor::{
     NO_ADAPTER_PROVENANCE,
 };
 
-use crate::capture_enrichment::{enrich_bundle_with_effects, AppliedEffectsByEvent};
+use crate::capture_enrichment::{enrich_bundle_with_effects, AppliedEffectsByDecision};
 use crate::error::HostedStepError;
 
 #[derive(Debug, Clone)]
@@ -77,9 +77,10 @@ pub struct HostedRunner {
     decision_log: HostDecisionLog,
     runtime: BufferingRuntimeInvoker,
     context_store: ContextStore,
+    seen_event_ids: HashSet<String>,
     adapter: Option<AdapterMode>,
     handlers: BTreeMap<String, Arc<dyn EffectHandler>>,
-    applied_effects: AppliedEffectsByEvent,
+    applied_effects: AppliedEffectsByDecision,
 }
 
 impl HostedRunner {
@@ -130,9 +131,10 @@ impl HostedRunner {
             decision_log,
             runtime,
             context_store: ContextStore::new(),
+            seen_event_ids: HashSet::new(),
             adapter,
             handlers,
-            applied_effects: AppliedEffectsByEvent::default(),
+            applied_effects: AppliedEffectsByDecision::default(),
         })
     }
 
@@ -152,6 +154,11 @@ impl HostedRunner {
         &mut self,
         external_event: ExternalEvent,
     ) -> Result<HostedStepOutcome, HostedStepError> {
+        let event_id = external_event.event_id().as_str().to_string();
+        if !self.seen_event_ids.insert(event_id.clone()) {
+            return Err(HostedStepError::DuplicateEventId { event_id });
+        }
+
         if self.runtime.pending_effect_count() != 0 {
             return Err(HostedStepError::LifecycleViolation {
                 detail: "pending effect buffer must be drained before next on_event".to_string(),
@@ -173,9 +180,10 @@ impl HostedRunner {
             });
         }
 
+        let decision_index = post_entry_len - 1;
         let entry = self
             .decision_log
-            .get(post_entry_len - 1)
+            .get(decision_index)
             .ok_or(HostedStepError::MissingDecisionEntry)?;
 
         let run_calls = self.runtime.run_call_count().saturating_sub(pre_run_calls);
@@ -214,7 +222,7 @@ impl HostedRunner {
 
             if !drained_effects.is_empty() {
                 self.applied_effects
-                    .record(&entry.event_id, drained_effects.clone());
+                    .record(decision_index, drained_effects.clone());
             }
         } else {
             if run_calls != 0 {
@@ -244,7 +252,7 @@ impl HostedRunner {
 
     pub fn into_capture_bundle(self) -> CaptureBundle {
         let mut bundle = self.session.into_bundle();
-        enrich_bundle_with_effects(&mut bundle, self.applied_effects.map());
+        enrich_bundle_with_effects(&mut bundle, self.applied_effects.effects());
         bundle
     }
 
@@ -483,6 +491,118 @@ mod tests {
         }
     }
 
+    fn build_context_set_number_from_price_graph() -> ExpandedGraph {
+        let mut nodes = HashMap::new();
+
+        nodes.insert(
+            "gate".to_string(),
+            ExpandedNode {
+                runtime_id: "gate".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "const_bool".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::from([("value".to_string(), ParameterValue::Bool(true))]),
+            },
+        );
+
+        nodes.insert(
+            "emit".to_string(),
+            ExpandedNode {
+                runtime_id: "emit".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "emit_if_true".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::new(),
+            },
+        );
+
+        nodes.insert(
+            "price_source".to_string(),
+            ExpandedNode {
+                runtime_id: "price_source".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "context_number_source".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::from([(
+                    "key".to_string(),
+                    ParameterValue::String("price".to_string()),
+                )]),
+            },
+        );
+
+        nodes.insert(
+            "ctx_set".to_string(),
+            ExpandedNode {
+                runtime_id: "ctx_set".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "context_set_number".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::from([(
+                    "key".to_string(),
+                    ParameterValue::String("ema".to_string()),
+                )]),
+            },
+        );
+
+        let edges = vec![
+            ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "gate".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "input".to_string(),
+                },
+            },
+            ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "event".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "ctx_set".to_string(),
+                    port_name: "event".to_string(),
+                },
+            },
+            ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "price_source".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "ctx_set".to_string(),
+                    port_name: "value".to_string(),
+                },
+            },
+        ];
+
+        ExpandedGraph {
+            nodes,
+            edges,
+            boundary_inputs: vec![],
+            boundary_outputs: vec![OutputPortSpec {
+                name: "outcome".to_string(),
+                maps_to: OutputRef {
+                    node_id: "ctx_set".to_string(),
+                    port_name: "outcome".to_string(),
+                },
+            }],
+        }
+    }
+
     fn build_merge_precedence_graph() -> ExpandedGraph {
         let mut nodes = HashMap::new();
 
@@ -679,6 +799,47 @@ mod tests {
             provides,
             binder,
             adapter_provenance: "adapter:test@1.0.0;sha256:test".to_string(),
+        }
+    }
+
+    fn adapter_provides_for_number_effect() -> AdapterProvides {
+        let context = HashMap::from([
+            (
+                "price".to_string(),
+                ContextKeyProvision {
+                    ty: "Number".to_string(),
+                    required: false,
+                    writable: false,
+                },
+            ),
+            (
+                "ema".to_string(),
+                ContextKeyProvision {
+                    ty: "Number".to_string(),
+                    required: false,
+                    writable: true,
+                },
+            ),
+        ]);
+
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "price": { "type": "number" },
+                "ema": { "type": "number" }
+            },
+            "additionalProperties": false
+        });
+        let mut event_schemas = HashMap::new();
+        event_schemas.insert("price_bar".to_string(), schema);
+
+        AdapterProvides {
+            context,
+            events: HashSet::from(["price_bar".to_string()]),
+            effects: HashSet::from(["set_context".to_string()]),
+            event_schemas,
+            capture_format_version: "1".to_string(),
+            adapter_fingerprint: "adapter:test@1.0.0;sha256:test".to_string(),
         }
     }
 
@@ -949,5 +1110,125 @@ mod tests {
             Some(adapter_ok),
         );
         assert!(ok.is_ok());
+    }
+
+    #[test]
+    fn decision_order_preserves_effects_across_steps() {
+        let provides = adapter_provides_for_number_effect();
+        let runtime = runtime_for_graph(
+            build_context_set_number_from_price_graph(),
+            provides.clone(),
+        );
+        let adapter = adapter_config(provides);
+
+        let mut runner = HostedRunner::new(
+            GraphId::new("g"),
+            Constraints::default(),
+            runtime,
+            "runtime:test".to_string(),
+            Some(adapter),
+        )
+        .expect("hosted runner should initialize");
+
+        runner
+            .step(HostedEvent {
+                event_id: "evt_1".to_string(),
+                kind: ExternalEventKind::Command,
+                at: EventTime::default(),
+                semantic_kind: Some("price_bar".to_string()),
+                payload: Some(serde_json::json!({"price": 100.0})),
+            })
+            .expect("first duplicate-id step should execute");
+
+        runner
+            .step(HostedEvent {
+                event_id: "evt_2".to_string(),
+                kind: ExternalEventKind::Command,
+                at: EventTime::default(),
+                semantic_kind: Some("price_bar".to_string()),
+                payload: Some(serde_json::json!({"price": 200.0})),
+            })
+            .expect("second duplicate-id step should execute");
+
+        let bundle = runner.into_capture_bundle();
+        assert_eq!(bundle.decisions.len(), 2);
+
+        let first_writes = &bundle.decisions[0].effects[0].effect.writes;
+        let second_writes = &bundle.decisions[1].effects[0].effect.writes;
+
+        assert_eq!(first_writes[0].key, "ema");
+        assert_eq!(second_writes[0].key, "ema");
+        assert_eq!(
+            first_writes[0].value,
+            ergo_runtime::common::Value::Number(100.0)
+        );
+        assert_eq!(
+            second_writes[0].value,
+            ergo_runtime::common::Value::Number(200.0)
+        );
+    }
+
+    #[test]
+    fn step_rejects_duplicate_event_id() {
+        let runtime = runtime_for_graph(build_number_source_graph(), AdapterProvides::default());
+        let mut runner = HostedRunner::new(
+            GraphId::new("g"),
+            Constraints::default(),
+            runtime,
+            "runtime:test".to_string(),
+            None,
+        )
+        .expect("hosted runner should initialize");
+
+        runner
+            .step(HostedEvent {
+                event_id: "dup_evt".to_string(),
+                kind: ExternalEventKind::Command,
+                at: EventTime::default(),
+                semantic_kind: None,
+                payload: Some(serde_json::json!({"foo": "bar"})),
+            })
+            .expect("first event should execute");
+
+        let err = runner
+            .step(HostedEvent {
+                event_id: "dup_evt".to_string(),
+                kind: ExternalEventKind::Command,
+                at: EventTime::default(),
+                semantic_kind: None,
+                payload: Some(serde_json::json!({"foo": "baz"})),
+            })
+            .expect_err("duplicate event id must fail");
+
+        assert!(matches!(
+            err,
+            HostedStepError::DuplicateEventId { event_id } if event_id == "dup_evt"
+        ));
+    }
+
+    #[test]
+    fn replay_step_rejects_duplicate_event_id() {
+        let runtime = runtime_for_graph(build_number_source_graph(), AdapterProvides::default());
+        let mut runner = HostedRunner::new(
+            GraphId::new("g"),
+            Constraints::default(),
+            runtime,
+            "runtime:test".to_string(),
+            None,
+        )
+        .expect("hosted runner should initialize");
+
+        let event = ExternalEvent::mechanical(EventId::new("dup_evt"), ExternalEventKind::Command);
+        runner
+            .replay_step(event.clone())
+            .expect("first replay event should execute");
+
+        let err = runner
+            .replay_step(event)
+            .expect_err("duplicate replay event id must fail");
+        assert!(matches!(
+            err,
+            HostedStepError::DuplicateEventId { event_id } if event_id == "dup_evt"
+        ));
     }
 }

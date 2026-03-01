@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
@@ -68,6 +69,9 @@ pub enum ReplayError {
     },
     UnexpectedAdapterProvidedForNoAdapterCapture,
     AdapterRequiredForProvenancedCapture,
+    DuplicateEventId {
+        event_id: EventId,
+    },
     EffectMismatch {
         event_id: EventId,
         effect_index: usize,
@@ -123,6 +127,7 @@ pub fn validate_bundle_strict(
     expectations: StrictReplayExpectations<'_>,
 ) -> Result<(), ReplayError> {
     validate_bundle(bundle)?;
+    validate_unique_event_ids(bundle)?;
     validate_replay_provenance(bundle, expectations)?;
     Ok(())
 }
@@ -178,6 +183,19 @@ fn validate_replay_provenance(
         });
     }
 
+    Ok(())
+}
+
+fn validate_unique_event_ids(bundle: &CaptureBundle) -> Result<(), ReplayError> {
+    let mut seen = HashSet::new();
+    for record in &bundle.events {
+        let id = record.event_id.as_str().to_string();
+        if !seen.insert(id.clone()) {
+            return Err(ReplayError::DuplicateEventId {
+                event_id: EventId::new(id),
+            });
+        }
+    }
     Ok(())
 }
 

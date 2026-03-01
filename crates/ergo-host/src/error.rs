@@ -2,6 +2,7 @@ use ergo_adapter::host::{EffectApplyError, HandlerCoverageError};
 
 #[derive(Debug)]
 pub enum HostedStepError {
+    DuplicateEventId { event_id: String },
     MissingSemanticKind,
     MissingPayload,
     PayloadMustBeObject,
@@ -18,6 +19,13 @@ pub enum HostedStepError {
 impl std::fmt::Display for HostedStepError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::DuplicateEventId { event_id } => {
+                write!(
+                    f,
+                    "duplicate event_id '{}' in canonical host runner",
+                    event_id
+                )
+            }
             Self::MissingSemanticKind => {
                 write!(f, "semantic_kind is required in adapter-bound mode")
             }

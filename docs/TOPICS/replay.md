@@ -31,6 +31,7 @@ Canonical capture and replay use a v2 bundle shape:
 - Required `adapter_provenance` field (adapter fingerprint or `none`)
 - Required `runtime_provenance` field (`rpv1:sha256:<hex>`)
 - Required `decisions[].effects` field (empty vector allowed; missing field invalid)
+- Strict replay rejects duplicate `events[].event_id` values
 - Unknown fields rejected at deserialization (`deny_unknown_fields`)
 - Legacy `adapter_version` bundles rejected during deserialization in strict paths
 - This repo treats capture bundles/fixtures as ephemeral artifacts; schema compatibility can be intentionally broken when fixtures are migrated in the same change
@@ -62,6 +63,7 @@ Canonical replay execution is host-owned:
 - event rehydration with hash checks
 - `HostedRunner::replay_step(...)` execution
 - effect-integrity comparison against host-enriched capture decisions
+- host effect enrichment keyed by decision order (`decisions[i]`), not by `event_id`
 
 The supervisor remains the scheduling authority inside this host replay path.
 

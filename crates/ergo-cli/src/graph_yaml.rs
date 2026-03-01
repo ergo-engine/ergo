@@ -218,6 +218,7 @@ fn run_canonical(
     let mut episodes: Vec<(String, usize)> = Vec::new();
     let mut current_episode: Option<usize> = None;
     let mut event_counter = 0usize;
+    let mut seen_fixture_event_ids = HashSet::new();
 
     for item in items {
         match item {
@@ -239,6 +240,21 @@ fn run_canonical(
 
                 event_counter += 1;
                 let event_id = id.unwrap_or_else(|| format!("fixture_evt_{}", event_counter));
+                if !seen_fixture_event_ids.insert(event_id.clone()) {
+                    return Err(render_cli_error(
+                        &CliErrorInfo::new(
+                            "fixture.duplicate_event_id",
+                            format!(
+                                "fixture event id '{}' appears more than once in canonical run input",
+                                event_id
+                            ),
+                        )
+                        .with_where(format!("fixture event '{}'", event_id))
+                        .with_fix(
+                            "make fixture event ids unique, or omit ids to auto-generate unique fixture_evt_* ids",
+                        ),
+                    ));
+                }
                 let step_event = if adapter_bound {
                     let semantic = semantic_kind.ok_or_else(|| {
                         render_cli_error(
@@ -2039,6 +2055,44 @@ outputs:
         assert!(
             err.contains("code: fixture.unexpected_semantic_kind")
                 && err.contains("where: fixture event"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn canonical_run_rejects_duplicate_fixture_event_ids() {
+        let graph = r#"
+kind: cluster
+id: basic
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#;
+        let graph_path = write_temp_yaml("basic_duplicate_event_id.yaml", graph);
+        let fixture_path = write_temp_fixture(
+            "basic_duplicate_event_id.fixture.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
+{\"kind\":\"event\",\"event\":{\"type\":\"Command\",\"id\":\"dup_evt\"}}\n\
+{\"kind\":\"event\",\"event\":{\"type\":\"Command\",\"id\":\"dup_evt\"}}\n",
+        );
+        let args = vec![
+            "--fixture".to_string(),
+            fixture_path.to_string_lossy().to_string(),
+        ];
+
+        let err = run_graph_command(&graph_path, &args).expect_err("duplicate event ids must fail");
+        assert!(
+            err.contains("code: fixture.duplicate_event_id"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.contains("dup_evt") && err.contains("make fixture event ids unique"),
             "unexpected error: {err}"
         );
     }

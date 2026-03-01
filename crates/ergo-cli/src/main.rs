@@ -598,6 +598,17 @@ fn format_replay_error(err: &ReplayError) -> String {
             .with_where("replay option '--adapter'")
             .with_fix("provide --adapter <adapter.yaml> that matches capture provenance"),
         ),
+        ReplayError::DuplicateEventId { event_id } => render_cli_error(
+            &CliErrorInfo::new(
+                "replay.duplicate_event_id",
+                format!(
+                    "duplicate event_id '{}' in strict replay capture input",
+                    event_id.as_str()
+                ),
+            )
+            .with_where(format!("capture event '{}'", event_id.as_str()))
+            .with_fix("regenerate capture with unique event ids or repair the capture artifact"),
+        ),
         ReplayError::EffectMismatch {
             event_id,
             effect_index,
@@ -945,6 +956,70 @@ outputs:
             .expect_err("host replay should reject invalid rehydrated event payload");
         assert!(
             err.contains("code: replay.event_rehydrate_failed"),
+            "unexpected err: {err}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn replay_graph_rejects_duplicate_event_ids_in_strict_preflight() -> Result<(), String> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-cli-replay-duplicate-event-id-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
+
+        let graph_path = temp_dir.join("graph.yaml");
+        let fixture_path = temp_dir.join("fixture.jsonl");
+        let capture_path = temp_dir.join("capture.json");
+
+        let graph = r#"
+kind: cluster
+id: replay_basic
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#;
+        let fixture = "\
+{\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
+{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n\
+{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n";
+
+        fs::write(&graph_path, graph).map_err(|err| format!("write graph: {err}"))?;
+        fs::write(&fixture_path, fixture).map_err(|err| format!("write fixture: {err}"))?;
+
+        let run_args = vec![
+            "--fixture".to_string(),
+            fixture_path.to_string_lossy().to_string(),
+            "--capture-output".to_string(),
+            capture_path.to_string_lossy().to_string(),
+        ];
+        graph_yaml::run_graph_command(&graph_path, &run_args)?;
+
+        let mut bundle = load_bundle(&capture_path)?;
+        let duplicate = bundle.events[0].event_id.clone();
+        bundle.events[1].event_id = duplicate;
+        fs::write(
+            &capture_path,
+            serde_json::to_vec_pretty(&bundle)
+                .map_err(|err| format!("serialize capture: {err}"))?,
+        )
+        .map_err(|err| format!("rewrite capture: {err}"))?;
+
+        let err = replay_graph(&capture_path, &graph_path, &[], None)
+            .expect_err("strict replay preflight must reject duplicate event ids");
+        assert!(
+            err.contains("code: replay.duplicate_event_id"),
             "unexpected err: {err}"
         );
 

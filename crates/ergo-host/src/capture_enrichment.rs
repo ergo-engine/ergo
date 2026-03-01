@@ -1,17 +1,13 @@
-use std::collections::BTreeMap;
-
-use ergo_adapter::EventId;
 use ergo_runtime::common::ActionEffect;
 use ergo_supervisor::replay::hash_effect;
 use ergo_supervisor::{CaptureBundle, CapturedActionEffect};
 
 pub fn enrich_bundle_with_effects(
     bundle: &mut CaptureBundle,
-    effects_by_event: &BTreeMap<String, Vec<ActionEffect>>,
+    effects_by_decision: &[Vec<ActionEffect>],
 ) {
-    for record in &mut bundle.decisions {
-        let event_id = record.event_id.as_str();
-        let Some(effects) = effects_by_event.get(event_id) else {
+    for (index, record) in bundle.decisions.iter_mut().enumerate() {
+        let Some(effects) = effects_by_decision.get(index) else {
             continue;
         };
 
@@ -26,16 +22,19 @@ pub fn enrich_bundle_with_effects(
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct AppliedEffectsByEvent {
-    inner: BTreeMap<String, Vec<ActionEffect>>,
+pub struct AppliedEffectsByDecision {
+    inner: Vec<Vec<ActionEffect>>,
 }
 
-impl AppliedEffectsByEvent {
-    pub fn record(&mut self, event_id: &EventId, effects: Vec<ActionEffect>) {
-        self.inner.insert(event_id.as_str().to_string(), effects);
+impl AppliedEffectsByDecision {
+    pub fn record(&mut self, decision_index: usize, effects: Vec<ActionEffect>) {
+        if self.inner.len() <= decision_index {
+            self.inner.resize_with(decision_index + 1, Vec::new);
+        }
+        self.inner[decision_index] = effects;
     }
 
-    pub fn map(&self) -> &BTreeMap<String, Vec<ActionEffect>> {
+    pub fn effects(&self) -> &[Vec<ActionEffect>] {
         &self.inner
     }
 }

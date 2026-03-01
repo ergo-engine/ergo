@@ -415,6 +415,28 @@ fn strict_replay_rejects_runtime_provenance_mismatch() {
     assert!(matches!(err, ReplayError::RuntimeProvenanceMismatch { .. }));
 }
 
+#[test]
+fn strict_replay_rejects_duplicate_event_ids() {
+    let events = vec![
+        make_event_record("dup_evt", Duration::from_secs(0)),
+        make_event_record("dup_evt", Duration::from_secs(1)),
+    ];
+    let bundle = baseline_bundle(events, Constraints::default());
+
+    let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
+    let err = replay_checked_strict(
+        &bundle,
+        runtime,
+        strict_expectations(NO_ADAPTER_PROVENANCE, "rpv1:sha256:test"),
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        err,
+        ReplayError::DuplicateEventId { ref event_id } if event_id == &EventId::new("dup_evt")
+    ));
+}
+
 /// REP-1b: Point-of-use hash verification catches mid-stream corruption.
 #[test]
 fn replay_rejects_mid_stream_corruption() {

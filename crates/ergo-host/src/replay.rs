@@ -406,6 +406,118 @@ mod tests {
         }
     }
 
+    fn build_context_set_number_from_price_graph() -> ExpandedGraph {
+        let mut nodes = HashMap::new();
+
+        nodes.insert(
+            "gate".to_string(),
+            ExpandedNode {
+                runtime_id: "gate".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "const_bool".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::from([("value".to_string(), ParameterValue::Bool(true))]),
+            },
+        );
+
+        nodes.insert(
+            "emit".to_string(),
+            ExpandedNode {
+                runtime_id: "emit".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "emit_if_true".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::new(),
+            },
+        );
+
+        nodes.insert(
+            "price_source".to_string(),
+            ExpandedNode {
+                runtime_id: "price_source".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "context_number_source".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::from([(
+                    "key".to_string(),
+                    ParameterValue::String("price".to_string()),
+                )]),
+            },
+        );
+
+        nodes.insert(
+            "ctx_set".to_string(),
+            ExpandedNode {
+                runtime_id: "ctx_set".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "context_set_number".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::from([(
+                    "key".to_string(),
+                    ParameterValue::String("ema".to_string()),
+                )]),
+            },
+        );
+
+        let edges = vec![
+            ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "gate".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "input".to_string(),
+                },
+            },
+            ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "event".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "ctx_set".to_string(),
+                    port_name: "event".to_string(),
+                },
+            },
+            ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "price_source".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "ctx_set".to_string(),
+                    port_name: "value".to_string(),
+                },
+            },
+        ];
+
+        ExpandedGraph {
+            nodes,
+            edges,
+            boundary_inputs: Vec::new(),
+            boundary_outputs: vec![OutputPortSpec {
+                name: "outcome".to_string(),
+                maps_to: OutputRef {
+                    node_id: "ctx_set".to_string(),
+                    port_name: "outcome".to_string(),
+                },
+            }],
+        }
+    }
+
     fn adapter_provides(context_keys: &[&str]) -> AdapterProvides {
         let mut context = HashMap::new();
         for key in context_keys {
@@ -425,6 +537,48 @@ mod tests {
                 "price": { "type": "number" },
                 "armed": { "type": "boolean" },
                 "once_state": { "type": "boolean" }
+            },
+            "additionalProperties": false
+        });
+
+        let mut event_schemas = HashMap::new();
+        event_schemas.insert("price_bar".to_string(), schema);
+
+        AdapterProvides {
+            context,
+            events: HashSet::from(["price_bar".to_string()]),
+            effects: HashSet::from(["set_context".to_string()]),
+            event_schemas,
+            capture_format_version: "1".to_string(),
+            adapter_fingerprint: ADAPTER_PROVENANCE.to_string(),
+        }
+    }
+
+    fn adapter_provides_for_number_effect() -> AdapterProvides {
+        let context = HashMap::from([
+            (
+                "price".to_string(),
+                ContextKeyProvision {
+                    ty: "Number".to_string(),
+                    required: false,
+                    writable: false,
+                },
+            ),
+            (
+                "ema".to_string(),
+                ContextKeyProvision {
+                    ty: "Number".to_string(),
+                    required: false,
+                    writable: true,
+                },
+            ),
+        ]);
+
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "price": { "type": "number" },
+                "ema": { "type": "number" }
             },
             "additionalProperties": false
         });
@@ -628,6 +782,52 @@ mod tests {
         assert!(matches!(
             err,
             HostedReplayError::Compare(ReplayError::EffectMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn duplicate_event_id_capture_fails_strict_preflight() {
+        let graph = build_context_set_number_from_price_graph();
+        let provides = adapter_provides_for_number_effect();
+        let mut capture_runner = runner_for_graph(graph.clone(), provides.clone());
+
+        capture_runner
+            .step(HostedEvent {
+                event_id: "evt_1".to_string(),
+                kind: ExternalEventKind::Command,
+                at: ergo_adapter::EventTime::default(),
+                semantic_kind: Some("price_bar".to_string()),
+                payload: Some(serde_json::json!({"price": 100.0})),
+            })
+            .expect("first duplicate-id step should execute");
+        capture_runner
+            .step(HostedEvent {
+                event_id: "evt_2".to_string(),
+                kind: ExternalEventKind::Command,
+                at: ergo_adapter::EventTime::default(),
+                semantic_kind: Some("price_bar".to_string()),
+                payload: Some(serde_json::json!({"price": 200.0})),
+            })
+            .expect("second capture step should execute");
+
+        let mut captured = capture_runner.into_capture_bundle();
+        assert_eq!(captured.decisions.len(), 2);
+        // Corrupt bundle identity to duplicate event IDs and ensure strict preflight catches it.
+        captured.events[1].event_id = captured.events[0].event_id.clone();
+
+        let replay_runner = runner_for_graph(graph, provides);
+        let err = replay_bundle_strict(
+            &captured,
+            replay_runner,
+            StrictReplayExpectations {
+                expected_adapter_provenance: ADAPTER_PROVENANCE,
+                expected_runtime_provenance: RUNTIME_PROVENANCE,
+            },
+        )
+        .expect_err("duplicate event IDs must fail strict replay preflight");
+        assert!(matches!(
+            err,
+            HostedReplayError::Preflight(ReplayError::DuplicateEventId { .. })
         ));
     }
 }

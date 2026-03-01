@@ -1,6 +1,6 @@
 ---
 Authority: CANONICAL
-Version: v0.35
+Version: v0.36
 Owner: Claude (Structural Auditor)
 Last Updated: 2026-03-01
 Scope: Phase boundaries, enforcement loci, gap tracking
@@ -9,7 +9,7 @@ Change Rule: Operational log
 
 # Phase Invariants — v0
 
-**Tracked invariants:** 189
+**Tracked invariants:** 191
 
 This document defines the invariants that must hold at each phase boundary in the system. It is the authoritative reference for what is true, where that truth is enforced, and what happens if it is violated.
 
@@ -103,11 +103,13 @@ These tests are permanent. Failure indicates invariant regression.
 | RUN-CANON-1 | Canonical graph run requires explicit event source | CLI validation (`ergo run <graph.yaml>` requires `--fixture` unless `--direct`) | Enforced |
 | RUN-CANON-2 | Adapter binding is mandatory only for adapter-dependent graphs | CLI dependency scan over expanded source/action manifests | Enforced |
 | REP-7 | Strict replay requires provenance contract match | `supervisor::replay::replay_checked_strict` | Enforced |
+| REP-8 | Strict replay rejects duplicate `events[].event_id` values | `supervisor::replay::validate_bundle_strict` | Enforced |
 
 Notes:
 - Adapter-dependent graph detection is based on required source context keys and action writes.
 - Adapter-independent canonical captures use explicit provenance sentinel `none`.
 - Capture bundles are strict v2 (`capture_version: "v2"`): `adapter_provenance`, `runtime_provenance`, and `decisions[].effects` are required, unknown fields are rejected, and legacy `adapter_version` bundles fail deserialization.
+- Strict replay preflight enforces unique `events[].event_id` identities.
 - Repo policy: capture bundles and fixtures are ephemeral/regenerated artifacts; backward compatibility across bundle schema revisions is not guaranteed inside this repo.
 
 ---
@@ -477,11 +479,14 @@ must be implemented as clusters with explicit state flow through environment.
 | HST-6 | Merge precedence is deterministic (`incoming > store`) | execution_model.md §3 | — | — | ✓ | ✓ |
 | HST-7 | Buffer lifecycle is replace-only, drain-once, commit-non-empty, no rollback | SUPERVISOR.md §2.3 | — | — | ✓ | ✓ |
 | HST-8 | Canonical host loop enforces one `on_event` lifecycle per step cycle | SUPERVISOR.md §2.2 | — | — | ✓ | ✓ |
+| HST-9 | Canonical host runner rejects duplicate `event_id` values across step lifecycle (including replay_step) | host boundary contract | — | — | ✓ | ✓ |
 | DOC-GATE-1 | Canonical-complete claims blocked while doctrine ledger has open rows | CANONICAL process rule | — | — | ✓ | ✓ |
 | SDK-CANON-1 | SDK delegates canonical execution to core host path | CANONICAL scope rule | — | — | ✓ | ✓ |
 
 Notes:
 - HST-1/HST-7: canonical mode drains buffered effects from host runtime wrapper after `on_event`, then applies in-order through handlers.
+- Host capture enrichment associates applied effects by decision order (`decisions[i]`), not by `event_id`, so duplicate fixture/event IDs cannot overwrite prior decision effects.
+- HST-9: duplicate `event_id` rejection is enforced at `HostedRunner`, so non-CLI host callers cannot bypass identity guarantees.
 - HST-7 commit rule follows SUP-6 partial execution semantics: commit if drained buffer is non-empty regardless of final termination; no transactional rollback.
 - DOC-GATE-1 enforcement script: `tools/verify_doctrine_gate.sh`; integrated via `tools/verify_runtime_surface.sh`.
 
@@ -945,3 +950,4 @@ Changes to this document require the same review bar as changes to frozen specs.
 | v0.33 | 2026-02-18 | Codex | Synced tracked invariant count to canonical table IDs (172, including RTHANDLE-* IDs) and aligned tooling expectations with canonical path/parser behavior. |
 | v0.34 | 2026-02-22 | Sebastian | Core freeze §3 updated: acknowledge existing infrastructure actions (ack, annotate); clarify freeze applies to domain-specific capability actions, not infrastructure actions. context_set_* follows same precedent. |
 | v0.35 | 2026-03-01 | Codex | Tightened strict v2 capture contract note to explicitly require `decisions[].effects` (empty vector allowed; missing field invalid) to match canonical host replay enforcement. |
+| v0.36 | 2026-03-01 | Codex | Added REP-8 (strict replay duplicate `event_id` rejection) and HST-9 (host-level duplicate `event_id` rejection for step/replay_step), with enforcement loci and tests. |
