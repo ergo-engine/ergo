@@ -12,6 +12,7 @@ path = "src/main.rs"
 ergo-adapter = { path = "../adapter" }
 ergo-runtime = { path = "../runtime" }
 ergo-supervisor = { path = "../supervisor", features = ["demo"] }
+ergo-host = { path = "../ergo-host" }
 csv = "1.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

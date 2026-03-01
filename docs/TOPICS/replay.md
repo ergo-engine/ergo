@@ -6,11 +6,16 @@
 
 ## Replay Scope
 
-Replay determinism covers **supervisor scheduling decisions only**.
+Canonical replay (D3 Scope A) verifies:
 
-- Same external events → identical scheduling decisions
-- Internal graph execution is not captured
-- Source outputs, compute results, action effects are not recorded
+- Same captured events + same provenances -> identical supervisor decisions
+- Host-owned effect integrity (`decisions[].effects`) after host re-execution
+- Event payload hash checks before rehydration
+
+Scope limits:
+
+- Cross-ingestion normalization parity is deferred (`INGEST-TIME-1`)
+- Internal source/compute payload outputs are not replay-captured as first-class records
 
 **Source:** [PHASE_INVARIANTS.md](../CANONICAL/PHASE_INVARIANTS.md) REP-SCOPE
 
@@ -25,6 +30,7 @@ Canonical capture and replay use a v2 bundle shape:
 - `capture_version: "v2"`
 - Required `adapter_provenance` field (adapter fingerprint or `none`)
 - Required `runtime_provenance` field (`rpv1:sha256:<hex>`)
+- Required `decisions[].effects` field (empty vector allowed; missing field invalid)
 - Unknown fields rejected at deserialization (`deny_unknown_fields`)
 - Legacy `adapter_version` bundles rejected during deserialization in strict paths
 - This repo treats capture bundles/fixtures as ephemeral artifacts; schema compatibility can be intentionally broken when fixtures are migrated in the same change
@@ -45,6 +51,19 @@ Canonical capture and replay use a v2 bundle shape:
 | REP-7 | Strict replay provenance contract match (adapter + runtime surface) | `replay_checked_strict` |
 
 **Source:** [PHASE_INVARIANTS.md](../CANONICAL/PHASE_INVARIANTS.md) §8 + Canonical Run / Replay Strictness (v2)
+
+---
+
+## Host Replay Authority
+
+Canonical replay execution is host-owned:
+
+- strict preflight (`validate_bundle_strict`)
+- event rehydration with hash checks
+- `HostedRunner::replay_step(...)` execution
+- effect-integrity comparison against host-enriched capture decisions
+
+The supervisor remains the scheduling authority inside this host replay path.
 
 ---
 

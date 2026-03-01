@@ -59,7 +59,7 @@ impl<L: DecisionLog> DecisionLog for CapturingDecisionLog<L> {
             .collect();
 
         let mut record = EpisodeInvocationRecord::from(&entry);
-        record.effects = Some(captured_effects);
+        record.effects = captured_effects;
 
         let mut guard = self.bundle.lock().expect("capture bundle poisoned");
         guard.decisions.push(record);
@@ -522,10 +522,7 @@ mod tests {
         let guard = bundle.lock().expect("bundle poisoned");
         assert_eq!(guard.decisions.len(), 1);
         let record = &guard.decisions[0];
-        let captured_effects = record
-            .effects
-            .as_ref()
-            .expect("captured record must have effects = Some(...)");
+        let captured_effects = &record.effects;
         assert_eq!(captured_effects.len(), 1, "one effect expected");
         assert_eq!(captured_effects[0].effect, effect);
 

@@ -1,15 +1,15 @@
 ---
 Authority: CANONICAL
-Version: v0.34
+Version: v0.35
 Owner: Claude (Structural Auditor)
-Last Updated: 2026-02-18
+Last Updated: 2026-03-01
 Scope: Phase boundaries, enforcement loci, gap tracking
 Change Rule: Operational log
 ---
 
 # Phase Invariants — v0
 
-**Tracked invariants:** 179
+**Tracked invariants:** 189
 
 This document defines the invariants that must hold at each phase boundary in the system. It is the authoritative reference for what is true, where that truth is enforced, and what happens if it is violated.
 
@@ -107,7 +107,7 @@ These tests are permanent. Failure indicates invariant regression.
 Notes:
 - Adapter-dependent graph detection is based on required source context keys and action writes.
 - Adapter-independent canonical captures use explicit provenance sentinel `none`.
-- Capture bundles are strict v2 (`capture_version: "v2"`): `adapter_provenance` and `runtime_provenance` are required, unknown fields are rejected, and legacy `adapter_version` bundles fail deserialization.
+- Capture bundles are strict v2 (`capture_version: "v2"`): `adapter_provenance`, `runtime_provenance`, and `decisions[].effects` are required, unknown fields are rejected, and legacy `adapter_version` bundles fail deserialization.
 - Repo policy: capture bundles and fixtures are ephemeral/regenerated artifacts; backward compatibility across bundle schema revisions is not guaranteed inside this repo.
 
 ---
@@ -465,6 +465,26 @@ must be implemented as clusters with explicit state flow through environment.
   - **Note:** `ErrKind::ValidationFailed` was defined since v0 but never instantiated until this fix. Both error paths should have used it from the start.
   - **Test:** `runtime_handle_rejects_required_context_when_provides_empty` updated to assert `ValidationFailed`.
 
+### Canonical Host Loop (ergo-host)
+
+| ID | Invariant | Spec | Type | Assertion | Validation | Test |
+|----|-----------|:----:|:----:|:---------:|:----------:|:----:|
+| HST-1 | Effect application locus is host boundary, not DecisionLog readback | SUPERVISOR.md §3, adapter.md | — | — | ✓ | ✓ |
+| HST-2 | `set_context` validates declared key, writable, and type | adapter.md #COMP-11..14 | — | — | ✓ | ✓ |
+| HST-3 | Non-invoke decisions apply no effects | SUPERVISOR.md §3 | — | — | ✓ | ✓ |
+| HST-4 | Retry path cannot duplicate committed effects | SUPERVISOR.md §3 | — | — | ✓ | ✓ |
+| HST-5 | Load fails when graph-emittable accepted effect lacks handler | adapter.md #COMP-13/14 | — | — | ✓ | ✓ |
+| HST-6 | Merge precedence is deterministic (`incoming > store`) | execution_model.md §3 | — | — | ✓ | ✓ |
+| HST-7 | Buffer lifecycle is replace-only, drain-once, commit-non-empty, no rollback | SUPERVISOR.md §2.3 | — | — | ✓ | ✓ |
+| HST-8 | Canonical host loop enforces one `on_event` lifecycle per step cycle | SUPERVISOR.md §2.2 | — | — | ✓ | ✓ |
+| DOC-GATE-1 | Canonical-complete claims blocked while doctrine ledger has open rows | CANONICAL process rule | — | — | ✓ | ✓ |
+| SDK-CANON-1 | SDK delegates canonical execution to core host path | CANONICAL scope rule | — | — | ✓ | ✓ |
+
+Notes:
+- HST-1/HST-7: canonical mode drains buffered effects from host runtime wrapper after `on_event`, then applies in-order through handlers.
+- HST-7 commit rule follows SUP-6 partial execution semantics: commit if drained buffer is non-empty regardless of final termination; no transactional rollback.
+- DOC-GATE-1 enforcement script: `tools/verify_doctrine_gate.sh`; integrated via `tools/verify_runtime_surface.sh`.
+
 ---
 
 ## 8. Replay Phase
@@ -487,7 +507,7 @@ must be implemented as clusters with explicit state flow through environment.
 | REP-4 | Capture/runtime type separation | — | ✓ | — | — | — |
 | REP-5 | No wall-clock time in supervisor | — | — | — | — | ✓ |
 | REP-6 | Stateful trigger state captured for replay | N/A | N/A | N/A | N/A | ✅ CLOSED BY CLARIFICATION |
-| REP-SCOPE | Replay covers supervisor scheduling only | — | — | — | — | — |
+| REP-SCOPE | Canonical replay Scope A: supervisor scheduling + host-owned effect integrity (same-ingestion path) | — | — | — | — | — |
 | SOURCE-TRUST | Source determinism is trust-based | — | — | — | — | — |
 
 ### Notes
@@ -513,7 +533,7 @@ additional capture mechanism is required.
 
 **Authority:** Sebastian (Freeze Authority), 2025-12-28
 
-- **REP-SCOPE:** Replay determinism covers supervisor scheduling decisions only. It does not capture or replay the internal execution of the runtime graph. Source outputs, compute results, and action side effects are not recorded. Replay verifies that given the same external events, the supervisor makes identical scheduling decisions.
+- **REP-SCOPE:** Canonical replay for D3 is **Scope A (self-consistency)**. It enforces strict capture preflight (version + provenance), rehydrates events with hash checks, re-executes through `ergo-host`, and verifies decision/effect integrity against host-owned captured effects. It still does not guarantee cross-ingestion normalization parity; that is tracked as `INGEST-TIME-1`.
 - **SOURCE-TRUST:** Source primitive determinism is trust-based, not enforced. The `SourcePrimitiveManifest` declares `execution.deterministic = true`, but the trait has no compile-time restrictions preventing non-deterministic implementations. Enforcement is by convention and code review. See `source/registry.rs::validate_manifest()`.
 
 ### UI-REF-CLIENT-1: UI Authoring is Non-Canonical
@@ -586,7 +606,7 @@ This freeze applies to:
 
 ### Notes
 
-- **ADP-15/ADP-16:** Deferred until REP-SCOPE expansion to include context/effect capture fields.
+- **ADP-15/ADP-16:** Deferred until REP-SCOPE expansion beyond Scope A to cover cross-ingestion normalization guarantees (`INGEST-TIME-1`).
 - **Enforcement location:** `crates/adapter/src/validate.rs`
 - **Test location:** `crates/adapter/tests/validation.rs`
 
@@ -824,7 +844,7 @@ This freeze applies to:
 
 - **COMP-10:** Enforced by Validation Phase invariant **V.2** (coarse boundary-kind wiring matrix) in `crates/runtime/src/runtime/validate.rs`.
 - **COMP-9 (split Action inputs):** STABLE contract distinguishes Trigger-gated `event` inputs from scalar payload inputs (`Source`/`Compute`), and runtime validation now enforces this destination-input-type-aware split within **V.2**.
-- **COMP-15:** Deferred until REP-SCOPE expansion (capture includes context/effect).
+- **COMP-15:** Deferred until REP-SCOPE expansion beyond Scope A (cross-ingestion normalization).
 - **Enforcement location:** `crates/adapter/src/composition.rs` (invoked by `ergo_adapter::RuntimeHandle::run`).
 - **Test location:** `crates/adapter/tests/composition_tests.rs`
 
@@ -924,3 +944,4 @@ Changes to this document require the same review bar as changes to frozen specs.
 | v0.32 | 2026-02-17 | Codex | Added canonical run/replay strictness section (RUN-CANON-1, RUN-CANON-2, REP-7) and documented strict v1 capture bundle requirements (required adapter_provenance, unknown-field rejection, legacy adapter_version deserialization failure). |
 | v0.33 | 2026-02-18 | Codex | Synced tracked invariant count to canonical table IDs (172, including RTHANDLE-* IDs) and aligned tooling expectations with canonical path/parser behavior. |
 | v0.34 | 2026-02-22 | Sebastian | Core freeze §3 updated: acknowledge existing infrastructure actions (ack, annotate); clarify freeze applies to domain-specific capability actions, not infrastructure actions. context_set_* follows same precedent. |
+| v0.35 | 2026-03-01 | Codex | Tightened strict v2 capture contract note to explicitly require `decisions[].effects` (empty vector allowed; missing field invalid) to match canonical host replay enforcement. |

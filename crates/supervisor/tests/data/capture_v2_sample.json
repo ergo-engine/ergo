@@ -28,7 +28,8 @@
       "episode_id": 0,
       "deadline": null,
       "termination": "Completed",
-      "retry_count": 0
+      "retry_count": 0,
+      "effects": []
     }
   ],
   "adapter_provenance": "none",

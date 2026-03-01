@@ -8,11 +8,10 @@ use crate::error_format::{
     cli_error_from_error_info, render_cli_error, render_error_info, CliErrorInfo,
 };
 use ergo_adapter::{
-    bind_semantic_event_with_binder, compile_event_binder, fixture,
-    validate_action_adapter_composition, validate_capture_format,
-    validate_source_adapter_composition, AdapterProvides, EventBinder, EventId, EventPayload,
-    EventTime, ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
+    compile_event_binder, fixture, validate_action_adapter_composition, validate_capture_format,
+    validate_source_adapter_composition, AdapterProvides, EventBinder, GraphId, RuntimeHandle,
 };
+use ergo_host::{HostedAdapterConfig, HostedEvent, HostedRunner};
 use ergo_runtime::catalog::{
     build_core_catalog, core_registries, CorePrimitiveCatalog, CoreRegistries,
 };
@@ -27,17 +26,10 @@ use ergo_runtime::runtime::{
     ExecutionContext, Registries, RuntimeError, RuntimeEvent, RuntimeValue,
 };
 use ergo_supervisor::{
-    write_capture_bundle, CaptureJsonStyle, CapturingSession, Constraints, Decision, DecisionLog,
-    DecisionLogEntry, NO_ADAPTER_PROVENANCE,
+    write_capture_bundle, CaptureJsonStyle, Constraints, Decision, NO_ADAPTER_PROVENANCE,
 };
 use semver::{Version as SemverVersion, VersionReq};
 use serde::Deserialize;
-
-struct NullLog;
-
-impl DecisionLog for NullLog {
-    fn log(&self, _entry: DecisionLogEntry) {}
-}
 
 pub(crate) struct PreparedGraphRuntime {
     pub graph_id: String,
@@ -184,17 +176,37 @@ fn run_canonical(
         Arc::new(expanded),
         Arc::new(catalog),
         Arc::new(registries),
-        adapter_provides,
+        adapter_provides.clone(),
     );
-
-    let mut session = CapturingSession::new_with_provenance(
+    let adapter_config = if adapter_bound {
+        Some(HostedAdapterConfig {
+            provides: adapter_provides,
+            binder: event_binder
+                .take()
+                .expect("event binder must exist when adapter is bound"),
+            adapter_provenance,
+        })
+    } else {
+        None
+    };
+    let mut runner = HostedRunner::new(
         GraphId::new(graph_id.to_string()),
         Constraints::default(),
-        NullLog,
         runtime,
-        adapter_provenance,
         runtime_provenance.to_string(),
-    );
+        adapter_config,
+    )
+    .map_err(|err| {
+        render_cli_error(
+            &CliErrorInfo::new(
+                "host.runner_init_failed",
+                "failed to initialize canonical host runner",
+            )
+            .with_where("canonical host setup")
+            .with_fix("check adapter coverage and host configuration")
+            .with_detail(err.to_string()),
+        )
+    })?;
 
     let items = fixture::parse_fixture(fixture_path).map_err(|err| {
         format!(
@@ -227,10 +239,7 @@ fn run_canonical(
 
                 event_counter += 1;
                 let event_id = id.unwrap_or_else(|| format!("fixture_evt_{}", event_counter));
-                let event = if adapter_bound {
-                    let binder = event_binder
-                        .as_ref()
-                        .expect("event binder must exist when adapter is bound");
+                let step_event = if adapter_bound {
                     let semantic = semantic_kind.ok_or_else(|| {
                         render_cli_error(
                             &CliErrorInfo::new(
@@ -246,30 +255,17 @@ fn run_canonical(
                             ),
                         )
                     })?;
-                    let payload_value = payload
-                        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
-
-                    bind_semantic_event_with_binder(
-                        binder,
-                        EventId::new(event_id.clone()),
+                    HostedEvent {
+                        event_id: event_id.clone(),
                         kind,
-                        EventTime::default(),
-                        &semantic,
-                        payload_value,
-                    )
-                    .map_err(|err| {
-                        render_cli_error(
-                            &CliErrorInfo::new(
-                                "fixture.semantic_binding_failed",
-                                format!("fixture event '{}' binding failed", event_id),
-                            )
-                            .with_where(format!("fixture event '{}'", event_id))
-                            .with_fix(
-                                "fix fixture payload/semantic_kind to match adapter event schema",
-                            )
-                            .with_detail(err.to_string()),
-                        )
-                    })?
+                        at: ergo_adapter::EventTime::default(),
+                        semantic_kind: Some(semantic),
+                        payload: Some(
+                            payload.unwrap_or_else(|| {
+                                serde_json::Value::Object(serde_json::Map::new())
+                            }),
+                        ),
+                    }
                 } else {
                     if semantic_kind.is_some() {
                         return Err(render_cli_error(
@@ -284,10 +280,26 @@ fn run_canonical(
                             .with_fix("remove semantic_kind or run with --adapter <adapter.yaml>"),
                         ));
                     }
-                    event_from_fixture_payload(&event_id, kind, payload)?
+                    HostedEvent {
+                        event_id: event_id.clone(),
+                        kind,
+                        at: ergo_adapter::EventTime::default(),
+                        semantic_kind: None,
+                        payload,
+                    }
                 };
 
-                session.on_event(event);
+                runner.step(step_event).map_err(|err| {
+                    render_cli_error(
+                        &CliErrorInfo::new(
+                            "host.step_failed",
+                            format!("fixture event '{}' canonical host step failed", event_id),
+                        )
+                        .with_where(format!("fixture event '{}'", event_id))
+                        .with_fix("inspect fixture payload/schema and host effect handlers")
+                        .with_detail(err.to_string()),
+                    )
+                })?;
                 let episode_index = current_episode.expect("episode index set");
                 episodes[episode_index].1 += 1;
             }
@@ -306,7 +318,7 @@ fn run_canonical(
         return Err(format!("episode '{}' has no events", label));
     }
 
-    let bundle = session.into_bundle();
+    let bundle = runner.into_capture_bundle();
     let capture_path = opts
         .capture_output
         .clone()
@@ -338,27 +350,6 @@ fn run_canonical(
     );
     println!("capture artifact: {}", capture_path.display());
     Ok(())
-}
-
-fn event_from_fixture_payload(
-    event_id: &str,
-    kind: ExternalEventKind,
-    payload: Option<serde_json::Value>,
-) -> Result<ExternalEvent, String> {
-    let event_id_value = EventId::new(event_id.to_string());
-    if let Some(payload) = payload {
-        let data = serde_json::to_vec(&payload)
-            .map_err(|err| format!("fixture payload encode error for event '{event_id}': {err}"))?;
-        ExternalEvent::with_payload(
-            event_id_value,
-            kind,
-            EventTime::default(),
-            EventPayload { data },
-        )
-        .map_err(|err| format!("fixture payload invalid for event '{event_id}': {err}"))
-    } else {
-        Ok(ExternalEvent::mechanical(event_id_value, kind))
-    }
 }
 
 fn default_capture_output_path(graph_path: &Path) -> PathBuf {

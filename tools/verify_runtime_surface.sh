@@ -24,19 +24,19 @@ else
   SEARCH_CMD=(grep -En)
 fi
 
-echo "[1/8] cargo fmt --check"
+echo "[1/9] cargo fmt --check"
 cargo fmt --check
 
-echo "[2/8] cargo test -p ergo-supervisor"
+echo "[2/9] cargo test -p ergo-supervisor"
 cargo test -p ergo-supervisor
 
-echo "[3/8] cargo test -p ergo-cli"
+echo "[3/9] cargo test -p ergo-cli"
 cargo test -p ergo-cli
 
-echo "[4/8] cargo test"
+echo "[4/9] cargo test"
 cargo test
 
-echo "[5/8] replay-naming drift guard"
+echo "[5/9] replay-naming drift guard"
 if "${SEARCH_CMD[@]}" "demo-1-replay\\.json|fixture-replay\\.json|println!\\(\\\"replay artifact:" \
   crates/ergo-cli/src/main.rs \
   crates/supervisor/src/fixture_runner.rs \
@@ -45,7 +45,10 @@ if "${SEARCH_CMD[@]}" "demo-1-replay\\.json|fixture-replay\\.json|println!\\(\\\
   exit 1
 fi
 
-echo "[6/8] phase-invariants count guard"
+echo "[6/9] doctrine gate guard"
+bash tools/verify_doctrine_gate.sh
+
+echo "[7/9] phase-invariants count guard"
 "$PYTHON_BIN" - <<'PY'
 import re
 import sys
@@ -87,10 +90,14 @@ if parsed != declared:
 print(f"phase invariants count check passed ({parsed})")
 PY
 
-echo "[7/8] ergo-mcp invariant parser tests"
-"$PYTHON_BIN" -m unittest discover -s tools/ergo-mcp -p "test_*.py"
+echo "[8/9] ergo-mcp invariant parser tests"
+if [[ -d "tools/ergo-mcp" ]]; then
+  "$PYTHON_BIN" -m unittest discover -s tools/ergo-mcp -p "test_*.py"
+else
+  echo "skipping ergo-mcp invariant parser tests (tools/ergo-mcp not present)"
+fi
 
-echo "[8/8] windows compile guard (${WINDOWS_TARGET})"
+echo "[9/9] windows compile guard (${WINDOWS_TARGET})"
 HOST_OS="$(uname -s 2>/dev/null || echo unknown)"
 STRICT_WINDOWS_GUARD="${ERGO_STRICT_WINDOWS_GUARD:-0}"
 
