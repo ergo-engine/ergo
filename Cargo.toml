@@ -5,6 +5,7 @@ members = [
     "crates/runtime",
     "crates/adapter",
     "crates/supervisor",
+    "crates/ergo-host",
     "crates/ergo-cli",
 ]
 

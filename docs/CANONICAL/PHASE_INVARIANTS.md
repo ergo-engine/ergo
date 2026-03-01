@@ -2,14 +2,14 @@
 Authority: CANONICAL
 Version: v0.34
 Owner: Claude (Structural Auditor)
-Last Updated: 2026-02-18
+Last Updated: 2026-02-28
 Scope: Phase boundaries, enforcement loci, gap tracking
 Change Rule: Operational log
 ---
 
 # Phase Invariants — v0
 
-**Tracked invariants:** 179
+**Tracked invariants:** 189
 
 This document defines the invariants that must hold at each phase boundary in the system. It is the authoritative reference for what is true, where that truth is enforced, and what happens if it is violated.
 
@@ -464,6 +464,26 @@ must be implemented as clusters with explicit state flow through environment.
   - **Fix:** Both paths now return `ErrKind::ValidationFailed`, which is non-retryable (`should_retry` returns `false`) and categorically correct per SUPERVISOR.md §2.4.
   - **Note:** `ErrKind::ValidationFailed` was defined since v0 but never instantiated until this fix. Both error paths should have used it from the start.
   - **Test:** `runtime_handle_rejects_required_context_when_provides_empty` updated to assert `ValidationFailed`.
+
+### Canonical Host Loop (ergo-host)
+
+| ID | Invariant | Spec | Type | Assertion | Validation | Test |
+|----|-----------|:----:|:----:|:---------:|:----------:|:----:|
+| HST-1 | Effect application locus is host boundary, not DecisionLog readback | SUPERVISOR.md §3, adapter.md | — | — | ✓ | ✓ |
+| HST-2 | `set_context` validates declared key, writable, and type | adapter.md #COMP-11..14 | — | — | ✓ | ✓ |
+| HST-3 | Non-invoke decisions apply no effects | SUPERVISOR.md §3 | — | — | ✓ | ✓ |
+| HST-4 | Retry path cannot duplicate committed effects | SUPERVISOR.md §3 | — | — | ✓ | ✓ |
+| HST-5 | Load fails when graph-emittable accepted effect lacks handler | adapter.md #COMP-13/14 | — | — | ✓ | ✓ |
+| HST-6 | Merge precedence is deterministic (`incoming > store`) | execution_model.md §3 | — | — | ✓ | ✓ |
+| HST-7 | Buffer lifecycle is replace-only, drain-once, commit-non-empty, no rollback | SUPERVISOR.md §2.3 | — | — | ✓ | ✓ |
+| HST-8 | Canonical host loop enforces one `on_event` lifecycle per step cycle | SUPERVISOR.md §2.2 | — | — | ✓ | ✓ |
+| DOC-GATE-1 | Canonical-complete claims blocked while doctrine ledger has open rows | CANONICAL process rule | — | — | ✓ | ✓ |
+| SDK-CANON-1 | SDK delegates canonical execution to core host path | CANONICAL scope rule | — | — | ✓ | ✓ |
+
+Notes:
+- HST-1/HST-7: canonical mode drains buffered effects from host runtime wrapper after `on_event`, then applies in-order through handlers.
+- HST-7 commit rule follows SUP-6 partial execution semantics: commit if drained buffer is non-empty regardless of final termination; no transactional rollback.
+- DOC-GATE-1 enforcement script: `tools/verify_doctrine_gate.sh`; integrated via `tools/verify_runtime_surface.sh`.
 
 ---
 

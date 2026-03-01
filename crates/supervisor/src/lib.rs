@@ -4,8 +4,7 @@ use std::time::Duration;
 
 use ergo_adapter::{
     capture::ExternalEventRecord, AdapterProvides, ErrKind, EventId, EventTime, ExecutionContext,
-    ExternalEvent, ExternalEventKind, GraphId, RunResult, RunTermination, RuntimeHandle,
-    RuntimeInvoker,
+    ExternalEvent, ExternalEventKind, GraphId, RunTermination, RuntimeHandle, RuntimeInvoker,
 };
 use ergo_runtime::catalog::{CorePrimitiveCatalog, CoreRegistries};
 use ergo_runtime::cluster::ExpandedGraph;
@@ -256,7 +255,8 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
             self.recent_invocations.push_back(now);
         }
 
-        let (result, retry_count) = self.invoke_with_retries(event.event_id(), event.context());
+        let (termination, retry_count) =
+            self.invoke_with_retries(event.event_id(), event.context());
 
         self.in_flight = self.in_flight.saturating_sub(1);
 
@@ -265,9 +265,9 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
             Decision::Invoke,
             None,
             episode_id,
-            Some(result.termination),
+            Some(termination),
             retry_count,
-            result.effects,
+            vec![],
         );
     }
 
@@ -362,7 +362,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
             self.recent_invocations.push_back(now);
         }
 
-        let (result, retry_count) = self.invoke_with_retries(&item.origin_event_id, &item.ctx);
+        let (termination, retry_count) = self.invoke_with_retries(&item.origin_event_id, &item.ctx);
 
         self.in_flight = self.in_flight.saturating_sub(1);
 
@@ -371,9 +371,9 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
             Decision::Invoke,
             None,
             episode_id,
-            Some(result.termination),
+            Some(termination),
             retry_count,
-            result.effects,
+            vec![],
         );
     }
 
@@ -408,20 +408,20 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
         &self,
         event_id: &EventId,
         ctx: &ergo_adapter::ExecutionContext,
-    ) -> (RunResult, usize) {
+    ) -> (RunTermination, usize) {
         let mut attempts = 0_usize;
-        let mut result = self
-            .runtime
-            .run(&self.graph_id, event_id, ctx, self.constraints.deadline);
-
-        while attempts < self.constraints.max_retries && Self::should_retry(&result.termination) {
-            attempts = attempts.saturating_add(1);
-            result = self
-                .runtime
+        let mut termination =
+            self.runtime
                 .run(&self.graph_id, event_id, ctx, self.constraints.deadline);
+
+        while attempts < self.constraints.max_retries && Self::should_retry(&termination) {
+            attempts = attempts.saturating_add(1);
+            termination =
+                self.runtime
+                    .run(&self.graph_id, event_id, ctx, self.constraints.deadline);
         }
 
-        (result, attempts)
+        (termination, attempts)
     }
 
     fn should_retry(termination: &RunTermination) -> bool {
@@ -469,7 +469,6 @@ mod tests {
     use super::{
         DecisionLog, DecisionLogEntry, ErrKind, RunTermination, RuntimeInvoker, Supervisor,
     };
-    use ergo_adapter::RunResult;
 
     struct TestLog;
 
@@ -486,11 +485,8 @@ mod tests {
             _event_id: &ergo_adapter::EventId,
             _ctx: &ergo_adapter::ExecutionContext,
             _deadline: Option<std::time::Duration>,
-        ) -> RunResult {
-            RunResult {
-                termination: RunTermination::Completed,
-                effects: vec![],
-            }
+        ) -> RunTermination {
+            RunTermination::Completed
         }
     }
 

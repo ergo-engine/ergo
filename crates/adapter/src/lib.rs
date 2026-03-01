@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -17,6 +17,7 @@ pub mod composition;
 pub mod errors;
 pub mod event_binding;
 pub mod fixture;
+pub mod host;
 pub mod manifest;
 pub mod provenance;
 pub mod provides;
@@ -481,6 +482,34 @@ impl RuntimeHandle {
         }
     }
 
+    /// Derive effect kinds that this composed graph can emit based on registered action manifests.
+    pub fn graph_emittable_effect_kinds(&self) -> HashSet<String> {
+        let mut kinds = HashSet::new();
+
+        for node in self.graph.nodes.values() {
+            let Some(meta) = self
+                .catalog
+                .get(&node.implementation.impl_id, &node.implementation.version)
+            else {
+                continue;
+            };
+            if meta.kind != PrimitiveKind::Action {
+                continue;
+            }
+
+            let Some(action) = self.registries.actions.get(&node.implementation.impl_id) else {
+                continue;
+            };
+
+            // Current runtime action surface emits `set_context` for write specs.
+            if !action.manifest().effects.writes.is_empty() {
+                kinds.insert("set_context".to_string());
+            }
+        }
+
+        kinds
+    }
+
     fn validate_composition(
         &self,
         graph: &ergo_runtime::runtime::ValidatedGraph,
@@ -574,7 +603,7 @@ pub trait RuntimeInvoker {
         event_id: &EventId,
         ctx: &ExecutionContext,
         deadline: Option<Duration>,
-    ) -> RunResult;
+    ) -> RunTermination;
 }
 
 impl RuntimeInvoker for RuntimeHandle {
@@ -584,8 +613,8 @@ impl RuntimeInvoker for RuntimeHandle {
         event_id: &EventId,
         ctx: &ExecutionContext,
         deadline: Option<Duration>,
-    ) -> RunResult {
-        Self::run(self, graph_id, event_id, ctx, deadline)
+    ) -> RunTermination {
+        RuntimeHandle::run(self, graph_id, event_id, ctx, deadline).termination
     }
 }
 
@@ -632,28 +661,20 @@ impl RuntimeInvoker for FaultRuntimeHandle {
         event_id: &EventId,
         ctx: &ExecutionContext,
         deadline: Option<Duration>,
-    ) -> RunResult {
+    ) -> RunTermination {
         let _ = graph_id;
         let _ = ctx.inner();
 
         if matches!(deadline, Some(d) if d.is_zero()) {
-            return RunResult {
-                termination: RunTermination::Aborted,
-                effects: vec![],
-            };
+            return RunTermination::Aborted;
         }
 
         let mut guard = self.schedule.lock().expect("fault schedule poisoned");
         let queue = guard.entry(event_id.clone()).or_default();
-        let termination = if !queue.is_empty() {
+        if !queue.is_empty() {
             queue.remove(0)
         } else {
             self.default.clone()
-        };
-
-        RunResult {
-            termination,
-            effects: vec![],
         }
     }
 }
@@ -688,7 +709,7 @@ mod tests {
             Some(Duration::ZERO),
         );
 
-        assert_eq!(result.termination, RunTermination::Aborted);
+        assert_eq!(result, RunTermination::Aborted);
     }
 
     #[test]
@@ -704,14 +725,11 @@ mod tests {
 
         // First call returns scheduled outcome
         let result = handle.run(&GraphId::new("g"), &EventId::new("e1"), &ctx, None);
-        assert_eq!(
-            result.termination,
-            RunTermination::Failed(ErrKind::NetworkTimeout)
-        );
+        assert_eq!(result, RunTermination::Failed(ErrKind::NetworkTimeout));
 
         // Second call returns default
         let result = handle.run(&GraphId::new("g"), &EventId::new("e1"), &ctx, None);
-        assert_eq!(result.termination, RunTermination::Completed);
+        assert_eq!(result, RunTermination::Completed);
     }
 
     /// TEST-PUMP-SERDE-1: Verify Pump serializes as "Pump" not "Tick".
@@ -916,6 +934,44 @@ mod tests {
         assert_eq!(
             result.termination,
             RunTermination::Failed(ErrKind::ValidationFailed)
+        );
+    }
+
+    #[test]
+    fn runtime_handle_derives_graph_emittable_effect_kinds() {
+        let graph = ExpandedGraph {
+            nodes: HashMap::from([(
+                "act".to_string(),
+                ExpandedNode {
+                    runtime_id: "act".to_string(),
+                    authoring_path: vec![],
+                    implementation: ImplementationInstance {
+                        impl_id: "context_set_bool".to_string(),
+                        requested_version: "0.1.0".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    parameters: HashMap::from([(
+                        "key".to_string(),
+                        ergo_runtime::cluster::ParameterValue::String("armed".to_string()),
+                    )]),
+                },
+            )]),
+            edges: vec![],
+            boundary_inputs: vec![],
+            boundary_outputs: vec![],
+        };
+
+        let runtime = RuntimeHandle::new(
+            Arc::new(graph),
+            Arc::new(build_core_catalog()),
+            Arc::new(core_registries().expect("core registries should initialize")),
+            AdapterProvides::default(),
+        );
+
+        let kinds = runtime.graph_emittable_effect_kinds();
+        assert!(
+            kinds.contains("set_context"),
+            "context_set_* actions should derive set_context as emittable"
         );
     }
 }

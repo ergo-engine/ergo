@@ -674,7 +674,7 @@ fn demo_1_complex_graph_executes_and_replays() {
 }
 
 #[test]
-fn context_set_bool_effect_is_captured_and_replayed_with_real_runtime() {
+fn context_set_bool_supervisor_path_replays_with_empty_effect_log() {
     let graph = Arc::new(build_context_set_bool_graph());
     let catalog = Arc::new(build_core_catalog());
     let core_registries = Arc::new(core_registries().expect("core registries should build"));
@@ -723,30 +723,22 @@ fn context_set_bool_effect_is_captured_and_replayed_with_real_runtime() {
     let captured_effects = bundle.decisions[0]
         .effects
         .as_ref()
-        .expect("effect-aware capture must store effects");
-    assert_eq!(captured_effects.len(), 1, "one effect expected");
-    assert_eq!(captured_effects[0].effect.kind, "set_context");
-    assert_eq!(captured_effects[0].effect.writes.len(), 1);
-    assert_eq!(captured_effects[0].effect.writes[0].key, "armed");
-    assert_eq!(
-        captured_effects[0].effect.writes[0].value,
-        ergo_runtime::common::Value::Bool(false)
-    );
+        .expect("effect-aware field should be present in supervisor capture");
     assert!(
-        !captured_effects[0].effect_hash.is_empty(),
-        "captured effect hash must be present"
+        captured_effects.is_empty(),
+        "supervisor capture is termination-only; host layer owns effect enrichment"
     );
 
     let replayed = replay(&bundle, runtime);
     assert_eq!(replayed.len(), 1, "one replayed decision expected");
     assert!(
         compare_decisions(&bundle.decisions, &replayed).unwrap(),
-        "capture/replay decisions (including effects) should match"
+        "capture/replay decisions should match in termination-only supervisor path"
     );
 }
 
 #[test]
-fn once_cluster_effect_is_captured_and_replayed_with_real_runtime() {
+fn once_cluster_supervisor_path_replays_with_empty_effect_log() {
     let graph = Arc::new(build_once_cluster_behavior_graph());
     let catalog = Arc::new(build_core_catalog());
     let core_registries = Arc::new(core_registries().expect("core registries should build"));
@@ -795,25 +787,17 @@ fn once_cluster_effect_is_captured_and_replayed_with_real_runtime() {
     let captured_effects = bundle.decisions[0]
         .effects
         .as_ref()
-        .expect("effect-aware capture must store effects");
-    assert_eq!(captured_effects.len(), 1, "one effect expected");
-    assert_eq!(captured_effects[0].effect.kind, "set_context");
-    assert_eq!(captured_effects[0].effect.writes.len(), 1);
-    assert_eq!(captured_effects[0].effect.writes[0].key, "once_state");
-    assert_eq!(
-        captured_effects[0].effect.writes[0].value,
-        ergo_runtime::common::Value::Bool(true)
-    );
+        .expect("effect-aware field should be present in supervisor capture");
     assert!(
-        !captured_effects[0].effect_hash.is_empty(),
-        "captured effect hash must be present"
+        captured_effects.is_empty(),
+        "supervisor capture is termination-only; host layer owns effect enrichment"
     );
 
     let replayed = replay(&bundle, runtime);
     assert_eq!(replayed.len(), 1, "one replayed decision expected");
     assert!(
         compare_decisions(&bundle.decisions, &replayed).unwrap(),
-        "capture/replay decisions (including effects) should match"
+        "capture/replay decisions should match in termination-only supervisor path"
     );
 }
 
