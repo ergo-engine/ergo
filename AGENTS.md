@@ -11,9 +11,11 @@ These protocols define your authority boundaries, escalation rules, and the mult
 ---
 
 ## Project Structure & Module Organization
-- `crates/runtime/`, `crates/adapter/`, `crates/supervisor/`: core Rust crates.
-- `crates/reference-client/`: Vite/React authoring UI (excluded from Cargo workspace).
-- `docs/`: authoritative specs and contracts (`docs/INDEX.md`); `target/` is generated.
+- `crates/kernel/runtime/`, `crates/kernel/adapter/`, `crates/kernel/supervisor/`: kernel crates.
+- `crates/prod/core/host/`, `crates/prod/core/loader/`: product core crates.
+- `crates/prod/clients/cli/`, `crates/prod/clients/sdk-rust/`, `crates/prod/clients/sdk-types/`: thin client crates.
+- `crates/shared/test-support/`, `crates/shared/fixtures/`: shared support crates.
+- `docs/`: current docs tree; `docs_legacy/` retains canonical/frozen/stable authorities during migration; `target/` is generated.
 
 ## Build, Test, and Development Commands
 Rust (run from repo root):
@@ -22,11 +24,8 @@ Rust (run from repo root):
 - `cargo test -p ergo-runtime` — run a single crate.
 - `cargo fmt` — format with rustfmt.
 
-UI (run from `crates/reference-client`):
-- `npm install` — install dependencies.
-- `npm run dev` — start Vite dev server.
-- `npm run build` — production build.
-- `npm run typecheck` — TypeScript typecheck.
+UI:
+- reference client is intentionally removed from active workspace.
 
 ## Coding Style & Naming Conventions
 - Rust 2021; follow rustfmt defaults and standard Rust casing (`snake_case` modules/functions, `PascalCase` types).
@@ -34,8 +33,8 @@ UI (run from `crates/reference-client`):
 - UI components in `crates/reference-client/src/ui` use `PascalCase.tsx`.
 
 ## Testing Guidelines
-- Unit tests live alongside code with `#[test]`; integration tests are in `crates/supervisor/tests`.
-- Golden Spike tests are canonical execution paths: `crates/runtime/src/runtime/tests.rs` and `crates/supervisor/tests/integration.rs`.
+- Unit tests live alongside code with `#[test]`; supervisor integration tests are in `crates/kernel/supervisor/tests`.
+- Golden Spike tests are canonical execution paths: `crates/kernel/runtime/src/runtime/tests.rs` and `crates/kernel/supervisor/tests/integration.rs`.
 
 ## Commit & Pull Request Guidelines
 - Commit messages use Conventional Commits with optional scope, e.g. `feat(supervisor): ...`.
@@ -50,8 +49,8 @@ UI (run from `crates/reference-client`):
 - Structural forks require escalation, not issues (COLLABORATION_PROTOCOLS.md §9).
 
 ## Documentation Authority
-- `docs/` is the authoritative source. When specs conflict, higher authority wins: FROZEN → STABLE → CANONICAL → PROJECT.
-- CONTRACTS (`docs/CONTRACTS/`) define external interfaces separately.
+- During migration, canonical/frozen/stable doctrine remains in `docs_legacy/` with authority order: FROZEN → STABLE → CANONICAL → PROJECT.
+- CONTRACTS are in `docs_legacy/CONTRACTS/` until fully migrated.
 - If implementation contradicts higher-authority docs, the code is wrong.
 
 ## Multi-Agent Review Flow

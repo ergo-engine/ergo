@@ -24,6 +24,24 @@ else
   SEARCH_CMD=(grep -En)
 fi
 
+resolve_phase_invariants_path() {
+  if [[ -f "docs_legacy/CANONICAL/PHASE_INVARIANTS.md" ]]; then
+    echo "docs_legacy/CANONICAL/PHASE_INVARIANTS.md"
+    return
+  fi
+  if [[ -f "docs/CANONICAL/PHASE_INVARIANTS.md" ]]; then
+    echo "docs/CANONICAL/PHASE_INVARIANTS.md"
+    return
+  fi
+  echo ""
+}
+
+PHASE_INVARIANTS_PATH="$(resolve_phase_invariants_path)"
+if [[ -z "$PHASE_INVARIANTS_PATH" ]]; then
+  echo "error: phase invariants file not found (expected docs_legacy/CANONICAL/PHASE_INVARIANTS.md or docs/CANONICAL/PHASE_INVARIANTS.md)"
+  exit 1
+fi
+
 echo "[1/9] cargo fmt --check"
 cargo fmt --check
 
@@ -38,23 +56,26 @@ cargo test
 
 echo "[5/9] replay-naming drift guard"
 if "${SEARCH_CMD[@]}" "demo-1-replay\\.json|fixture-replay\\.json|println!\\(\\\"replay artifact:" \
-  crates/ergo-cli/src/main.rs \
-  crates/supervisor/src/fixture_runner.rs \
-  crates/adapter/src/fixture.rs; then
+  crates/prod/clients/cli/src/main.rs \
+  crates/kernel/supervisor/src/fixture_runner.rs \
+  crates/kernel/adapter/src/fixture.rs; then
   echo "error: stale replay-oriented run artifact naming found"
   exit 1
 fi
 
-echo "[6/9] doctrine gate guard"
+echo "[6/10] doctrine gate guard"
 bash tools/verify_doctrine_gate.sh
 
-echo "[7/9] phase-invariants count guard"
-"$PYTHON_BIN" - <<'PY'
+echo "[7/10] layer boundary guard"
+bash tools/verify_layer_boundaries.sh
+
+echo "[8/10] phase-invariants count guard"
+"$PYTHON_BIN" - "$PHASE_INVARIANTS_PATH" <<'PY'
 import re
 import sys
 from pathlib import Path
 
-doc_path = Path("docs/CANONICAL/PHASE_INVARIANTS.md")
+doc_path = Path(sys.argv[1])
 content = doc_path.read_text()
 
 header_match = re.search(r"\*\*Tracked invariants:\*\*\s*([0-9]+)", content)
@@ -90,14 +111,14 @@ if parsed != declared:
 print(f"phase invariants count check passed ({parsed})")
 PY
 
-echo "[8/9] ergo-mcp invariant parser tests"
+echo "[9/10] ergo-mcp invariant parser tests"
 if [[ -d "tools/ergo-mcp" ]]; then
   "$PYTHON_BIN" -m unittest discover -s tools/ergo-mcp -p "test_*.py"
 else
   echo "skipping ergo-mcp invariant parser tests (tools/ergo-mcp not present)"
 fi
 
-echo "[9/9] windows compile guard (${WINDOWS_TARGET})"
+echo "[10/10] windows compile guard (${WINDOWS_TARGET})"
 HOST_OS="$(uname -s 2>/dev/null || echo unknown)"
 STRICT_WINDOWS_GUARD="${ERGO_STRICT_WINDOWS_GUARD:-0}"
 

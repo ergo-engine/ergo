@@ -1,0 +1,9 @@
+[package]
+name = "ergo-sdk-rust"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+ergo-host = { path = "../../core/host" }
+ergo-loader = { path = "../../core/loader" }

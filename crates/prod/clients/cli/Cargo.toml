@@ -1,0 +1,21 @@
+[package]
+name = "ergo-cli"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "ergo"
+path = "src/main.rs"
+
+[dependencies]
+ergo-host = { path = "../../core/host" }
+ergo-fixtures = { path = "../../../shared/fixtures" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+[dev-dependencies]
+ergo-adapter = { path = "../../../kernel/adapter" }
+ergo-runtime = { path = "../../../kernel/runtime" }
+ergo-supervisor = { path = "../../../kernel/supervisor", features = ["demo"] }
