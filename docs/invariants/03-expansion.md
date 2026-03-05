@@ -3,6 +3,7 @@
 **Scope:** Recursive flattening of clusters to primitives.
 
 **Entry invariants:**
+
 - All referenced clusters are loadable
 - All parameters are concretely bound (no unresolved `Exposed` bindings at root)
 
@@ -22,7 +23,7 @@
 
 ### Notes
 
-- **E.3:** Requires assertion. Silent assumption is unacceptable.
+- **E.3:** Enforced via `ValidationError::ExternalInputNotAllowed` in `validate.rs::map_endpoint`.
 - **E.6:** True by clone semantics but not explicitly enforced.
 - **E.7:** Requires doc comment on `ExpandedGraph` to make contract explicit:
 

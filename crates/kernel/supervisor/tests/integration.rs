@@ -189,6 +189,7 @@ fn build_hello_world_graph() -> ExpandedGraph {
 /// 3. The graph executes successfully
 /// 4. RuntimeHandle returns RunTermination::Completed
 /// 5. Supervisor logs Decision::Invoke with termination: Some(Completed)
+#[allow(clippy::arc_with_non_send_sync)]
 #[test]
 fn supervisor_with_real_runtime_executes_hello_world() {
     // Build the hello-world graph
@@ -237,6 +238,7 @@ fn supervisor_with_real_runtime_executes_hello_world() {
 }
 
 /// Capture + replay golden spike: capture in-line with execution, then replay and compare decisions.
+#[allow(clippy::arc_with_non_send_sync)]
 #[test]
 fn capturing_session_enables_round_trip_replay() {
     let graph = Arc::new(build_hello_world_graph());
@@ -303,6 +305,7 @@ fn capturing_session_enables_round_trip_replay() {
     );
 }
 
+#[allow(clippy::arc_with_non_send_sync)]
 #[test]
 fn demo_1_complex_graph_executes_and_replays() {
     let graph = Arc::new(demo_1::build_demo_1_graph());
@@ -378,8 +381,7 @@ fn deferred_episode_retried_on_tick() {
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
 
     // max_in_flight = 0 means ALL events will be deferred
-    let mut constraints = Constraints::default();
-    constraints.max_in_flight = Some(0);
+    let constraints = Constraints { max_in_flight: Some(0), ..Default::default() };
 
     let mut supervisor =
         Supervisor::with_runtime(GraphId::new("test"), constraints, log.clone(), runtime);
@@ -411,9 +413,11 @@ fn deferred_episode_retried_on_tick() {
     // 1. Deferring due to rate limit
     // 2. Sending Tick at later time
 
-    let mut constraints2 = Constraints::default();
-    constraints2.max_per_window = Some(1);
-    constraints2.rate_window = Some(Duration::from_secs(10));
+    let constraints2 = Constraints {
+        max_per_window: Some(1),
+        rate_window: Some(Duration::from_secs(10)),
+        ..Default::default()
+    };
 
     let mut supervisor2 =
         Supervisor::with_runtime(GraphId::new("test2"), constraints2, log2.clone(), runtime2);
@@ -506,9 +510,11 @@ fn tick_respects_episode_id_ordering() {
     let log = CapturingLog::new();
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
 
-    let mut constraints = Constraints::default();
-    constraints.max_per_window = Some(1);
-    constraints.rate_window = Some(Duration::from_secs(10));
+    let constraints = Constraints {
+        max_per_window: Some(1),
+        rate_window: Some(Duration::from_secs(10)),
+        ..Default::default()
+    };
 
     let mut supervisor =
         Supervisor::with_runtime(GraphId::new("test"), constraints, log.clone(), runtime);

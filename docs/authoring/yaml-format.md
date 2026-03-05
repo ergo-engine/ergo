@@ -1,6 +1,6 @@
 # YAML Graph Format — Specification
 
-**Status:** STABLE — implemented in `ergo-loader` decode/discovery and consumed by clients (CLI/SDK)
+**Status:** STABLE — implemented in `ergo-loader` decode/discovery; canonically consumed via `ergo-host` path APIs (`run_graph_from_paths` / `replay_graph_from_paths`) with clients delegating
 **Scope:** How `ClusterDefinition` maps to YAML for hand-authoring and tooling
 **Litmus test:** Demo 1 graph (15 nodes, 16 edges, 4 boundary outputs)
 **Current CLI contract:** `ergo run <graph.yaml> --fixture <events.jsonl> [--adapter <adapter.yaml>] [--capture-output <path>] [--cluster-path <path> ...]` and `ergo fixture run <events.jsonl> --graph <graph.yaml> [...]`
@@ -172,6 +172,7 @@ Parameter values are inferred by type:
 | Object with `exposed` key | `ParameterBinding::Exposed { parent_param }` |
 
 This means:
+
 - `value: 4.0` → literal Number
 - `enabled: true` → literal Bool
 - `label: "hello"` → literal String
@@ -334,6 +335,7 @@ The `node.port` and `id@version` shorthand formats impose constraints on identif
 The parser operates without catalog access. It produces a `ClusterDefinition` from YAML alone. Type resolution, signature inference, and validation happen during `expand()` and `validate()`, which have catalog access.
 
 This means the parser cannot:
+
 - Validate that an `impl_id` exists in the catalog
 - Distinguish String vs Enum parameters
 - Check port names against primitive manifests

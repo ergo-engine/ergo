@@ -297,10 +297,10 @@ fn enforce_action_gating(
     }
 
     for (id, node) in nodes {
-        if node.kind == PrimitiveKind::Action {
-            if !action_inputs.get(id).copied().unwrap_or(false) {
-                return Err(ValidationError::ActionNotGated(id.clone()));
-            }
+        if node.kind == PrimitiveKind::Action
+            && !action_inputs.get(id).copied().unwrap_or(false)
+        {
+            return Err(ValidationError::ActionNotGated(id.clone()));
         }
     }
 
@@ -328,17 +328,14 @@ fn enforce_boundary_outputs(
 }
 
 fn wiring_allowed(from: &PrimitiveKind, to: &PrimitiveKind) -> bool {
-    match (from, to) {
-        (PrimitiveKind::Source, PrimitiveKind::Compute) => true,
-
-        (PrimitiveKind::Compute, PrimitiveKind::Compute) => true,
-        (PrimitiveKind::Compute, PrimitiveKind::Trigger) => true,
-
-        (PrimitiveKind::Trigger, PrimitiveKind::Trigger) => true,
-        (PrimitiveKind::Trigger, PrimitiveKind::Action) => true,
-
-        _ => false,
-    }
+    matches!(
+        (from, to),
+        (PrimitiveKind::Source, PrimitiveKind::Compute)
+            | (PrimitiveKind::Compute, PrimitiveKind::Compute)
+            | (PrimitiveKind::Compute, PrimitiveKind::Trigger)
+            | (PrimitiveKind::Trigger, PrimitiveKind::Trigger)
+            | (PrimitiveKind::Trigger, PrimitiveKind::Action)
+    )
 }
 
 fn wiring_allowed_for_edge(

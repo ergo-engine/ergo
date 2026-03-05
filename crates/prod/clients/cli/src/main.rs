@@ -504,11 +504,11 @@ outputs:
         ])
         .expect("short replay flags should parse");
         assert_eq!(
-            opts.graph_path.as_ref().map(|v| v.as_path()),
+            opts.graph_path.as_deref(),
             Some(Path::new("graph.yaml"))
         );
         assert_eq!(
-            opts.adapter_path.as_ref().map(|v| v.as_path()),
+            opts.adapter_path.as_deref(),
             Some(Path::new("adapter.yaml"))
         );
     }
@@ -523,11 +523,11 @@ outputs:
         ])
         .expect("long replay flags should parse");
         assert_eq!(
-            opts.graph_path.as_ref().map(|v| v.as_path()),
+            opts.graph_path.as_deref(),
             Some(Path::new("graph.yaml"))
         );
         assert_eq!(
-            opts.adapter_path.as_ref().map(|v| v.as_path()),
+            opts.adapter_path.as_deref(),
             Some(Path::new("adapter.yaml"))
         );
     }
@@ -564,7 +564,7 @@ outputs:
         )?;
         assert!(opts.pretty_capture);
         assert_eq!(
-            opts.capture_output.as_ref().map(|v| v.as_path()),
+            opts.capture_output.as_deref(),
             Some(Path::new("demo-short.json"))
         );
 
@@ -578,7 +578,7 @@ outputs:
         )?;
         assert!(alias_opts.pretty_capture);
         assert_eq!(
-            alias_opts.capture_output.as_ref().map(|v| v.as_path()),
+            alias_opts.capture_output.as_deref(),
             Some(Path::new("demo-alias.json"))
         );
 
@@ -597,7 +597,7 @@ outputs:
         )?;
         assert!(opts.pretty_capture);
         assert_eq!(
-            opts.capture_output.as_ref().map(|v| v.as_path()),
+            opts.capture_output.as_deref(),
             Some(Path::new("demo-long.json"))
         );
         Ok(())

@@ -11,6 +11,7 @@ Change Rule: Additive only
 ---
 
 > **Changelog (v0.2):** Terminology alignment with terminology.md. No semantic changes.
+>
 > - `NodeKind::Primitive` → `NodeKind::Impl`
 > - `primitive_id` → `impl_id`
 > - `PrimitiveInstance` → `ImplementationInstance`
@@ -167,6 +168,7 @@ B_out = cluster.output_ports
 ```
 
 Validate:
+
 - Every `B_out` reference exists in `G_expanded`
 - Port names are unique
 - Each port's type is inferrable from its source
@@ -291,6 +293,7 @@ ActionLike  → *            : forbidden (terminal)
 
 `ActionLike` rows are a coarse boundary-level summary. The executable rule is refined by
 expanded Action input type:
+
 - `event` inputs are gating inputs and must originate from `Trigger`
 - scalar inputs are payload inputs and may originate from `Source` or `Compute`
 - scalar payload inputs do not satisfy trigger gating; `V.5` still requires Trigger-gated action execution
@@ -422,6 +425,7 @@ parameters:
 ```
 
 Behavior:
+
 - `derive_key` is resolved at expansion time in `build_resolved_params(...)` during nested cluster instantiation.
 - The resolved value is a `ParameterValue::String` using a length-prefixed (UTF-8 byte length), namespaced encoding (`__ergo/...`).
 - Different instantiation paths produce different keys; same slot names at the same path produce the same key (intentional aliasing).
@@ -495,11 +499,13 @@ implementation convenience.
 However, the **expanded graph is a structural artifact only**.
 
 The expansion output MUST contain only:
+
 - Graph topology (nodes and edges)
 - Implementation identity (`impl_id`, `version`)
 - Authoring trace information (`authoring_path` or equivalent)
 
 The expansion output MUST NOT contain:
+
 - Resolved types or manifests
 - Side-effect semantics
 - Execution behavior
@@ -552,6 +558,7 @@ is_breaking_change(old_sig, new_sig) -> bool:
 ```
 
 Changes that modify the hash:
+
 - Adding/removing/renaming ports
 - Changing port types or cardinality
 - Changing wireability
@@ -574,6 +581,7 @@ Cluster:
 ```
 
 Inference:
+
 - `has_wireable_outputs = false`
 - `BoundaryKind = ActionLike`
 - `has_side_effects = true`
@@ -595,6 +603,7 @@ Cluster:
 ```
 
 Inference:
+
 - `has_wireable_outputs = true`
 - `has_wireable_event_out = true`
 - `BoundaryKind = TriggerLike`
@@ -620,6 +629,7 @@ Cluster:
 ```
 
 Inference:
+
 - `has_wireable_outputs = false`
 - `BoundaryKind = ActionLike`
 - `has_side_effects = false` (if LogValue is pure)

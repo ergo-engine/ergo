@@ -5,6 +5,7 @@
 **Source:** supervisor.md §2.5, crates/kernel/adapter/src/capture.rs, crates/kernel/supervisor/src/replay.rs
 
 **Entry invariants:**
+
 - Capture bundle is well-formed
 - All recorded events have valid hashes
 
@@ -34,7 +35,7 @@
 - **REP-2:** `rehydrate()` uses only record fields; no external state dependency.
 - **REP-3:** `FaultRuntimeHandle` explicitly discards `graph_id` and `ctx.inner()`; keys on `EventId` only.
 - **REP-4:** `ExecutionContext` has no serde derives. Capture types (`ExternalEventRecord`, `EpisodeInvocationRecord`) are separate from runtime types (`ExternalEvent`, `DecisionLogEntry`).
-- **REP-5:** Test at `replay_harness.rs:150-157` enforces no `SystemTime` usage in supervisor.
+- **REP-5:** `replay_harness::no_wall_clock_usage` enforces no `SystemTime::now`/`Instant::now` usage in supervisor sources.
 - **REP-6:** CLOSED BY CLARIFICATION (2025-12-28)
 
 **Resolution:** Prior documentation suggesting "triggers may hold internal state" was a
@@ -52,18 +53,18 @@ additional capture mechanism is required.
 - **REP-SCOPE:** Canonical replay for D3 is **Scope A (self-consistency)**. It enforces strict capture preflight (version + provenance), rehydrates events with hash checks, re-executes through `ergo-host`, and verifies decision/effect integrity against host-owned captured effects. Runtime provenance uses the format `rpv1:sha256:<hex>`. It still does not guarantee cross-ingestion normalization parity; that is tracked as `INGEST-TIME-1`.
 - **SOURCE-TRUST:** Source primitive determinism is trust-based, not enforced. The `SourcePrimitiveManifest` declares `execution.deterministic = true`, but the trait has no compile-time restrictions preventing non-deterministic implementations. Enforcement is by convention and code review. See `source/registry.rs::validate_manifest()`.
 
-### UI-REF-CLIENT-1: UI Authoring is Non-Canonical
+### UI-REF-CLIENT-1: Client Authoring is Non-Canonical
 
 **Status:** Documented
 **Enforcement:** Convention
 
-The `crates/reference-client` crate is a **reference client** demonstrating how to construct and emit `ExpandedGraph` payloads. It is NOT:
+Client libraries may demonstrate how to construct and emit `ExpandedGraph` payloads. They are NOT:
 
 - A canonical contract implementation
 - An enforcement boundary
 - A required dependency for runtime execution
 
-Contract authority remains with Rust types + `ui-runtime.md`. TypeScript types are best-effort mirrors.
+Contract authority remains with Rust types + `ui-runtime.md`; clients delegate canonical run/replay execution to host entrypoints.
 
 ---
 
@@ -79,9 +80,10 @@ The Orchestration Phase (§7) and Replay Phase (§8) implementations are frozen 
 4. **Replay harness API** (`replay()`, `rehydrate()`, `validate_hash()`) is stable
 
 This freeze applies to:
+
 - `crates/kernel/adapter/src/lib.rs` (ExternalEvent, ExecutionContext, RuntimeInvoker, FaultRuntimeHandle)
 - `crates/kernel/adapter/src/capture.rs`
 - `crates/kernel/supervisor/src/lib.rs` (Supervisor, DecisionLog, DecisionLogEntry)
 - `crates/kernel/supervisor/src/replay.rs`
 
-**To unfreeze:** Requires joint escalation per AGENT_CONTRACT.md v1.1.
+**To unfreeze:** Requires joint escalation per repository collaboration protocol (`.agents/COLLABORATION_PROTOCOLS.md`).

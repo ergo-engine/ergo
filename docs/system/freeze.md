@@ -64,6 +64,7 @@ Action → *           : forbidden (terminal)
 Graphs violating these rules are invalid.
 
 Action input gating clarification (frozen):
+
 - Every Action must have at least one Event input wired from a Trigger.
 - Only Event inputs participate in Action execution gating.
 - Non-Event Action inputs are scalar payload inputs (v0: Number/Bool/String) and may be wired from Source or Compute outputs.
@@ -106,6 +107,7 @@ Action input gating clarification (frozen):
 Triggers are ontologically stateless.
 
 A Trigger:
+
 - Gates whether an Action may attempt to affect the external world
 - Evaluates inputs and emits `Emitted` or `NotEmitted`
 - Has no memory of prior evaluations

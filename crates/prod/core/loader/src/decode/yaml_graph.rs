@@ -56,7 +56,7 @@ struct RawClusterDefinition {
 
 impl RawClusterDefinition {
     fn into_cluster_definition(self) -> Result<ClusterDefinition, String> {
-        if self.kind.to_ascii_lowercase() != "cluster" {
+        if !self.kind.eq_ignore_ascii_case("cluster") {
             return Err(format!("kind must be 'cluster', got '{}'", self.kind));
         }
         validate_general_identifier(&self.id, "cluster id", true)?;

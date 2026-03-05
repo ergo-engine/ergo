@@ -1,7 +1,7 @@
 ---
 Authority: FROZEN
 Version: v0
-Last Amended: 2026-01-11
+Last Amended: 2026-03-04
 Scope: Orchestration layer, episode semantics, replay
 Verified Against Tag: v1.0.0-alpha.1
 Change Rule: v1 only
@@ -28,7 +28,7 @@ The Execution Supervisor is a mechanical scheduler that:
 
 - Receives external events
 - Applies mechanical constraints (rate, concurrency, deadline)
-- Invokes `runtime.run(graph, context)` to execute episodes
+- Invokes `runtime.run(graph_id, event_id, execution_context, deadline)` to execute episodes
 - Emits an append-only decision log
 
 External events are mechanical signals (e.g., time ticks, data-arrival notifications, user
@@ -59,7 +59,7 @@ If the Supervisor requires domain knowledge to function, it has exceeded its man
 An **Episode** is one atomic invocation of the runtime:
 
 ```
-runtime.run(graph_id, execution_context) → RunTermination
+runtime.run(graph_id, event_id, execution_context, deadline) → RunTermination
 ```
 
 Episode properties:
@@ -71,7 +71,7 @@ Episode properties:
 The Episode is the unit of Supervisor reasoning. The Supervisor schedules, invokes, and observes
 termination of episodes. It does not decompose them.
 
-**Lifecycle Scope:** Supervisor lifecycle is orchestration-only: instantiate per graph, run episodes, discard. Trigger state is episode-scoped. Each episode begins with fresh state (`HashMap::new()`). Cross-episode continuity is achieved exclusively via external writes (Actions) and reads (Sources). This is enforced by construction: all `ExternalEvent` factories in `ergo-adapter` create fresh `RuntimeExecutionContext`.
+**Lifecycle Scope:** Supervisor lifecycle is orchestration-only: instantiate per graph, run episodes, discard. Triggers are stateless (TRG-STATE-1); they carry no state of any scope. Each episode begins with a fresh `RuntimeExecutionContext`. Cross-episode continuity is achieved exclusively via external writes (Actions) and reads (Sources). This is enforced by construction: all `ExternalEvent` factories in `ergo-adapter` create fresh `RuntimeExecutionContext`.
 
 ### 2.2 ExecutionContext
 
@@ -128,6 +128,7 @@ Allowed variants (examples):
 - `AdapterUnavailable`
 - `ValidationFailed`
 - `RuntimeError`
+- `SemanticError`
 - `DeadlineExceeded`
 - `Cancelled`
 
@@ -148,11 +149,15 @@ The **DecisionLog** is an append-only record of Supervisor decisions.
 
 Each entry contains:
 
-- External event received (or hash)
+- `graph_id` and `event_id`
+- External event payload
 - Decision: invoke / skip / defer
 - Schedule time (if deferred)
 - Episode invocation ID
-- RunTermination observed
+- Applied deadline (if set)
+- RunTermination observed (for invoke decisions)
+- Retry count
+- Effects captured for replay/audit
 
 The DecisionLog enables:
 
@@ -366,7 +371,7 @@ it has likely absorbed policy.
 
 Any PR touching Supervisor internals requires doctrine review.
 
-**Response**: Tag for Claude/ChatGPT review under AGENT_CONTRACT.md v1.1.
+**Response**: Tag for Claude/ChatGPT review under repository collaboration protocol (`.agents/COLLABORATION_PROTOCOLS.md`).
 
 ### SUP-SMELL: "Just This Once" Pressure
 
@@ -439,7 +444,7 @@ Anything not on this list is out of scope.
 
 This document is **FROZEN**.
 
-Changes require joint escalation per AGENT_CONTRACT.md v1.1.
+Changes require joint escalation per repository collaboration protocol (`.agents/COLLABORATION_PROTOCOLS.md`).
 
 ---
 
@@ -452,13 +457,15 @@ Changes require joint escalation per AGENT_CONTRACT.md v1.1.
 | v0.3 | 2025-12-27 | Claude Code | Freeze finalization; Sebastian approval |
 | v0.4 | 2025-12-27 | Claude Prime | Added lifecycle scope note (§2.1) — state is episode-scoped by construction |
 | v0.5 | 2026-01-11 | Claude (Structural Auditor) | Added provenance rule clarification (§2.2) — pins interpretation that "results of prior episodes" refers to Supervisor-injected outcomes, not adapter-provided environment state modified by prior Actions. Sebastian override authorization. |
+| v0.6 | 2026-03-04 | Claude (Structural Auditor) | §2.1 corrected: replaced "Trigger state is episode-scoped" with TRG-STATE-1-aligned language (triggers are stateless). Prior wording conflated ExecutionContext freshness with trigger state. Sebastian override authorization. |
 
 ---
 
 ## 11. Signatures
 
 **Claude acknowledgment:**
-> I have reviewed this specification under AGENT_CONTRACT.md v1.1. I attest that:
+> I have reviewed this specification under repository collaboration protocol (`.agents/COLLABORATION_PROTOCOLS.md`). I attest that:
+>
 > - All invariants (CXT-1, SUP-1 through SUP-7) have named enforcement loci
 > - No ontological expansion is proposed
 > - No policy-smuggling vectors were identified
@@ -476,4 +483,4 @@ Changes require joint escalation per AGENT_CONTRACT.md v1.1.
 **Sebastian approval:**
 > supervisor.md v0 is frozen. Changes require joint agent escalation.
 >
-> Signed: Sebastian (Author / Architect) — approved via Claude Code proxy 
+> Signed: Sebastian (Author / Architect) — approved via Claude Code proxy

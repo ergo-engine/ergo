@@ -739,6 +739,8 @@ mod tests {
         }
     }
 
+    // Allow non-Send/Sync in Arc: CoreRegistries and CorePrimitiveCatalog contain non-Send/Sync types.
+    #[allow(clippy::arc_with_non_send_sync)]
     fn runtime_for_graph(graph: ExpandedGraph, provides: AdapterProvides) -> RuntimeHandle {
         RuntimeHandle::new(
             Arc::new(graph),

@@ -11,7 +11,6 @@ use ergo_supervisor::replay::{
 use ergo_supervisor::{
     CaptureBundle, Constraints, Decision, EpisodeInvocationRecord, NO_ADAPTER_PROVENANCE,
 };
-use serde_json;
 
 fn make_event_record(id: &str, at: Duration) -> ExternalEventRecord {
     // Use Command, not Pump — Pump has special deferred-retry behavior
@@ -84,8 +83,10 @@ fn concurrency_cap_determinism() {
         make_event_record("e2", Duration::from_secs(0)),
         make_event_record("e3", Duration::from_secs(0)),
     ];
-    let mut constraints = Constraints::default();
-    constraints.max_in_flight = Some(0);
+    let constraints = Constraints {
+        max_in_flight: Some(0),
+        ..Default::default()
+    };
 
     let bundle = baseline_bundle(events, constraints);
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
@@ -104,9 +105,11 @@ fn rate_limit_determinism() {
         make_event_record("e2", Duration::from_secs(0)),
         make_event_record("e3", Duration::from_secs(0)),
     ];
-    let mut constraints = Constraints::default();
-    constraints.max_per_window = Some(2);
-    constraints.rate_window = Some(Duration::from_secs(10));
+    let constraints = Constraints {
+        max_per_window: Some(2),
+        rate_window: Some(Duration::from_secs(10)),
+        ..Default::default()
+    };
 
     let bundle = baseline_bundle(events, constraints);
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
@@ -125,8 +128,10 @@ fn rate_limit_determinism() {
 #[test]
 fn retry_only_on_mechanical_failures() {
     let events = vec![make_event_record("e1", Duration::from_secs(0))];
-    let mut constraints = Constraints::default();
-    constraints.max_retries = 1;
+    let constraints = Constraints {
+        max_retries: 1,
+        ..Default::default()
+    };
 
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
     runtime.push_outcomes(
@@ -146,8 +151,10 @@ fn retry_only_on_mechanical_failures() {
 #[test]
 fn deadline_path_determinism() {
     let events = vec![make_event_record("e1", Duration::from_secs(0))];
-    let mut constraints = Constraints::default();
-    constraints.deadline = Some(Duration::ZERO);
+    let constraints = Constraints {
+        deadline: Some(Duration::ZERO),
+        ..Default::default()
+    };
 
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
     let bundle = baseline_bundle(events, constraints);
@@ -191,7 +198,7 @@ fn no_wall_clock_usage() {
         let entry = entry.expect("failed to read directory entry");
         let path = entry.path();
 
-        if path.extension().map_or(false, |ext| ext == "rs") {
+        if path.extension().is_some_and(|ext| ext == "rs") {
             let contents = std::fs::read_to_string(&path).expect("failed to read source file");
             let filename = path.file_name().unwrap().to_string_lossy();
 
@@ -509,17 +516,13 @@ fn e2e_termination_only_capture_and_replay_integrity() {
     assert_eq!(replayed_effects.len(), 0);
 
     // Compare should succeed
-    assert_eq!(
+    assert!(
         compare_decisions(&bundle.decisions, &replayed).unwrap(),
-        true,
         "capture and replay with same runtime should match"
     );
 
     // Compare remains stable with empty effect vectors.
-    assert_eq!(
-        compare_decisions(&bundle.decisions, &replayed).unwrap(),
-        true
-    );
+    assert!(compare_decisions(&bundle.decisions, &replayed).unwrap());
 }
 
 /// RENAME-TICK-1: Old captures with "Tick" deserialize to Pump via serde alias.

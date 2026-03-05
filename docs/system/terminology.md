@@ -54,12 +54,14 @@ The term **"implementation"** refers to a concrete, executable unit within an on
 ## 3. Macro-Primitives (Authoring Conveniences)
 
 The term **"macro-primitive"** refers to authoring-layer constructs that:
+
 - Are composed from ontological primitives
 - Exist for ergonomics and intent expression
 - Compile away before execution
 - Add no new runtime semantics
 
 **Examples:**
+
 - Risk policies
 - Constraints and guards
 - Named compositions
@@ -74,6 +76,7 @@ Macro-primitives are expressed as **clusters** in the authoring layer.
 ## 4. Clusters (Composed Structures)
 
 The term **"cluster"** refers to a named, bounded subgraph that:
+
 - Contains implementations and/or other clusters
 - Exposes boundary ports
 - Compiles away before execution
@@ -122,12 +125,14 @@ Migration of code symbols is tracked in invariants/INDEX.md.
 ## 8. Usage Examples
 
 **Correct:**
+
 - "Source, Compute, Trigger, and Action are the four primitives."
 - "The `add` implementation performs numeric addition."
 - "Risk is a macro-primitive expressed as a cluster."
 - "Clusters compile away before execution."
 
 **Incorrect:**
+
 - "The `add` primitive..." (should be "implementation")
 - "Register a new primitive..." (should be "implementation" unless referring to a new ontological role, which is forbidden)
 - "The primitive folder contains..." (should be "implementations folder")
@@ -150,6 +155,7 @@ The following terms have trading connotations and should be avoided or renamed i
 ### Naming Rule
 
 When adding new types, events, or concepts to core layers:
+
 1. Ask: "Does this term make sense outside of trading?"
 2. If not, choose a domain-neutral alternative
 3. Vertical-specific terminology belongs in vertical crates, not core

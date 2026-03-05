@@ -18,6 +18,9 @@ pub const NO_ADAPTER_PROVENANCE: &str = "none";
 mod capture;
 #[cfg(any(test, feature = "demo"))]
 pub mod fixture_runner;
+// ReplayError carries rich diagnostic context; boxing would complicate call sites
+// for minimal benefit on error-only paths.
+#[allow(clippy::result_large_err)]
 pub mod replay;
 
 #[cfg(any(test, feature = "demo"))]
@@ -164,6 +167,7 @@ pub struct Supervisor<L: DecisionLog, R: RuntimeInvoker> {
 }
 
 impl<L: DecisionLog> Supervisor<L, RuntimeHandle> {
+    #[allow(clippy::arc_with_non_send_sync)]
     pub fn new(
         graph_id: GraphId,
         constraints: Constraints,
@@ -374,12 +378,8 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
     }
 
     fn rate_limit_delay(&mut self, now: EventTime) -> Option<Duration> {
-        let Some(max_per_window) = self.constraints.max_per_window else {
-            return None;
-        };
-        let Some(window) = self.constraints.rate_window else {
-            return None;
-        };
+        let max_per_window = self.constraints.max_per_window?;
+        let window = self.constraints.rate_window?;
 
         while let Some(front) = self.recent_invocations.front() {
             if now.as_duration().saturating_sub(front.as_duration()) >= window {
@@ -434,6 +434,8 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
         }
     }
 
+    // Supervisor decision logging intentionally passes full context
+    #[allow(clippy::too_many_arguments)]
     fn log_decision(
         &self,
         event: &ExternalEvent,

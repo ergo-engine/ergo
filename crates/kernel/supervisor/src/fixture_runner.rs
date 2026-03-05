@@ -188,13 +188,13 @@ fn summarize_episodes(
             let entries = decisions_by_event
                 .get(event_id)
                 .ok_or_else(|| format!("no decision for event '{event_id}'"))?;
-            if entries.iter().any(|decision| *decision == Decision::Invoke) {
+            if entries.contains(&Decision::Invoke) {
                 invoked = true;
                 if invoked_event.is_none() {
                     invoked_event = Some(event_id);
                 }
             }
-            if entries.iter().any(|decision| *decision == Decision::Defer) {
+            if entries.contains(&Decision::Defer) {
                 deferred = true;
             }
         }

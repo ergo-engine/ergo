@@ -22,6 +22,7 @@ side effect to an external execution environment, gated by an event, and
 emits a terminal outcome event.
 
 Actions:
+
 - are the only primitives allowed to cause side effects
 - do not compute signals
 - do not infer intent
@@ -49,6 +50,7 @@ kind: action
 ```
 
 Rules:
+
 - `id` must start with a lowercase letter and contain only lowercase letters, digits, and underscores (`^[a-z][a-z0-9_]*$`)
 - `version` must be valid semver
 - `kind` must be literal `action`
@@ -66,6 +68,7 @@ inputs:
 ```
 
 Rules:
+
 - At least one input must be an event
 - Event inputs are **gating inputs** (causal `when`) and are wired from Trigger outputs
 - Non-event inputs are **payload inputs** (command `what`) and may be wired from Source or Compute outputs
@@ -84,6 +87,7 @@ outputs:
 ```
 
 Rules:
+
 - Actions always emit exactly one outcome event
 - Output name must be `outcome`
 - Output type must be `event`
@@ -102,6 +106,7 @@ parameters:
 ```
 
 Rules:
+
 - Parameters are static presets
 - Parameters must be serializable
 - Parameters do not change at runtime
@@ -118,6 +123,7 @@ execution:
 ```
 
 Rules:
+
 - Determinism is required
 - Retry behavior must be explicit (actions are non-retryable in v0)
 
@@ -131,6 +137,7 @@ state:
 ```
 
 Rules:
+
 - Action primitives may not hold internal state
 
 ---
@@ -142,6 +149,7 @@ side_effects: true
 ```
 
 Rules:
+
 - Action primitives are the only primitives where this is allowed
 - Side effects are limited to declared external operations
 
@@ -154,25 +162,28 @@ effects:
   writes:
     - name: string
       type: number | bool | string
-      from_input: optional string   # Scalar action input supplying the write value
+      from_input: string   # Required scalar action input supplying the write value
 ```
 
 Rules:
+
 - `effects` block must exist (may contain empty `writes`)
 - Write names must be unique
 - Write types must be Number, Bool, or String
-- `from_input` is optional, but when present it must name a declared scalar input (ACT-22/ACT-23)
+- `from_input` is required and must name a declared scalar input (ACT-22/ACT-23)
 
 ---
 
 ## 3. Outcome Event Semantics (Critical)
 
 An outcome event is:
+
 - discrete
 - emitted exactly once per action attempt
 - terminal (no persistence)
 
 Rules:
+
 - Outcome events do not carry payloads in v0
 - Outcome events are **non-wireable** in v0
 - Outcome events may be consumed only by external sinks (logging/audit/replay)
@@ -201,7 +212,7 @@ Rules:
 | ACT-16 | Retryable false | `execution.retryable == false` |
 | ACT-17 | Execution deterministic | `execution.deterministic == true` |
 | ACT-18 | ID unique in registry | `id ∉ ActionRegistry.ids` |
-| ACT-19 | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` |
+| ACT-19 | Parameter default type matches declared type | `parameters[].default == None \|\| typeof(parameters[].default) == parameters[].type` |
 | ACT-20 | $key write references bound to declared parameter | `∀ write where name starts with "$": referenced param exists in parameters[]` |
 | ACT-21 | $key write references must be String type | `∀ write where name starts with "$": referenced param.type == String` |
 | ACT-22 | Write from_input references declared input | `∀ write: from_input ∈ inputs[].name` |
@@ -245,6 +256,8 @@ Rules:
 
 **Validation enforcement location:** `crates/kernel/runtime/src/runtime/validate.rs`
 
+**ACT-12 mapping note:** Doctrine rule `ACT-12` is enforced by validation surface `V.5` (`ValidationError::ActionNotGated`).
+
 ---
 
 ## 6. Composition Rules
@@ -260,6 +273,7 @@ Rules:
 | COMP-15 | Writes captured (planned) | `writes.len > 0 => capture includes effect + keys` (deferred: REP-SCOPE) |
 
 **Composition enforcement:**
+
 - COMP-10 is enforced by wiring matrix validation (`runtime/validate.rs`).
 - COMP-9 refines Action input legality by destination input type (event gate vs scalar payload). Runtime validation implements this with destination-input-type-aware checks in `runtime/validate.rs` in addition to the coarse wiring matrix path.
 - COMP-11 through COMP-14 are enforced in `crates/kernel/adapter/src/composition.rs` when binding adapter ↔ graph.

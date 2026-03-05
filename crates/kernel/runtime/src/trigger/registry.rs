@@ -139,8 +139,8 @@ impl TriggerRegistry {
         Ok(())
     }
 
-    pub fn get(&self, id: &str) -> Option<&Box<dyn TriggerPrimitive>> {
-        self.primitives.get(id)
+    pub fn get(&self, id: &str) -> Option<&dyn TriggerPrimitive> {
+        self.primitives.get(id).map(|b| b.as_ref())
     }
 
     pub fn keys(&self) -> Vec<(String, String)> {

@@ -52,6 +52,7 @@ It never checks whether `bindings` contains keys absent from `specs`. The revers
 lookup (`bindings.keys() - specs.keys()`) does not exist anywhere in the codebase.
 
 The same pattern exists in:
+
 - `build_resolved_params()` (cluster.rs, lines 1353-1393) — cluster parameters
 - `validate_parameter_bindings()` (cluster.rs, lines 889-944) — nested clusters
 
@@ -99,6 +100,7 @@ for key in bindings.keys() {
 ```
 
 This requires:
+
 1. Adding `UndeclaredParameter { node_id: String, parameter: String }` to `ExpandError`
 2. Same check in `build_resolved_params()` for cluster parameters
 3. Same check in `validate_parameter_bindings()` for nested clusters

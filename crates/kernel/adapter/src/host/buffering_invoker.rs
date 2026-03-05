@@ -42,6 +42,8 @@ pub struct BufferingRuntimeInvoker {
 }
 
 impl BufferingRuntimeInvoker {
+    // Allow non-Send/Sync in Arc: RuntimeHandle contains non-Send/Sync trait object types.
+    #[allow(clippy::arc_with_non_send_sync)]
     pub fn new(inner: RuntimeHandle) -> Self {
         Self::new_with_provider(Arc::new(inner))
     }

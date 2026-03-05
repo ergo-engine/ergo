@@ -5,6 +5,7 @@
 **Source:** EXTENSION_CONTRACTS_ROADMAP.md Phase 1, adapter.md (stable)
 
 **Entry invariants:**
+
 - Manifest is parseable YAML/JSON
 - Required fields are present (serde validation)
 

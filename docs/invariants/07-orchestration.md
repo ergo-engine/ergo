@@ -5,6 +5,7 @@
 **Source:** supervisor.md (frozen)
 
 **Entry invariants:**
+
 - Graph is validated (all V.* invariants hold)
 - Adapter is available and compliant
 
@@ -20,7 +21,7 @@
 | SUP-5 | ErrKind is mechanical only | supervisor.md §3 | ✓ | — | — | — |
 | SUP-6 | Episode atomicity is invocation-scoped | supervisor.md §3 | — | — | — | — |
 | SUP-7 | DecisionLog is write-only | supervisor.md §3 | ✓ | — | — | ✓ |
-| SUP-TICK-1 | Tick events use deferred-retry scheduling | — | — | — | — | ✓ |
+| SUP-TICK-1 | Pump events use deferred-retry scheduling (legacy `Tick` alias accepted) | — | — | — | — | ✓ |
 | RTHANDLE-ID-1 | RuntimeHandle discards graph_id and event_id | — | ✓ | — | — | ✓ |
 | RTHANDLE-ERRKIND-1 | Pre-execution failures map to ValidationFailed, not RuntimeError or SemanticError | supervisor.md §2.4 | — | — | ✓ | ✓ |
 
@@ -32,8 +33,8 @@
 - **SUP-4:** `should_retry()` matches only `NetworkTimeout|AdapterUnavailable|RuntimeError|TimedOut`.
 - **SUP-5:** `ErrKind` enum contains only mechanical variants; no domain-flavored errors.
 - **SUP-7:** `DecisionLog` trait has only `fn log()`; `records()` is on concrete impl, not trait.
-- **SUP-TICK-1:** Tick events have special deferred-retry behavior distinct from Command events. Test: `replay_harness.rs` uses Command (not Tick) to avoid interference.
-- **RTHANDLE-ID-1:** `RuntimeHandle::run()` explicitly discards `graph_id` and `event_id` parameters (adapter/lib.rs:234-235). Only `ctx.inner()` is passed to underlying runtime. This ensures replay determinism — fault injection keys on EventId only (REP-3).
+- **SUP-TICK-1:** Pump events have special deferred-retry behavior distinct from Command events; legacy `Tick` capture values deserialize to `Pump` via serde alias. Test: `replay_harness.rs` uses Command (not Pump) to avoid interference.
+- **RTHANDLE-ID-1:** `RuntimeHandle::run()` explicitly discards `graph_id` and `event_id` parameters in `adapter::RuntimeHandle::run` / `impl RuntimeInvoker for RuntimeHandle`; only `ctx.inner()` is passed to the underlying runtime. This ensures replay determinism — fault injection keys on EventId only (REP-3).
 - **RTHANDLE-ERRKIND-1:** CLOSED (2026-02-06). `RuntimeHandle::run()` maps pre-execution failures to `ErrKind::ValidationFailed`, not `RuntimeError` or `SemanticError`.
   - **Prior bug (runtime_validate path):** `runtime_validate()` errors mapped to `ErrKind::RuntimeError`. Since `should_retry()` treats `RuntimeError` as retryable, this caused **pathological retries** of structurally invalid graphs — a graph that fails validation will fail identically on every retry.
   - **Prior bug (validate_composition path):** `validate_composition()` errors mapped to `ErrKind::SemanticError`. Non-retryable (correct behavior), but **wrong category** — `SemanticError` is for runtime deterministic failures (DivisionByZero, NonFiniteOutput per B.2), not validation-time COMP-* checks.
@@ -55,7 +56,7 @@
 | HST-8 | Canonical host loop enforces one `on_event` lifecycle per step cycle | supervisor.md §2.2 | — | — | ✓ | ✓ |
 | HST-9 | Canonical host runner rejects duplicate `event_id` values across step lifecycle (including replay_step) | host boundary contract | — | — | ✓ | ✓ |
 | DOC-GATE-1 | Canonical-complete claims blocked while doctrine ledger has open rows | CANONICAL process rule | — | — | ✓ | ✓ |
-| SDK-CANON-1 | SDK delegates canonical execution to core host path | CANONICAL scope rule | — | — | ✓ | ✓ |
+| SDK-CANON-1 | SDK canonical execution must delegate to core host path when SDK run/replay APIs exist | CANONICAL scope rule | — | — | — | — |
 
 ### Host Usecase API
 
@@ -76,9 +77,11 @@ Clients (CLI, SDK) call the **client entrypoint** APIs. They do not own loader c
 Notes:
 
 - HST-1/HST-7: canonical mode drains buffered effects from host runtime wrapper after `on_event`, then applies in-order through handlers.
+- **HST-4:** Enforced by `BufferingRuntimeInvoker` replace semantics: each `run()` call replaces the pending effect buffer, so retried runs cannot accumulate effects from prior attempts.
 - Host capture enrichment associates applied effects by decision order (`decisions[i]`), not by `event_id`, so duplicate fixture/event IDs cannot overwrite prior decision effects.
 - HST-9: duplicate `event_id` rejection is enforced at `HostedRunner`, so non-CLI host callers cannot bypass identity guarantees. Host replay execution flows through `HostedRunner::replay_step(...)` which performs strict preflight, event rehydration with hash checks, and effect-integrity comparison against host-enriched capture decisions.
 - HST-7 commit rule follows SUP-6 partial execution semantics: commit if drained buffer is non-empty regardless of final termination; no transactional rollback.
 - DOC-GATE-1 enforcement script: `tools/verify_doctrine_gate.sh`; integrated via `tools/verify_runtime_surface.sh`.
+- SDK-CANON-1: currently a design constraint, not an exercised enforcement point. `sdk-rust` is scaffold-only (`sdk_placeholder`) and does not yet expose run/replay APIs.
 
 ---

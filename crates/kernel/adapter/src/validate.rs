@@ -105,10 +105,7 @@ fn requires_additional_properties_false(map: &serde_json::Map<String, Value>) ->
 
     match map.get("type") {
         Some(Value::String(ty)) => ty == "object",
-        Some(Value::Array(types)) => types.iter().any(|ty| match ty {
-            Value::String(value) => value == "object",
-            _ => false,
-        }),
+        Some(Value::Array(types)) => types.iter().any(|ty| matches!(ty, Value::String(value) if value == "object")),
         _ => false,
     }
 }
@@ -314,7 +311,7 @@ fn check_adp_14(m: &AdapterManifest) -> Result<(), InvalidAdapter> {
     let writable_keys: Vec<String> = m
         .context_keys
         .iter()
-        .filter(|k| k.writable == Some(true))
+        .filter(|k| matches!(k.writable, Some(true)))
         .map(|k| k.name.clone())
         .collect();
 
@@ -338,7 +335,7 @@ fn check_adp_14(m: &AdapterManifest) -> Result<(), InvalidAdapter> {
 /// Reject if any context key has writable == Some(true) AND required == true
 fn check_adp_17(m: &AdapterManifest) -> Result<(), InvalidAdapter> {
     for (index, key) in m.context_keys.iter().enumerate() {
-        if key.writable == Some(true) && key.required {
+        if matches!(key.writable, Some(true)) && key.required {
             return Err(InvalidAdapter::WritableKeyRequired {
                 key: key.name.clone(),
                 index,
@@ -454,10 +451,7 @@ fn schema_is_object(schema: &serde_json::Map<String, Value>) -> bool {
 
     match schema.get("type") {
         Some(Value::String(ty)) => ty == "object",
-        Some(Value::Array(types)) => types.iter().any(|entry| match entry {
-            Value::String(ty) => ty == "object",
-            _ => false,
-        }),
+        Some(Value::Array(types)) => types.iter().any(|entry| matches!(entry, Value::String(ty) if ty == "object")),
         _ => false,
     }
 }

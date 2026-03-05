@@ -81,6 +81,7 @@ Construct `CapturingSession::new(GraphId::new(cluster_id), constraints, decision
 Read the `.jsonl` fixture file. Parse into `ExternalEvent` instances using `ergo_adapter::fixture::parse_fixture(path)` (in `crates/adapter/src/fixture.rs`, line 38). This returns `Vec<FixtureItem>` which contains episode boundaries and event data. Convert each event item into an `ExternalEvent` using the adapter's public factory methods.
 
 Match fixture validation semantics from `fixture_runner`:
+
 - Reject fixture with zero events.
 - If `EpisodeStart` markers are used, reject any episode that has zero events.
 - If events appear before the first `EpisodeStart`, assign them to an implicit first episode label (current fixture-runner behavior).
@@ -100,6 +101,7 @@ Iterate over the parsed `Vec<FixtureItem>`. Only `FixtureItem::Event` items beco
 Call `session.into_bundle()`. Write the `CaptureBundle` to disk as JSON.
 
 Default artifact path must be safe and remain under `target/`:
+
 - Derive from graph file stem (not cluster id), e.g. `target/<graph-file-stem>-capture.json`.
 - Sanitize stem to `[A-Za-z0-9_-]` (replace all other chars with `_`) before path assembly.
 
@@ -128,6 +130,7 @@ Update the `usage()` string in `crates/ergo-cli/src/main.rs` (line 103) to refle
 ### Step 12: Verification and regression tests
 
 Add/adjust tests and command-level checks to lock closure behavior:
+
 - Supervised mode requires `--fixture` (missing fixture returns clear error).
 - `--direct` and `--fixture` are mutually exclusive.
 - Supervised run writes capture artifact (default path and `--capture-output` override).
@@ -135,6 +138,7 @@ Add/adjust tests and command-level checks to lock closure behavior:
 - `--direct` mode preserves current one-shot output printing behavior.
 
 Run at minimum:
+
 - `cargo test -p ergo-cli`
 - `cargo test -p ergo-supervisor`
 

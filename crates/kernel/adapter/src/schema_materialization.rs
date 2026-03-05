@@ -60,8 +60,5 @@ fn array_items_are_numbers(items: &Value) -> bool {
     let Some(object) = items.as_object() else {
         return false;
     };
-    match object.get("type") {
-        Some(Value::String(ty)) => ty == "number" || ty == "integer",
-        _ => false,
-    }
+    matches!(object.get("type"), Some(Value::String(ty)) if ty == "number" || ty == "integer")
 }

@@ -41,6 +41,7 @@ These invariants hold across all phases. Violation at any point is a system-leve
 | LAYER-3 | Clients must not import loader/parser internals | CI script: parser-internal import guard |
 
 **Rationale:**
+
 - LAYER-1 ensures kernel semantics cannot be contaminated by client or tooling concerns. Kernel looks down to nothing; everything looks up to kernel.
 - LAYER-2 ensures validation error types remain a kernel-owned contract. Loader errors are transport/decode failures, not rule violations.
 - LAYER-3 ensures clients remain thin adapters. If a client needs parser access, it goes through the loader API, not internal modules.
@@ -58,14 +59,13 @@ Non-finite numeric values (NaN, inf, -inf) are rejected at the execution boundar
 
 **Enforcement:**
 **Scope:** Guards Source and Compute outputs only. Action outputs are not guarded because actions are terminal (F.2) and cannot feed downstream nodes. If future actions emit numeric boundary outputs, this scope may need revisiting.
-- `ensure_finite()` defined at line 296
-- Number check at line 302
-- Series check at line 308
-- Guard called after Source outputs (line 143)
-- Guard called after Compute outputs (line 201)
-- Violation produces `ExecError::NonFiniteOutput { node, port }` (types.rs line 127)
+
+- `ensure_finite()` checks Number and Series values for NaN/inf/-inf
+- Guard called after Source outputs and after Compute outputs
+- Violation produces `ExecError::NonFiniteOutput { node, port }` (rule_id: `"NUM-FINITE-1"`)
 
 **Rationale:**
+
 - Non-finite values cause counterintuitive trigger behavior (NaN comparisons always false)
 - Prevents semantic corruption from reaching actions
 - Defense in depth for implementation bugs
@@ -80,16 +80,17 @@ Non-finite numeric values (NaN, inf, -inf) are rejected at the execution boundar
 Division by zero produces `ComputeError::DivisionByZero`, not IEEE 754 inf/NaN.
 
 **Enforcement:**
-- Zero check at line 55
-- Returns `DivisionByZero` at line 56
-- Finite check at line 60
-- Returns `NonFiniteResult` at line 61
+
+- In `divide/impl.rs::Divide::compute()`, the zero guard `if b == 0.0` returns `ComputeError::DivisionByZero`.
+- In `divide/impl.rs::Divide::compute()`, the finite guard `if !result.is_finite()` returns `ComputeError::NonFiniteResult`.
 
 **Implementations:**
+
 - `divide` (v0.2.0): Math-true. Errors on `b == 0` or non-finite result.
 - `safe_divide` (v0.1.0): Requires `fallback` parameter. Returns fallback on zero/non-finite.
 
 **Rationale:**
+
 - "Division by zero is undefined" is math, not policy
 - Policy (what to substitute) belongs in `safe_divide`, not `divide`
 - Preserves Non-Normative principle (ontology.md §1.4)

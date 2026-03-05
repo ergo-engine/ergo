@@ -37,6 +37,7 @@ This invariant is frozen. The authoring layer itself is not.
 A **cluster** is a named, bounded subgraph that can be treated as a single node from the outside.
 
 Clusters:
+
 - Contain primitives and/or other clusters (arbitrary nesting)
 - Expose boundary ports (inputs and outputs)
 - May have configurable parameters
@@ -67,6 +68,7 @@ At execution time, all levels flatten into a single unified DAG.
 Every cluster has a **boundary** that determines how it interacts with its environment.
 
 A boundary consists of:
+
 - **Input ports** — data/events the cluster consumes
 - **Output ports** — data/events the cluster produces
 - **Parameters** — static configuration values
@@ -95,10 +97,11 @@ There are exactly four boundary kinds, mirroring the four primitives:
 
 BoundaryKind is **inferred** from the cluster's boundary signature, never declared independently.
 
-BoundaryKind is inferred from the full expanded graph, not from the declared or exposed boundary alone. Hiding outputs cannot coerce one kind into another.
+BoundaryKind is inferred from the cluster's declared boundary ports, resolved against the expanded internal graph. Which outputs are exposed in `output_ports` directly affects the inferred kind — a cluster that hides all wireable outputs will infer as `ActionLike`. See cluster-spec.md §3 for the full algorithm.
 
 The wiring contract for clusters mirrors the primitive wiring contract.
 For `ActionLike` inputs, the primitive contract includes a per-port refinement:
+
 - `event` inputs are gating inputs and must be wired from `TriggerLike`
 - scalar inputs (`number | bool | string`) are payload inputs and may be wired from `SourceLike` or `ComputeLike`
 
@@ -120,12 +123,14 @@ These flags inform execution semantics and audit, but do not affect wiring legal
 Clusters may expose **parameters** — static configuration values set at instantiation time.
 
 Parameters:
+
 - Are typed (int, number, bool, string, enum)
 - May have defaults
 - May be bound to a literal value
 - May be re-exposed to the parent context (parameter threading)
 
 Parameter threading allows arbitrary-depth exposure:
+
 - Cluster A contains Cluster B
 - Cluster B exposes `threshold`
 - Cluster A may bind it: `threshold = 0.5`
@@ -144,6 +149,7 @@ Clusters are validated at three points:
 ### 6.1 Definition Time
 
 When a cluster is saved:
+
 - Internal graph is well-formed (DAG, wiring rules)
 - Boundary signature is inferred
 - Declared signature (if any) is compatible with inferred
@@ -152,6 +158,7 @@ When a cluster is saved:
 ### 6.2 Instantiation Time
 
 When a cluster is placed in a parent context:
+
 - Boundary kind is compatible with wiring context
 - Parameter bindings are complete (or explicitly re-exposed)
 - Version constraints are satisfied
@@ -159,6 +166,7 @@ When a cluster is placed in a parent context:
 ### 6.3 Expansion Time
 
 Before execution:
+
 - All clusters are recursively expanded to primitives
 - Full unified DAG is validated (cycles, types, all nodes present)
 - Global "validate all nodes before any action executes" check
@@ -172,6 +180,7 @@ Clusters are versioned artifacts.
 ### 7.1 Version Pinning
 
 By default, cluster instances reference a specific version:
+
 ```
 cluster_id@1.2.0
 ```
@@ -180,7 +189,10 @@ Floating references (`@latest`, `@^1`) are opt-in and require explicit user choi
 
 ### 7.2 Breaking Change Detection
 
+<!-- TODO: inspect claims — signature_hash is not implemented (zero hits in crates/). The Signature struct fields are: kind, inputs, outputs, has_side_effects, is_origin — no parameter field. The hash components listed below are wrong (includes parameters, uses wrong flag names, omits kind and cardinality). See cluster-spec.md §8.1 for the correct specification. -->
+
 A **signature hash** is computed from:
+
 - Input port names and types
 - Output port names, types, and wireability
 - Parameter interface (names, types, required/optional)
@@ -189,6 +201,7 @@ A **signature hash** is computed from:
 If the signature hash changes between versions, the change is breaking.
 
 Breaking changes:
+
 - Block automatic upgrades
 - Require explicit user action
 - Are surfaced by tooling with upgrade assistance
@@ -215,6 +228,7 @@ expand(graph):
 ### 8.2 Node Identity
 
 After expansion, each primitive node has a unique identity derived from:
+
 - Original cluster path (for debugging/tracing)
 - Local node ID within the cluster
 
@@ -229,6 +243,7 @@ Type enforcement operates at two levels:
 ### 9.1 IR Validation (UI/Build Time)
 
 For user-authored clusters:
+
 - Boundary kind compatibility checked against wiring matrix
 - Port type compatibility checked at each connection
 - Cycles, missing nodes, and invalid wiring rejected
@@ -237,7 +252,10 @@ This validation is fast and provides immediate feedback.
 
 ### 9.2 Rust DSL (Compile Time, Optional)
 
+<!-- TODO: inspect claims — no Rust DSL exists. Grep for "marker type", "trait bound", "Rust DSL" across crates/kernel/runtime/src/ returns nothing. This section describes a feature that was never built. -->
+
 For power users writing strategies in Rust:
+
 - Boundary kinds can be encoded as marker types
 - Wiring legality enforced by trait bounds
 - Invalid connections are compile errors
@@ -268,7 +286,7 @@ Three rules define the authoring layer's relationship to the ontology:
 The following are product-level concerns, not authoring layer concerns:
 
 - Specific UI/UX for the canvas
-- Cluster storage format (JSON, YAML, binary)
+- Cluster storage format details (see `yaml-format.md` for the YAML specification and `loader.md` for the decode contract)
 - Cluster registry or sharing infrastructure
 - Collaboration workflows
 - Specific parameter widget types

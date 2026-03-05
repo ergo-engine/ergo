@@ -140,12 +140,12 @@ impl ActionRegistry {
                         });
                     }
                     Some(inp) => {
-                        let compatible = match (&write.value_type, &inp.value_type) {
-                            (ValueType::Number, super::ActionValueType::Number) => true,
-                            (ValueType::Bool, super::ActionValueType::Bool) => true,
-                            (ValueType::String, super::ActionValueType::String) => true,
-                            _ => false,
-                        };
+                        let compatible = matches!(
+                            (&write.value_type, &inp.value_type),
+                            (ValueType::Number, super::ActionValueType::Number)
+                                | (ValueType::Bool, super::ActionValueType::Bool)
+                                | (ValueType::String, super::ActionValueType::String)
+                        );
                         if !compatible {
                             return Err(ActionValidationError::WriteFromInputTypeMismatch {
                                 write_name: write.name.clone(),
@@ -208,8 +208,8 @@ impl ActionRegistry {
         Ok(())
     }
 
-    pub fn get(&self, id: &str) -> Option<&Box<dyn ActionPrimitive>> {
-        self.primitives.get(id)
+    pub fn get(&self, id: &str) -> Option<&dyn ActionPrimitive> {
+        self.primitives.get(id).map(|b| b.as_ref())
     }
 
     pub fn keys(&self) -> Vec<(String, String)> {

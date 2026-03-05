@@ -5,7 +5,7 @@ use crate::provenance;
 
 /// What an adapter provides for composition validation.
 /// Built from AdapterManifest after registration-phase validation passes.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AdapterProvides {
     pub context: HashMap<String, ContextKeyProvision>,
     pub events: HashSet<String>,
@@ -64,19 +64,6 @@ impl AdapterProvides {
             event_schemas,
             capture_format_version: manifest.capture.format_version.clone(),
             adapter_fingerprint: provenance::fingerprint(manifest),
-        }
-    }
-}
-
-impl Default for AdapterProvides {
-    fn default() -> Self {
-        Self {
-            context: HashMap::new(),
-            events: HashSet::new(),
-            effects: HashSet::new(),
-            event_schemas: HashMap::new(),
-            capture_format_version: String::new(),
-            adapter_fingerprint: String::new(),
         }
     }
 }

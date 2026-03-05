@@ -3,6 +3,7 @@
 **Scope:** Validating the unified DAG before execution.
 
 **Entry invariants:**
+
 - Graph is fully expanded (no clusters remain)
 - Signature inference is complete
 

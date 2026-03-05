@@ -20,6 +20,7 @@ pub struct RunDemoFixtureRequest {
     pub pretty_capture: bool,
 }
 
+#[allow(clippy::arc_with_non_send_sync)]
 pub fn run_demo_fixture_from_path(
     request: RunDemoFixtureRequest,
 ) -> Result<RunFixtureResult, HostRunError> {

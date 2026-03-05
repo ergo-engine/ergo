@@ -3,6 +3,7 @@
 **Scope:** Deriving signature from expanded graph.
 
 **Entry invariants:**
+
 - Expanded graph is complete (E.1–E.5 hold)
 - `PrimitiveCatalog` is canonical and version-consistent
 
@@ -20,8 +21,8 @@
 ### Notes
 
 - **F.1:** ✅ **CLOSED.** Fixed in cluster.rs. Enforcement:
-  - Assertion: `debug_assert!` at cluster.rs:258
-  - Test: `input_ports_are_never_wireable` at cluster.rs:1106
+  - Assertion: `cluster::infer_signature` hard-sets inferred input ports to `wireable: false` and asserts the invariant via `debug_assert!`
+  - Test: `cluster::tests::input_ports_are_never_wireable`
   - Merged.
 
 - **F.6:** True by construction. Document on `infer_signature`:

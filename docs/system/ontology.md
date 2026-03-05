@@ -43,6 +43,7 @@ This set is closed.
 A Source answers: *What exists at this evaluation point?*
 
 Characteristics:
+
 - No inputs
 - No transformation of graph-derived inputs; adapter shaping only
 - No inference
@@ -62,6 +63,7 @@ Source establishes origin, not meaning.
 A Compute answers: *What is true, given these inputs?*
 
 Characteristics:
+
 - Pure
 - Deterministic
 - Side-effect free
@@ -79,6 +81,7 @@ Compute establishes truth, not causality or intent.
 A Trigger answers: *When does something happen?*
 
 Characteristics:
+
 - Emits events
 - No side effects
 - Deterministic
@@ -109,6 +112,7 @@ Trigger establishes causality, not action.
 An Action answers: *What command is attempted as a result of this event?*
 
 Characteristics:
+
 - Consumes events
 - Causes side effects
 - Deterministic command emission
@@ -116,6 +120,7 @@ Characteristics:
 - Emits non-causal outputs (see below)
 
 Action outputs are non-causal and take two forms:
+
 - **Acknowledgment records** — emitted to orchestrator for logging/audit (exactly one per attempt)
 - **Effect descriptions** — emitted to adapter for external application (zero or more per attempt)
 
@@ -164,6 +169,7 @@ Some concepts are essential for authoring, but not ontological primitives.
 These are macro-primitives.
 
 Macro-primitives:
+
 - Are composed from ontological primitives
 - Exist for ergonomics and intent expression
 - Compile away before execution
@@ -174,6 +180,7 @@ Macro-primitives:
 Risk is not an ontological primitive.
 
 Reason:
+
 - Risk is normative
 - Risk is subjective
 - Risk encodes policy and preference
@@ -186,6 +193,7 @@ That is a policy question, not a causal role.
 Risk therefore exists as a macro-primitive: UI-visible, reusable, composable, compiled into compute → trigger → action.
 
 The distinction between Risk and Trigger temporal operators (throttle, debounce, etc.):
+
 - Trigger operators govern *when* events propagate (temporal semantics)
 - Risk operators govern *whether* actions execute (acceptability of outcomes)
 - Trigger operators are blind to action content; Risk operators are not
@@ -193,6 +201,7 @@ The distinction between Risk and Trigger temporal operators (throttle, debounce,
 ### 4.2 Constraints, Guards, Policies
 
 These follow the same rule as Risk:
+
 - Not execution-real
 - Not causal
 - Not irreducible
@@ -228,6 +237,7 @@ This is the canonical explanatory flow; the implementation is a DAG with role-co
 No additional ontological primitives are permitted.
 
 Higher-level constructs must:
+
 - Decompose into these primitives
 - Obey their manifest contracts
 - Compile away before execution
@@ -237,6 +247,7 @@ Higher-level constructs must:
 ## 7. Stability Guarantee
 
 This ontology is designed to be:
+
 - Minimal
 - Non-overlapping
 - Deterministic

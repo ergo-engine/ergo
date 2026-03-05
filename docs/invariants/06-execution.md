@@ -3,6 +3,7 @@
 **Scope:** Running the validated graph.
 
 **Entry invariants:**
+
 - All V.* invariants hold
 - State is initialized per lifecycle rules
 
@@ -21,7 +22,7 @@
 ### Notes
 
 - **R.3:** ✅ **CLOSED.** Compositionally enforced by existing invariants:
-  - F.2: Action outputs are non-wireable (`cluster.rs:324: wireable = meta.kind != PrimitiveKind::Action`)
+  - F.2: Action outputs are non-wireable (`cluster::infer_signature` sets `wireable = meta.kind != PrimitiveKind::Action`)
   - X.5: "Actions are terminal; Action → * is forbidden" (validated at D.3, V.2)
   - Since no edge can originate from an Action, no node can observe action effects.
   - No separate test needed — enforcement is structural via wiring matrix validation.
@@ -53,10 +54,10 @@ must be implemented as clusters with explicit state flow through environment.
 
 - **Enforcement locus confirmed (2025-01-05):** Statelessness is enforced at two levels:
   1. **Type system:** `TriggerPrimitive::evaluate()` signature takes `&self` (not `&mut self`), no state parameter, no `PrimitiveState` argument. State cannot be smuggled through trait API.
-  2. **Registry validation:** `TriggerRegistry::validate_manifest()` rejects any trigger with `state.allowed = true` (returns `StatefulTriggerNotAllowed`). Test: `trg_state_1_stateful_trigger_rejected`.
+  2. **Registry validation:** `TriggerRegistry::validate_manifest()` rejects any trigger with `state.allowed = true` (returns `StatefulTriggerNotAllowed`). Test: `trg_9_trigger_has_state_rejected`.
 
 - **R.7:** ✅ **CLOSED.** Runtime gates Action execution on `TriggerEvent::Emitted`. Implementation:
   - `should_skip_action()` in execute.rs checks for any `TriggerEvent::NotEmitted` input (AND semantics)
   - Skipped actions return `ActionOutcome::Skipped` for Event outputs
   - Test: `r7_action_skipped_when_trigger_not_emitted` verifies enforcement
-  - **Strengthened (2025-01-05):** `map_to_action_value()` now uses explicit pattern matching on `TriggerEvent::Emitted` and `TriggerEvent::NotEmitted` rather than wildcard. NotEmitted case includes `unreachable!("R.7 violation: NotEmitted must be caught by should_skip_action")` to prevent silent acceptance of future TriggerEvent variants. Location: `execute.rs:345-351`.
+  - **Strengthened (2025-01-05):** `map_to_action_value()` now uses explicit pattern matching on `TriggerEvent::Emitted` and `TriggerEvent::NotEmitted` rather than wildcard. NotEmitted case includes `unreachable!("R.7 violation: NotEmitted must be caught by should_skip_action")` to prevent silent acceptance of future TriggerEvent variants. Location: `execute.rs::map_to_action_value()`.

@@ -2,7 +2,7 @@
 Authority: CONTRACTS
 Version: v0
 Last Updated: 2026-01-05
-Derived From: src/runtime/tests.rs::hello_world_graph_executes_with_core_catalog_and_registries
+Derived From: crates/kernel/runtime/src/runtime/tests::hello_world_graph_executes_with_core_catalog_and_registries
 Scope: Data structures UI must emit for runtime
 Change Rule: Review required
 ---
@@ -15,11 +15,11 @@ This document defines the exact data structure a UI must emit to drive the Primi
 
 ## Trust Boundary Notice
 
-**`crates/reference-client` is a Reference Client, not a canonical contract implementation.**
+**Client implementations are non-canonical integrations, not contract authorities.**
 
 - **Authority:** Runtime contract authority is Rust types in `crates/kernel/runtime/src/cluster.rs` + this document
-- **TypeScript mirror:** `contractTypes.ts` is a best-effort mirror; not enforcement
-- **No guarantees:** Reference UI may have conveniences (e.g., default values, loose typing) that a production client must not rely on
+- **Clients:** CLI/SDKs are thin clients that delegate canonical execution to host entrypoints
+- **No guarantees:** Client-side mirrors or wrappers may add conveniences (for example defaults or looser typing) that production callers must not treat as enforcement
 - **Validation:** All contract enforcement happens at runtime; UI-side validation is advisory only
 
 ---
@@ -116,6 +116,7 @@ pub struct OutputRef {
 ### Step 1: UI Constructs ExpandedGraph
 
 UI assembles:
+
 - Nodes with unique `runtime_id`
 - Implementation references (`impl_id` + `version`)
 - Parameter literals (no bindings, no expressions)

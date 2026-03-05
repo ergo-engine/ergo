@@ -4,9 +4,11 @@ mod error;
 mod gen_docs_usecase;
 mod graph_dot_usecase;
 mod manifest_usecases;
+#[allow(clippy::result_large_err)]
 mod replay;
 mod replay_error_surface;
 mod runner;
+#[allow(clippy::result_large_err)]
 mod usecases;
 
 pub use demo_fixture_usecase::{run_demo_fixture_from_path, RunDemoFixtureRequest};

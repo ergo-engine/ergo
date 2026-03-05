@@ -5,6 +5,7 @@ Status: Living closure log (active maintenance; not archival-only).
 Rule: Every closure must specify (a) disposition, (b) enforcement locus, (c) test evidence, (d) PR/commit.
 
 Legend:
+
 - CLOSE: enforced and tested in v0 without adding new semantics
 - REJECT: explicitly invalid in v0 (typed error + test)
 - V1 SEMANTICS: requires explicit semantics decision (parked)
@@ -14,6 +15,7 @@ Legend:
 ## Closed / Rejected in v0
 
 ### TRG-STATE-1 — Trigger persistent state forbidden by construction
+
 - **ID:** TRG-STATE-1
 - **Rule:** Triggers are stateless across runs; runtime API does not support persisted trigger state.
 - **Disposition:** CLOSE
@@ -29,6 +31,7 @@ Legend:
 ---
 
 ### R.7 — TriggerEvent mapping is explicit; NotEmitted is unreachable post-gating
+
 - **ID:** R.7-MAP
 - **Rule:** Only `TriggerEvent::Emitted` maps to `ActionOutcome::Attempted`; `NotEmitted` must be caught by `should_skip_action()`.
 - **Disposition:** CLOSE
@@ -40,6 +43,7 @@ Legend:
 ---
 
 ### V.MULTI-EDGE — Multi-edge fan-in is invalid in v0
+
 - **ID:** V.MULTI-EDGE
 - **Rule:** No input port may receive more than one inbound edge. Merges must be explicit via combiner nodes.
 - **Disposition:** REJECT
@@ -51,6 +55,7 @@ Legend:
 ---
 
 ### V.PANIC-HARDEN — Validator/executor return typed errors on malformed graphs
+
 - **ID:** V.PANIC-HARDEN
 - **Rule:** Malformed graphs must not panic; validation/execution return typed errors.
 - **Disposition:** CLOSE
@@ -69,10 +74,10 @@ Legend:
 - **Rule:** Primitive parameters with `default: Some(value)` in `PrimitiveMetadata.parameters` must be present in `ExpandedNode.parameters` when no binding provided; missing required params without default fail at expand.
 - **Disposition:** CLOSE
 - **Enforcement locus:** expand (`crates/kernel/runtime/src/cluster.rs`)
-  - `ParameterMetadata` struct added (lines 176-184)
-  - `PrimitiveMetadata.parameters: Vec<ParameterMetadata>` added (line 166)
-  - `resolve_impl_parameters()` implements default application logic (lines 988-1028)
-  - Impl node handling in `expand_with_context` calls catalog + resolver (lines 695-709)
+  - `cluster::ParameterMetadata` defines spec/default metadata for expansion-time binding resolution
+  - `cluster::PrimitiveMetadata.parameters` carries parameter specs through expansion
+  - `cluster::resolve_impl_parameters` applies explicit bindings, defaults, and required checks
+  - `cluster::expand_with_context` impl-node path calls catalog lookup and parameter resolver
 - **Catalog change:** `crates/kernel/runtime/src/catalog.rs` — all `register_*` functions now populate `parameters` from manifests
 - **Error:** `ExpandError::MissingRequiredParameter`, `ExpandError::UnresolvedExposedBinding`
 - **Tests:**
@@ -89,10 +94,10 @@ Legend:
 - **Rule:** Cluster parameters with `default: Some(value)` in `ClusterDefinition.parameters` must propagate to nested cluster instantiation when no binding provided; missing required params without default fail at expand.
 - **Disposition:** CLOSE
 - **Enforcement locus:** expand (`crates/kernel/runtime/src/cluster.rs`)
-  - `build_resolved_params()` updated to accept `cluster_id` and `specs: &[ParameterSpec]` (lines 1034-1074)
+  - `cluster::build_resolved_params` accepts `cluster_id` and `specs: &[ParameterSpec]`
   - Returns `Result<HashMap<String, ParameterValue>, ExpandError>`
   - Logic: binding present → use it; absent + default → apply default; absent + required + no default → error
-  - Cluster node handling calls updated resolver (lines 745-750)
+  - Nested cluster node handling path in `cluster::expand_with_context` calls the updated resolver
 - **Error:** `ExpandError::MissingRequiredParameter`, `ExpandError::UnresolvedExposedBinding`
 - **Test:** `cluster_parameter_default_propagates_to_nested`
 - **PR/Commit:** <pending>
@@ -115,10 +120,10 @@ Legend:
 - **ID:** C.1
 - **Rule:** Expansion must assign deterministic `runtime_id`s for identical cluster definitions (no HashMap iteration dependence).
 - **Disposition:** CLOSE
-- **Enforcement locus:** expand (`crates/kernel/runtime/src/cluster.rs:694-698`)
+- **Enforcement locus:** expand (`cluster::expand_with_context`)
   - Node keys collected and sorted lexicographically before iteration
   - `ctx.next_runtime_id()` called in stable order
-- **Test:** `expansion_runtime_ids_deterministic` (cluster.rs:2806-2883)
+- **Test:** `cluster::tests::expansion_runtime_ids_deterministic`
   - 5 nodes with varying names, expanded 3 times, IDs identical
   - Verifies alphabetical ordering (alpha→n0, bravo→n1, etc.)
 - **PR/Commit:** <pending>
@@ -130,11 +135,11 @@ Legend:
 - **ID:** A.2
 - **Rule:** If a boundary output references an unmapped node_id during expansion, expansion must fail with typed error.
 - **Disposition:** CLOSE
-- **Enforcement locus:** expand (`crates/kernel/runtime/src/cluster.rs:1112-1135`)
+- **Enforcement locus:** expand (`cluster::map_boundary_outputs`)
   - `map_boundary_outputs` returns `Result<Vec<OutputPortSpec>, ExpandError>`
   - Returns error when `mapping.get()` fails instead of fallback
 - **Error:** `ExpandError::UnmappedBoundaryOutput { port_name, node_id }`
-- **Test:** `unmapped_boundary_output_rejected` (cluster.rs:2905-2951)
+- **Test:** `cluster::tests::unmapped_boundary_output_rejected`
 - **PR/Commit:** <pending>
 
 ---
@@ -144,11 +149,11 @@ Legend:
 - **ID:** A.3
 - **Rule:** If nested output mapping fails during expansion, expansion must fail with typed error.
 - **Disposition:** CLOSE
-- **Enforcement locus:** expand (`crates/kernel/runtime/src/cluster.rs:806-824`)
+- **Enforcement locus:** expand (`cluster::resolve_mapped_output` + nested expansion path in `cluster::expand_with_context`)
   - Nested cluster output mapping verifies all ports mapped
   - Returns error when target node has no mapping
 - **Error:** `ExpandError::UnmappedNestedOutput { cluster_id, port_name }`
-- **Test:** `nested_output_mapping_failure_rejected` (cluster.rs:2953-3024)
+- **Test:** `cluster::tests::nested_output_mapping_failure_rejected`
 - **PR/Commit:** <pending>
 
 ---
@@ -158,8 +163,8 @@ Legend:
 - **ID:** X.10
 - **Rule:** Compute primitives must not declare parameters with `ValueType::Series`. Series is valid for inputs/outputs but not parameters.
 - **Disposition:** REJECT
-- **Enforcement locus:** catalog registration (`crates/kernel/runtime/src/catalog.rs:177-185`)
-  - `map_compute_param_type` returns `Option` (None for Series)
+- **Enforcement locus:** catalog registration (`catalog::map_compute_param_type`, `catalog::register_compute`, `catalog::map_compute_param_value`)
+  - `map_compute_param_type` returns `Option` (`None` for Series)
   - `register_compute` returns `Result<(), ValidationError>`
   - Defensive unreachable in `map_compute_param_value` for Series
 - **Error:** `ValidationError::UnsupportedParameterType { primitive, version, parameter, got }`
@@ -173,7 +178,7 @@ Legend:
 - **ID:** X.11
 - **Rule:** Int parameter values converted to f64 must be within exact representation range (|i| ≤ 2^53). Values outside this range are rejected to prevent silent precision loss.
 - **Disposition:** CLOSE
-- **Enforcement locus:** execution (`crates/kernel/runtime/src/runtime/execute.rs:285-304`)
+- **Enforcement locus:** execution (`runtime::execute::map_to_compute_parameter_value` + call site in `runtime::execute::execute_compute`)
   - `MAX_SAFE_INT` constant defined as 9_007_199_254_740_992 (2^53)
   - `map_to_compute_parameter_value` returns `None` for Int where `i.abs() > MAX_SAFE_INT`
   - Caller in `execute_compute` produces `ExecError::ParameterOutOfRange` with full context
@@ -449,22 +454,26 @@ but no context-reading source existed.
 ### Resolution
 
 Added `context_number_source`:
+
 - Reads key "x" from ExecutionContext via `ctx.value(key).and_then(|v| v.as_number())`
 - Returns 0.0 on missing key or type mismatch (deterministic default)
 - `SourcePrimitive::produce()` signature extended to receive `&ExecutionContext`
 
 ### Justification
+
 - source.md §3: "All dependencies must be parameters or orchestrator context"
 - source.md §6: Lists `context_string` as canonical v0 example
 - supervisor.md §2.2: ExecutionContext contains "event payloads"
 - DEMO-2: Vertical proof showing trigger flip based on payload x=0.0 vs x=5.0
 
 ### Tests
+
 - `context_number_source_reads_context_value`
 - `context_number_source_missing_key_returns_default`
 - `context_number_source_wrong_type_returns_default`
 
 ### PR/Commit
+
 PR #31, #32
 
 ---
@@ -484,31 +493,26 @@ Divide implementation used IEEE 754 semantics, producing inf/-inf/NaN on divide-
 Adopted Option C after stress-testing with ChatGPT:
 
 1. **`divide`** (v0.2.0) — Math-true semantics
-   - Zero check: `impl.rs` line 55
-   - Returns `Err(ComputeError::DivisionByZero)`: line 56
-   - Finite check: line 60
-   - Returns `Err(ComputeError::NonFiniteResult)`: line 61
-   - Version bump: `manifest.rs` line 9
+   - Enforcement: `compute::implementations::divide::impl::Divide::compute`
+   - Zero check returns `Err(ComputeError::DivisionByZero)`
+   - Finite check returns `Err(ComputeError::NonFiniteResult)`
+   - Version bump in `compute::implementations::divide::manifest::divide_manifest`
 
 2. **`safe_divide`** (v0.1.0) — Explicit fallback semantics
-   - Zero check: `impl.rs` line 60
-   - Returns fallback: line 61
-   - Non-finite check: lines 63-64
-   - Returns fallback: line 67
-   - Fallback parameter required: `manifest.rs` lines 28, 31
-   - Registered: `catalog.rs` lines 106, 425
+   - Enforcement: `compute::implementations::safe_divide::impl::SafeDivide::compute`
+   - Zero and non-finite divide paths return configured fallback
+   - Required `fallback` parameter declared in `compute::implementations::safe_divide::manifest::safe_divide_manifest`
+   - Registered through `catalog::CorePrimitiveCatalog` setup
 
 3. **NUM-FINITE-1** — Runtime guard
-   - Definition: `execute.rs` line 296
-   - Number check: line 302
-   - Series check: line 308
-   - Called after Source: line 143
-   - Called after Compute: line 201
-   - Error type: `types.rs` line 127
+   - Enforcement function: `runtime::execute::ensure_finite`
+   - Number and Series non-finite checks map to `ExecError::NonFiniteOutput`
+   - Guard is applied after Source and Compute execution in `runtime::execute`
+   - Rule mapping surface is in `runtime::types::ExecError::rule_id`
 
 4. **ErrKind::SemanticError** — Non-retryable classification
-   - Definition: `lib.rs` lines 50-56
-   - Retry logic: `lib.rs` lines 381, 384-386
+   - Variant defined in `adapter::ErrKind`
+   - Retry policy in `supervisor::Supervisor::should_retry` treats `SemanticError` as non-retryable
 
 ### Justification
 
@@ -524,6 +528,7 @@ Adopted Option C after stress-testing with ChatGPT:
 - Both error paths result in `ErrKind::SemanticError` (non-retryable)
 
 ### Tests
+
 - `divide_by_zero_errors`
 - `divide_by_negative_zero_errors`
 - `divide_zero_by_zero_errors`
@@ -535,6 +540,7 @@ Adopted Option C after stress-testing with ChatGPT:
 - `semantic_error_not_retryable`
 
 ### PR/Commit
+
 PR #35, commit 7baa74c
 
 ---
@@ -554,4 +560,5 @@ PR #35, commit 7baa74c
 - v1 capture support is intentionally removed in the final state.
 
 ### PR/Commit
+
 commit ea9d94f

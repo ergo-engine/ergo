@@ -26,6 +26,7 @@ A Source Primitive is a deterministic data origin that introduces
 external or contextual data into the graph as typed values or series.
 
 Sources:
+
 - do not transform data
 - do not infer signals
 - do not emit events
@@ -53,6 +54,7 @@ kind: source
 ```
 
 Rules:
+
 - `id` must start with lowercase letter, contain only lowercase letters, digits, underscores (`^[a-z][a-z0-9_]*$`)
 - `version` must be valid semver
 - `kind` must be `source`
@@ -68,6 +70,7 @@ outputs:
 ```
 
 Rules:
+
 - Sources do not take inputs
 - All outputs are named and typed
 - Output types must be valid ValueType: `Number`, `Bool`, `String`, or `Series`
@@ -88,6 +91,7 @@ parameters:
 ```
 
 Rules:
+
 - Parameters configure what data is exposed
 - Parameters are static presets
 - Parameters must be serializable
@@ -95,6 +99,7 @@ Rules:
 - If `default` is present, its type must match the declared parameter `type`
 
 Examples:
+
 - identifier
 - interval
 - lookback window
@@ -111,6 +116,7 @@ execution:
 ```
 
 Rules:
+
 - Sources are evaluated on every engine tick
 - Cadence is always continuous in v0
 - Determinism is required
@@ -125,6 +131,7 @@ state:
 ```
 
 Rules:
+
 - Sources may not hold internal state
 - Caching, buffering, or accumulation is forbidden
 - Any temporal behavior must be modeled downstream
@@ -138,6 +145,7 @@ side_effects: false
 ```
 
 Rules:
+
 - Sources may not:
   - write files
   - mutate global state
@@ -160,6 +168,7 @@ requires:
 ```
 
 Rules:
+
 - `requires.context` declares what adapter-provided context keys this source needs
 - Keys with `required: true` must exist in the adapter's `context_keys` with matching type
 - Keys with `required: false` may be absent at runtime; the source uses a default value
@@ -173,6 +182,7 @@ Rules:
 Source primitives take no inputs.
 
 Hard rule:
+
 - No `inputs` section allowed
 - No graph wiring into sources
 - All dependencies must be parameters or adapter context (via `requires.context`)
@@ -201,7 +211,7 @@ These rules are checked when a source manifest is registered.
 | SRC-12 | Execution deterministic | `execution.deterministic == true` |
 | SRC-13 | Cadence is continuous | `execution.cadence == continuous` |
 | SRC-14 | ID unique in registry | `id ∉ SourceRegistry.ids` |
-| SRC-15 | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` |
+| SRC-15 | Parameter default type matches declared type | `parameters[].default == None \|\| typeof(parameters[].default) == parameters[].type` |
 | SRC-16 | $key context references bound to declared parameter | `∀ ctx where name starts with "$": referenced param exists in parameters[]` |
 | SRC-17 | $key context references must be String type | `∀ ctx where name starts with "$": referenced param.type == String` |
 
@@ -240,7 +250,7 @@ These rules are checked when a source is composed with an adapter.
 | SRC-16 | Registration | `SourceValidationError::UnboundContextKeyReference` | `src_16_dollar_key_referencing_nonexistent_param_rejected` |
 | SRC-17 | Registration | `SourceValidationError::ContextKeyReferenceNotString` | `src_17_dollar_key_referencing_non_string_param_rejected` |
 
-**Note on SRC-13:** Currently untestable because `Cadence` enum only has `Continuous` variant. Enforcement code exists at `registry.rs:77-78`; test will be added when cadence variants expand.
+**Note on SRC-13:** Currently untestable because `Cadence` enum only has `Continuous` variant. Enforcement exists in `SourceRegistry::validate_manifest`; test will be added when cadence variants expand.
 
 **Registration enforcement location:** `crates/kernel/runtime/src/source/registry.rs`
 **Registration test location:** `crates/kernel/runtime/src/source/tests.rs`
@@ -252,12 +262,14 @@ These rules are checked when a source is composed with an adapter.
 ## 5. Orchestrator Contract
 
 The orchestrator guarantees:
+
 - Source outputs are available before compute evaluation
 - Values are correctly typed
 - Data is aligned to the evaluation clock
 - Source execution is deterministic per tick
 
 The orchestrator does not:
+
 - infer missing data
 - backfill implicitly
 - mutate source outputs
@@ -267,6 +279,7 @@ The orchestrator does not:
 ## 6. Prohibited Behavior
 
 A source primitive may not:
+
 - Accept inputs
 - Emit events
 - Perform computation
@@ -584,6 +597,7 @@ side_effects: true
 #### SRC-10 — Required context key missing in adapter (composition)
 
 Source manifest (requires `$key`, defaulting to `x`):
+
 ```yaml
 kind: source
 id: context_number_source
@@ -610,6 +624,7 @@ side_effects: false
 ```
 
 Adapter provides (missing `x`):
+
 ```yaml
 context_keys: []
 ```
@@ -617,6 +632,7 @@ context_keys: []
 #### SRC-11 — Required context type mismatch (composition)
 
 Source manifest (requires `$key: Number`, defaulting to `x`):
+
 ```yaml
 kind: source
 id: context_number_source
@@ -643,6 +659,7 @@ side_effects: false
 ```
 
 Adapter provides (type mismatch for `x`):
+
 ```yaml
 context_keys:
   - name: x
@@ -668,6 +685,7 @@ Sources may not consume anything downstream.
 This document defines Source Primitive Manifest v1.
 
 Out of scope:
+
 - event-emitting sources
 - multi-identifier fan-out
 - streaming adapters
@@ -689,6 +707,7 @@ Breaking changes require a manifest version bump.
 ## Bottom Line
 
 With Source v1, the ontology is complete:
+
 - Source → origin
 - Compute → truth
 - Trigger → causality

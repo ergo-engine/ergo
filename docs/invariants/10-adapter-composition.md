@@ -5,6 +5,7 @@
 **Source:** EXTENSION_CONTRACTS_ROADMAP.md Phase 1, adapter.md (stable)
 
 **Entry invariants:**
+
 - Adapter passes registration validation (ADP-* rules)
 - Source/action manifests pass their registration validation
 

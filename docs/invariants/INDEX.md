@@ -22,6 +22,7 @@ This document defines the invariants that must hold at each phase boundary in th
 ### Purpose
 
 This document serves as:
+
 - The constitution of the system's correctness guarantees
 - An audit baseline for code review
 - A gap-detection tool for implementation work
@@ -42,6 +43,7 @@ This document serves as:
 ### Source Documents
 
 This checklist draws from:
+
 - `ontology.md` (frozen)
 - `execution.md` (frozen)
 - `freeze.md` (frozen)
@@ -68,6 +70,7 @@ Core is frozen at this point. The following constraints are now in force:
 3. **Infrastructure actions** (ack, annotate, context_set_*) live in core; **domain-specific capability actions** live in verticals
 
 This freeze applies to:
+
 - `src/source/`
 - `src/compute/`
 - `src/trigger/`
@@ -100,12 +103,13 @@ These tests are permanent. Failure indicates invariant regression.
 
 | ID | Invariant | Enforcement Locus | Status |
 |----|-----------|-------------------|--------|
-| RUN-CANON-1 | Canonical graph run requires explicit event source | Host usecase validation (`ergo_host::run_graph` enforces ingress presence before execution) | Enforced |
-| RUN-CANON-2 | Adapter binding is mandatory only for adapter-dependent graphs | Host usecase validation (`ergo_host::run_graph` enforces adapter requirement from dependency summary) | Enforced |
+| RUN-CANON-1 | Canonical graph run requires explicit event source | Host canonical path usecase validation (`ergo_host::run_graph_from_paths`, delegating to `run_graph`, enforces ingress presence before execution) | Enforced |
+| RUN-CANON-2 | Adapter binding is mandatory only for adapter-dependent graphs | Host canonical path usecase validation (`ergo_host::run_graph_from_paths`, delegating to `run_graph`, enforces adapter requirement from dependency summary) | Enforced |
 | REP-7 | Strict replay requires provenance contract match | `supervisor::replay::replay_checked_strict` | Enforced |
 | REP-8 | Strict replay rejects duplicate `events[].event_id` values | `supervisor::replay::validate_bundle_strict` | Enforced |
 
 Notes:
+
 - Adapter-dependent graph detection is based on required source context keys and action writes.
 - Adapter-independent canonical captures use explicit provenance sentinel `none`.
 - Capture bundles are strict v2 (`capture_version: "v2"`): `adapter_provenance`, `runtime_provenance`, and `decisions[].effects` are required, unknown fields are rejected, and legacy `adapter_version` bundles fail deserialization.
@@ -127,7 +131,7 @@ Notes:
 | [06-execution.md](06-execution.md) | Execution | R.1–R.7, TRG-STATE-1 |
 | [07-orchestration.md](07-orchestration.md) | Orchestration | CXT-1, SUP-*, HST-*, RTHANDLE-*, DOC-GATE-1, SDK-CANON-* |
 | [08-replay.md](08-replay.md) | Replay | REP-1–REP-6, REP-SCOPE, SOURCE-TRUST |
-| [09-adapter-registration.md](09-adapter-registration.md) | Adapter Registration | ADP-1–ADP-17 |
+| [09-adapter-registration.md](09-adapter-registration.md) | Adapter Registration | ADP-1–ADP-19 |
 | [10-adapter-composition.md](10-adapter-composition.md) | Adapter Composition | COMP-1–3, COMP-16 |
 | [11-source-registration.md](11-source-registration.md) | Source Registration | SRC-1–SRC-17 |
 | [12-compute-registration.md](12-compute-registration.md) | Compute Registration | CMP-1–CMP-20 |
@@ -180,6 +184,7 @@ A PR that cannot answer these questions is incomplete.
 This document is canonical for v0.
 
 It joins the frozen doctrine set:
+
 - `ontology.md`
 - `execution.md`
 - `freeze.md`
@@ -187,6 +192,7 @@ It joins the frozen doctrine set:
 - `supervisor.md`
 
 And the stable specification set:
+
 - `concepts.md`
 - `cluster-spec.md`
 

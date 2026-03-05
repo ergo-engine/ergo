@@ -112,6 +112,7 @@ enum ParsedManifest {
     },
 }
 
+#[allow(clippy::result_large_err)]
 pub fn validate_manifest_path(path: &Path) -> Result<ManifestSummary, HostManifestError> {
     let parsed = parse_manifest(path).map_err(HostManifestError::from)?;
     let summary = parsed.summary().clone();
@@ -119,6 +120,7 @@ pub fn validate_manifest_path(path: &Path) -> Result<ManifestSummary, HostManife
     Ok(summary)
 }
 
+#[allow(clippy::result_large_err)]
 pub fn check_compose_paths(
     adapter_path: &Path,
     other_path: &Path,

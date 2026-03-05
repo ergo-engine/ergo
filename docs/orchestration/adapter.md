@@ -34,6 +34,7 @@ Adapters must support input capture at the request of the orchestrator.
 - Captured inputs must be sufficient to reproduce adapter outputs during replay.
 
 Capture format standardization is a v1 concern required for:
+
 - Cross-environment replay
 - Third-party adapters
 - Adapter migration without re-capture
@@ -45,6 +46,7 @@ Capture format standardization is a v1 concern required for:
 Any transformation that alters the semantic meaning of values must be declared.
 
 Examples of semantic shaping that must be declared (non-exhaustive):
+
 - Currency conversion
 - Unit normalization
 - Timezone conversion
@@ -56,6 +58,7 @@ If a transformation changes the meaning of values as observed by downstream Comp
 it must be declared.
 
 Declaration may occur via:
+
 - Source manifest parameters, or
 - Adapter metadata explicitly referenced by the Source
 
@@ -70,12 +73,14 @@ versions.
 ## 4. Scope and Responsibility
 
 Adapters are responsible for:
+
 - Interfacing with external systems
 - Capturing inputs for replay
 - Enforcing determinism guarantees
 - Declaring any semantic transformations
 
 Adapters are not responsible for:
+
 - Graph execution semantics
 - Trigger or action behavior
 - Orchestration decisions
@@ -86,6 +91,7 @@ Adapters are not responsible for:
 ## 5. Trust Boundary
 
 Adapters are the only place where:
+
 - External nondeterminism enters the system
 - Semantics can be silently altered (if shaping is undeclared)
 
@@ -93,6 +99,7 @@ Therefore, adapters are trusted components. The correctness of Source guarantees
 adapter compliance with this contract.
 
 Without adapter compliance:
+
 - Replay determinism is not guaranteed
 - Source outputs may have different meanings across deployments
 - Backtest/paper/live alignment cannot be assured

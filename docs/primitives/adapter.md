@@ -17,6 +17,7 @@ This is the authoritative contract.
 ## 1. Definition
 
 An Adapter Primitive is the external interface layer that:
+
 - populates ExecutionContext for graph evaluation
 - emits ExternalEvents that trigger episodes
 - applies effects requested by Actions
@@ -48,6 +49,7 @@ runtime_compatibility: semver    # Minimum runtime version supported
 ```
 
 Rules:
+
 - `kind` must be literal `"adapter"`
 - `id` must start with lowercase letter, contain only lowercase letters, digits, underscores
 - `version` must be valid semver
@@ -67,6 +69,7 @@ context_keys:
 ```
 
 Rules:
+
 - `context_keys[].name` must be unique across all context keys
 - `context_keys[].type` must be a valid ValueType: `Number`, `Bool`, `String`, or `Series`
 - `context_keys[].writable` must be present (true or false)
@@ -85,6 +88,7 @@ event_kinds:
 ```
 
 Rules:
+
 - `event_kinds[].name` must be unique across all event kinds
 - `event_kinds[].payload_schema` must be valid JSON Schema Draft 2020-12
 
@@ -100,6 +104,7 @@ accepts:                      # Optional section
 ```
 
 Rules:
+
 - `accepts.effects[].name` must be unique across all effects
 - `accepts.effects[].payload_schema` must be valid JSON Schema Draft 2020-12
 - `accepts` section is optional (adapters may accept zero effects)
@@ -116,16 +121,19 @@ capture:
 ```
 
 Rules:
+
 - `capture.format_version` must be a non-empty string
 - `capture.fields[]` must reference valid CaptureFieldSet selectors
 
 **CaptureFieldSet (current, per REP-SCOPE):**
+
 - `event.<event_kind_name>` for each declared `event_kinds[].name`
 - `meta.adapter_id`
 - `meta.adapter_version`
 - `meta.timestamp`
 
 **Planned extension (requires REP-SCOPE update):**
+
 - `context.<key_name>` for each `context_keys[].name`
 - `effect.<effect_name>` for each `accepts.effects[].name`
 
@@ -182,6 +190,7 @@ The following rules are deferred until REP-SCOPE is expanded to include context/
 | ADP-16 | Write effect must be capturable | Deferred: REP-SCOPE |
 
 **Predicates (for future implementation):**
+
 - ADP-15: `all(writable == true => "context." + name in capture.fields)`
 - ADP-16: `any(writable == true) => "effect.set_context" in capture.fields`
 
@@ -191,7 +200,7 @@ The following rules are deferred until REP-SCOPE is expanded to include context/
 |---------|-------|---------------|-----------|
 | ADP-1 | Registration | `InvalidAdapter::InvalidId` | `adp_1_invalid_id_rejected` |
 | ADP-2 | Registration | `InvalidAdapter::InvalidVersion` | `adp_2_invalid_version_rejected` |
-| ADP-3 | Registration | `InvalidAdapter::IncompatibleRuntime` | `adp_3_incompatible_runtime_rejected` |
+| ADP-3 | Registration | `InvalidAdapter::InvalidRuntimeCompatibility` / `InvalidAdapter::IncompatibleRuntime` | `adp_3_invalid_runtime_compatibility_rejected` / `adp_3_incompatible_runtime_rejected` |
 | ADP-4 | Registration | `InvalidAdapter::ProvidesNothing` | `adp_4_empty_adapter_rejected` |
 | ADP-5 | Registration | `InvalidAdapter::DuplicateContextKey` | `adp_5_duplicate_context_key_rejected` |
 | ADP-6 | Registration | `InvalidAdapter::InvalidContextKeyType` | `adp_6_invalid_context_type_rejected` |
@@ -265,6 +274,7 @@ Built from `AdapterManifest` via `AdapterProvides::from_manifest()` after regist
 ## 7. Prohibited Behavior
 
 An adapter may not:
+
 - Inject context keys not declared in manifest
 - Emit event kinds not declared in manifest
 - Accept effects not declared in manifest
@@ -306,6 +316,7 @@ capture:
 ```
 
 This manifest passes all 17 implemented ADP rules:
+
 - ADP-1: `id` matches `^[a-z][a-z0-9_]*$`
 - ADP-2: `version` is valid semver
 - ADP-3: `runtime_compatibility` is valid semver
@@ -398,6 +409,7 @@ capture:
 Each example below is a complete manifest with a single intentional violation.
 
 **ADP-1: ID format invalid**
+
 ```yaml
 kind: adapter
 id: Bad-Id
@@ -423,6 +435,7 @@ capture:
 ```
 
 **ADP-2: Version invalid semver**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -448,6 +461,7 @@ capture:
 ```
 
 **ADP-3: Runtime compatibility not satisfied**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -473,6 +487,7 @@ capture:
 ```
 
 **ADP-4: Provides nothing (no context_keys, no event_kinds)**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -489,6 +504,7 @@ capture:
 ```
 
 **ADP-5: Duplicate context key names**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -518,6 +534,7 @@ capture:
 ```
 
 **ADP-6: Invalid context key type**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -543,6 +560,7 @@ capture:
 ```
 
 **ADP-7: Duplicate event kind names**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -572,6 +590,7 @@ capture:
 ```
 
 **ADP-8: Invalid event payload schema (banned oneOf)**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -598,6 +617,7 @@ capture:
 ```
 
 **ADP-9: Empty capture.format_version**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -623,6 +643,7 @@ capture:
 ```
 
 **ADP-10: Capture field not in CaptureFieldSet**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -648,6 +669,7 @@ capture:
 ```
 
 **ADP-11: Missing writable flag**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -672,6 +694,7 @@ capture:
 ```
 
 **ADP-12: Duplicate effect names**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -707,6 +730,7 @@ capture:
 ```
 
 **ADP-13: Invalid effect payload schema (external $ref)**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -737,6 +761,7 @@ capture:
 ```
 
 **ADP-14: Writable key without set_context effect**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -768,6 +793,7 @@ capture:
 ```
 
 **ADP-17: Writable key cannot be required**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -799,6 +825,7 @@ capture:
 ```
 
 **ADP-18: Required semantic event field not mapped to context**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -828,6 +855,7 @@ capture:
 ```
 
 **ADP-19: Unsupported materialization type in event payload schema**
+
 ```yaml
 kind: adapter
 id: good_id
@@ -863,6 +891,7 @@ capture:
 This document defines Adapter Manifest v1.
 
 Out of scope:
+
 - Trust tiers
 - Human review processes
 - Sandboxing

@@ -16,6 +16,7 @@ Change Rule: Operational log
 ## What "Kernel" Means
 
 Kernel = runtime + supervisor + adapter + contracts that define:
+
 - Execution semantics (ExpandedGraph → validate → execute)
 - Primitive ontology (Source / Compute / Trigger / Action)
 - Determinism + replay integrity posture
@@ -78,9 +79,13 @@ The catalog-access boundary (yaml-format.md §8.3) defines the loader/kernel div
 ### Host Responsibility
 
 The host (`prod/core/host`) owns:
+
 - Adapter dependency scan and composition validation
-- Usecase API surface: `run_graph`, `replay_graph`, `run_fixture`
+- Usecase API surface: `run_graph_from_paths`, `replay_graph_from_paths` (canonical client entrypoints); `run_graph`, `replay_graph`, `run_fixture` (lower-level)
 - Effect application at host boundary (HST-1 through HST-9)
+- Canonical composition of loader + kernel semantics for product entrypoints; kernel remains semantic authority
+
+See [Kernel/Prod Separation and Host Intent](kernel-prod-separation.md).
 
 ---
 
@@ -89,11 +94,13 @@ The host (`prod/core/host`) owns:
 ### 1. v0 Kernel (Closed / Stable Reference)
 
 **Changes allowed:**
+
 - Invariant enforcement fixes
 - Clarifications
 - Bug fixes consistent with doctrine
 
 **Changes not allowed:**
+
 - Meaning changes
 - New coercions
 - New hidden defaults
@@ -102,6 +109,7 @@ The host (`prod/core/host`) owns:
 ### 2. v1 Workstream (Exploration / Expansion)
 
 New semantics are allowed, but must be:
+
 - Explicitly specified
 - Phase-bounded (where enforced)
 - Regression-tested
@@ -118,9 +126,10 @@ New semantics are allowed, but must be:
 
 ## Reference Clients
 
-`crates/reference-client` is a reference client, not a core component:
-- It must reflect contracts accurately
-- It must not define runtime semantics
+The reference client (`crates/reference-client`) has been removed from the workspace. Its invariant (UI-REF-CLIENT-1: UI authoring is non-canonical) is documented in invariants/08-replay.md. Future reference clients must follow the same rules:
+
+- They must reflect contracts accurately
+- They must not define runtime semantics
 - Any "helpful UI behavior" must be explicit and versioned/documented as UI-only
 
 ---
@@ -128,6 +137,7 @@ New semantics are allowed, but must be:
 ## Release/Tag Discipline
 
 Every kernel-changing merge must correspond to:
+
 - Updated invariants/closure entries (if applicable)
 - A tag that anchors the reference point when appropriate
 

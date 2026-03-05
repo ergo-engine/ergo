@@ -185,7 +185,7 @@ fn context_number_source_manifest_with_dollar_key_validates() {
     assert_eq!(manifest.requires.context.len(), 1);
     assert_eq!(manifest.requires.context[0].name, "$key");
     assert_eq!(manifest.requires.context[0].ty, ValueType::Number);
-    assert_eq!(manifest.requires.context[0].required, false);
+    assert!(!manifest.requires.context[0].required);
 }
 
 #[test]
@@ -258,7 +258,7 @@ fn context_bool_source_manifest_with_dollar_key_validates() {
     assert_eq!(manifest.requires.context.len(), 1);
     assert_eq!(manifest.requires.context[0].name, "$key");
     assert_eq!(manifest.requires.context[0].ty, ValueType::Bool);
-    assert_eq!(manifest.requires.context[0].required, false);
+    assert!(!manifest.requires.context[0].required);
 }
 
 fn valid_manifest() -> SourcePrimitiveManifest {

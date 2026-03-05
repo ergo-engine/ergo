@@ -272,6 +272,20 @@ pub fn hash_effect(effect: &ActionEffect) -> String {
     hex::encode(hasher.finalize())
 }
 
+fn rehydrate_event(
+    record: &ExternalEventRecord,
+) -> Result<ergo_adapter::ExternalEvent, ReplayError> {
+    record.rehydrate_checked().map_err(|err| match err {
+        CaptureError::PayloadHashMismatch { .. } => ReplayError::HashMismatch {
+            event_id: record.event_id.clone(),
+        },
+        CaptureError::InvalidPayload { detail } => ReplayError::InvalidPayload {
+            event_id: record.event_id.clone(),
+            detail,
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,7 +323,7 @@ mod tests {
     fn compare_decisions_matching_empty_effect_vectors_succeeds() {
         let captured = vec![make_record("e1", vec![])];
         let replayed = vec![make_record("e1", vec![])];
-        assert_eq!(compare_decisions(&captured, &replayed).unwrap(), true);
+        assert!(compare_decisions(&captured, &replayed).unwrap());
     }
 
     #[test]
@@ -317,7 +331,7 @@ mod tests {
         let eff = make_captured_effect("price", 42.0);
         let captured = vec![make_record("e1", vec![eff.clone()])];
         let replayed = vec![make_record("e1", vec![eff])];
-        assert_eq!(compare_decisions(&captured, &replayed).unwrap(), true);
+        assert!(compare_decisions(&captured, &replayed).unwrap());
     }
 
     #[test]
@@ -394,18 +408,4 @@ mod tests {
         let expected = hex::encode(hasher.finalize());
         assert_eq!(hash_effect(&effect), expected);
     }
-}
-
-fn rehydrate_event(
-    record: &ExternalEventRecord,
-) -> Result<ergo_adapter::ExternalEvent, ReplayError> {
-    record.rehydrate_checked().map_err(|err| match err {
-        CaptureError::PayloadHashMismatch { .. } => ReplayError::HashMismatch {
-            event_id: record.event_id.clone(),
-        },
-        CaptureError::InvalidPayload { detail } => ReplayError::InvalidPayload {
-            event_id: record.event_id.clone(),
-            detail,
-        },
-    })
 }

@@ -18,12 +18,14 @@ The loader owns graph file transport, format decode, and cluster discovery. It o
 ## Responsibility
 
 The loader does:
-- YAML/JSON decode of graph files into `ClusterDefinition`
+
+- YAML decode of graph files into `ClusterDefinition` (JSON decode is stubbed but not yet wired)
 - Shorthand expansion and format-level coercions tied to file format
 - Cluster file discovery and candidate resolution
 - Source map construction for diagnostics
 
 The loader does NOT:
+
 - Access the primitive catalog
 - Perform semantic validation (wiring legality, type rules)
 - Define or return `RuleViolation` types (LAYER-2)
@@ -35,10 +37,11 @@ The loader does NOT:
 
 | Function | Responsibility |
 |----------|---------------|
-| `decode_graph_yaml` | YAML bytes → `ClusterDefinition` |
+| `load_graph_sources` | File path + search paths → `LoadedGraphBundle` (primary entry point) |
+| `decode_graph_yaml` | YAML string → `ClusterDefinition` |
 | `parse_graph_file` | File path → decoded cluster |
-| `load_cluster_tree` | Root path → full cluster tree with discovery |
-| `resolve_cluster_candidates` | Directory → deduplicated cluster file candidates |
+| `load_cluster_tree` | Root path + parsed root + search paths → full cluster tree keyed by `(id, version)` |
+| `resolve_cluster_candidates` | Base directory + cluster ID + search paths → deduplicated candidate file paths |
 
 ---
 
@@ -58,10 +61,11 @@ pub struct LoadedGraphBundle {
 
 ## Error Boundary
 
-Loader errors are transport and decode failures:
-- IO errors (file not found, permission denied)
-- Parse errors (malformed YAML, missing required fields)
-- Discovery errors (ambiguous candidates, circular references)
+Loader errors are transport and decode failures, exposed via `LoaderError`:
+
+- `LoaderIoError` — file not found, permission denied
+- `LoaderDecodeError` — malformed YAML, missing required fields
+- `LoaderDiscoveryError` — ambiguous candidates, circular references
 
 These are NOT rule violations. The loader never produces `RuleViolation` or references invariant IDs. Semantic errors begin at the kernel boundary when expansion/validation consumes the `ClusterDefinition`.
 

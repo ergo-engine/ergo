@@ -5,15 +5,18 @@ This crate is the ergo runtime plus its bundled primitive library (the standard 
 Primitives are deterministic, manifest-defined units of computation, triggering, and action. They are enforced by runtime contracts and are the single source of truth for execution.
 
 Terminology:
+
 - Runtime: ontology + execution physics (validation, execution engine, wiring rules)
 - Primitive library: stdlib of primitives packaged inside this runtime crate
 
 This repository is:
+
 - ontology-first
 - deterministic by construction
 - intentionally boring
 
 It is NOT:
+
 - a product
 - a UI
 - a strategy builder
@@ -56,6 +59,7 @@ ExternalEvent::with_payload()
 ### Key Naming
 
 Context keys are strings. Current implementations:
+
 - `context_number_source`: reads key from parameter `key` (default `"x"`)
 - `context_bool_source`: reads key from parameter `key` (default `"x"`)
 
@@ -71,6 +75,7 @@ All default behaviors are deterministic. Missing or malformed payload data produ
 - **Actions (5):** `ack_action`, `annotate_action`, `context_set_number`, `context_set_bool`, `context_set_string`
 
 Helpers:
+
 - `catalog::build_core_catalog()` builds a `PrimitiveCatalog` for validation/inference
 - `catalog::core_registries()` registers all stdlib implementations into runtime registries
 

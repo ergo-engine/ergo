@@ -512,14 +512,14 @@ fn category4_boundary_unicode_payload_keys_and_values_parse() {
 fn category4_boundary_payload_with_boolean_null_and_numeric_mixed_types_parses() {
     let items = parse_ok(
         "mixed_payload_scalars",
-        "{\"kind\":\"event\",\"event\":{\"type\":\"Command\",\"payload\":{\"flag\":true,\"missing\":null,\"n\":3.14,\"i\":2}}}\n",
+        "{\"kind\":\"event\",\"event\":{\"type\":\"Command\",\"payload\":{\"flag\":true,\"missing\":null,\"n\":4.56,\"i\":2}}}\n",
     );
     assert_eq!(items.len(), 1);
     assert_event(
         &items[0],
         ExternalEventKind::Command,
         None,
-        Some(json!({"flag": true, "missing": null, "n": 3.14, "i": 2})),
+        Some(json!({"flag": true, "missing": null, "n": 4.56, "i": 2})),
         None,
     );
 }

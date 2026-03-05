@@ -162,8 +162,8 @@ impl PrimitiveRegistry {
         Ok(())
     }
 
-    pub fn get(&self, id: &str) -> Option<&Box<dyn ComputePrimitive>> {
-        self.primitives.get(id)
+    pub fn get(&self, id: &str) -> Option<&dyn ComputePrimitive> {
+        self.primitives.get(id).map(|b| b.as_ref())
     }
 
     pub fn keys(&self) -> Vec<(String, String)> {

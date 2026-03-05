@@ -319,12 +319,12 @@ pub enum ExpandError {
         node_id: String,
         parameter: String,
     },
-    /// A.2: Boundary output references unmapped node_id
+    /// D.4: Boundary output references unmapped node_id
     UnmappedBoundaryOutput {
         port_name: String,
         node_id: String,
     },
-    /// A.3: Nested cluster output port references unmapped node
+    /// D.4: Nested cluster output port references unmapped node
     UnmappedNestedOutput {
         cluster_id: String,
         port_name: String,
@@ -1373,7 +1373,7 @@ where
                 }
                 cluster_input_map.insert(node.id.clone(), input_map);
 
-                // A.3: Map all output ports, failing if any node_id is unmapped
+                // D.4: Map all output ports, failing if any node_id is unmapped
                 let mut output_map: HashMap<String, ExpandedEndpoint> = HashMap::new();
                 for output_port in &bound_nested.output_ports {
                     let mapped_output = resolve_mapped_output(
@@ -1745,7 +1745,7 @@ fn build_resolved_params(
     Ok(result)
 }
 
-/// A.2: Map boundary outputs, failing if any node_id is unmapped
+/// D.4: Map boundary outputs, failing if any node_id is unmapped
 fn map_boundary_outputs(
     outputs: &[OutputPortSpec],
     mapping: &HashMap<NodeId, String>,
@@ -2152,7 +2152,7 @@ mod tests {
         assert_eq!(sig.kind, BoundaryKind::SourceLike);
         assert!(sig.is_origin);
         assert_eq!(sig.outputs.len(), 1);
-        assert_eq!(sig.outputs[0].wireable, true);
+        assert!(sig.outputs[0].wireable);
         assert_eq!(sig.outputs[0].ty, ValueType::Number);
     }
 
@@ -2202,7 +2202,7 @@ mod tests {
 
         assert_eq!(sig.kind, BoundaryKind::ActionLike);
         assert!(sig.has_side_effects);
-        assert_eq!(sig.outputs[0].wireable, false);
+        assert!(!sig.outputs[0].wireable);
     }
 
     #[test]
@@ -2258,7 +2258,7 @@ mod tests {
 
         assert_eq!(sig.kind, BoundaryKind::TriggerLike);
         assert!(!sig.is_origin);
-        assert_eq!(sig.outputs[0].wireable, true);
+        assert!(sig.outputs[0].wireable);
     }
 
     #[test]
@@ -3591,7 +3591,7 @@ mod tests {
 
         // Verify that nodes are assigned in alphabetical order by authoring_id
         // (alpha=n0, bravo=n1, charlie=n2, mike=n3, zebra=n4)
-        let expected_order = vec!["alpha", "bravo", "charlie", "mike", "zebra"];
+        let expected_order = ["alpha", "bravo", "charlie", "mike", "zebra"];
         for (i, name) in expected_order.iter().enumerate() {
             let expected_runtime_id = format!("n{}", i);
             let actual = pairs1.iter().find(|(auth, _)| auth == *name).unwrap();
@@ -3603,7 +3603,7 @@ mod tests {
         }
     }
 
-    /// A.2: Boundary output referencing unmapped node must fail expansion
+    /// D.4: Boundary output referencing unmapped node must fail expansion
     #[test]
     fn unmapped_boundary_output_rejected() {
         // Create cluster with output port referencing non-existent node
@@ -3652,7 +3652,7 @@ mod tests {
         ));
     }
 
-    /// A.3: Nested cluster output port referencing unmapped node must fail expansion
+    /// D.4: Nested cluster output port referencing unmapped node must fail expansion
     #[test]
     fn nested_output_mapping_failure_rejected() {
         // Inner cluster has output port referencing non-existent internal node

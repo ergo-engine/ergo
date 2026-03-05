@@ -15,6 +15,7 @@ A Trigger Primitive is a deterministic event extractor that converts
 typed inputs into discrete events.
 
 Triggers:
+
 - do not perform actions
 - do not manage external state
 - do not execute side effects
@@ -54,6 +55,7 @@ kind: trigger
 ```
 
 Rules:
+
 - `id` must start with a lowercase letter and contain only lowercase letters, digits, and underscores (`^[a-z][a-z0-9_]*$`)
 - `version` must be valid semver
 - `kind` must be literal `trigger`
@@ -71,6 +73,7 @@ inputs:
 ```
 
 Rules:
+
 - At least one input is required
 - Input names must be unique
 - Input types must be `Number`, `Bool`, `Series`, or `Event` (no `String`)
@@ -87,6 +90,7 @@ outputs:
 ```
 
 Rules:
+
 - Exactly one output is required
 - Output type must be `event`
 - Output name is not enforced today
@@ -105,6 +109,7 @@ parameters:
 ```
 
 Rules:
+
 - Parameters are static presets
 - Parameters must be serializable
 - No runtime mutation allowed
@@ -121,6 +126,7 @@ execution:
 ```
 
 Rules:
+
 - Determinism is required
 - `continuous` = evaluated every tick
 - `event` = evaluated only when upstream event occurs
@@ -148,43 +154,6 @@ TRG-STATE-1 (invariants/INDEX.md) formalizes this requirement.
 side_effects: false
 ```
 
-### 6.2 Event + Bool Gated Trigger
-
-```yaml
-kind: trigger
-id: emit_if_event_and_true
-version: 0.1.0
-
-inputs:
-  - name: event
-    type: event
-    required: true
-    cardinality: single
-  - name: condition
-    type: bool
-    required: true
-    cardinality: single
-
-outputs:
-  - name: event
-    type: event
-
-parameters: []
-
-execution:
-  cadence: continuous
-  deterministic: true
-
-state:
-  allowed: false
-
-side_effects: false
-```
-
-Rules:
-- Triggers may not perform I/O or access external state
-- If it touches the world, it is not a trigger
-
 ---
 
 ## 3. Rules Definition
@@ -204,7 +173,7 @@ Rules:
 | TRG-11 | Execution deterministic | `execution.deterministic == true` |
 | TRG-12 | Input cardinality single | `inputs[].cardinality == single` |
 | TRG-13 | ID unique in registry | `id ∉ TriggerRegistry.ids` |
-| TRG-14 | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` |
+| TRG-14 | Parameter default type matches declared type | `parameters[].default == None \|\| typeof(parameters[].default) == parameters[].type` |
 
 **Note on TRG-13:** Uniqueness is by id only; version is not considered. Two primitives with the same id but different versions are rejected.
 
@@ -259,6 +228,39 @@ version: 1.0.0
 
 inputs:
   - name: input
+    type: bool
+    required: true
+    cardinality: single
+
+outputs:
+  - name: event
+    type: event
+
+parameters: []
+
+execution:
+  cadence: continuous
+  deterministic: true
+
+state:
+  allowed: false
+
+side_effects: false
+```
+
+### 6.2 Event + Bool Gated Trigger
+
+```yaml
+kind: trigger
+id: emit_if_event_and_true
+version: 0.1.0
+
+inputs:
+  - name: event
+    type: event
+    required: true
+    cardinality: single
+  - name: condition
     type: bool
     required: true
     cardinality: single

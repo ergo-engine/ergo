@@ -15,6 +15,7 @@ A Compute Primitive is a pure, deterministic transform that maps
 named, typed inputs to named, typed outputs on a declared cadence.
 
 Computes:
+
 - have no side effects
 - do not access external I/O
 - do not observe the execution mode
@@ -53,6 +54,7 @@ kind: compute
 ```
 
 Rules:
+
 - `id` must start with a lowercase letter and contain only lowercase letters, digits, and underscores (`^[a-z][a-z0-9_]*$`)
 - `version` must be valid semver
 - `kind` must be literal `compute`
@@ -70,6 +72,7 @@ inputs:
 ```
 
 Rules:
+
 - At least one input is required
 - Input names must be unique
 - Input types must be `Number`, `Bool`, or `Series` (no `String`, no `Event`)
@@ -86,6 +89,7 @@ outputs:
 ```
 
 Rules:
+
 - At least one output is required
 - Output names must be unique
 - Output types must be `Number`, `Bool`, `Series`, or `String`
@@ -106,6 +110,7 @@ parameters:
 ```
 
 Rules:
+
 - Parameter types are limited to `int | number | bool`
 - Parameters are static presets (do not change during execution)
 - Parameters must be serializable
@@ -122,6 +127,7 @@ execution:
 ```
 
 Rules:
+
 - Cadence is `continuous` only (event cadence is unsatisfiable in v0)
 - Determinism is required
 - `may_error` indicates whether the compute may return a `ComputeError` (informational)
@@ -138,10 +144,12 @@ errors:
 ```
 
 Valid ErrorType values:
+
 - `DivisionByZero`
 - `NonFiniteResult`
 
 Rules:
+
 - If `errors.allowed == true`, then `errors.deterministic` must be true
 - When execution succeeds, all declared outputs must be produced
 - When execution fails, no outputs are produced
@@ -159,6 +167,7 @@ state:
 ```
 
 Rules:
+
 - If `state.allowed == true`, then `state.resettable` must be true
 - External or hidden state is forbidden
 
@@ -171,6 +180,7 @@ side_effects: false
 ```
 
 Rules:
+
 - Compute primitives may not perform I/O
 - Compute primitives may not access external state
 
@@ -198,7 +208,7 @@ Rules:
 | CMP-16 | Cadence is continuous | `execution.cadence == continuous` |
 | CMP-17 | Execution deterministic | `execution.deterministic == true` |
 | CMP-18 | ID unique in registry | `id ∉ ComputeRegistry.ids` |
-| CMP-19 | Parameter default type matches declared type | `parameters[].default == None || typeof(parameters[].default) == parameters[].type` |
+| CMP-19 | Parameter default type matches declared type | `parameters[].default == None \|\| typeof(parameters[].default) == parameters[].type` |
 | CMP-20 | Output types valid | `all(outputs[].type ∈ ValueType)` |
 
 **Note on CMP-18:** Uniqueness is by id only; version is not considered. Two primitives with the same id but different versions are rejected.
@@ -233,6 +243,8 @@ Rules:
 **Enforcement location (registration):** `crates/kernel/runtime/src/compute/registry.rs`
 
 **Enforcement location (execution):** `crates/kernel/runtime/src/runtime/execute.rs`
+
+**CMP-11 note:** The currently exercised enforcement path is execution-side (`ExecError::MissingOutput` via runtime execute). Keep registration mapping focused on manifest validation rules unless code adds an active registration-time CMP-11 emission path.
 
 **CMP-12 note:** The compute API returns `Result<Outputs, ComputeError>`. An error has no outputs by
 construction; the runtime surfaces this as `ExecError::ComputeFailed`.

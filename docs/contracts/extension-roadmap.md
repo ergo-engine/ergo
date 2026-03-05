@@ -5,12 +5,14 @@
 **Goal:** Define extension contracts completely enough that compliance is mechanically verifiable.
 
 **Success Criteria:**
+
 1. A developer reads the contract and knows exactly what to build
 2. The system validates compliance without human judgment
 3. Non-compliance produces a specific, actionable error
 4. Compliant pieces compose with any other compliant pieces
 
 **Non-Goals:**
+
 - Trust tiers
 - Human review processes
 - Sandboxing
@@ -42,6 +44,7 @@ These decisions are final and affect all phases.
 The codebase has multiple type enums for different contexts:
 
 **Extension Manifest ValueType** (`common::ValueType`):
+
 ```rust
 enum ValueType {
     Number,   // f64
@@ -50,9 +53,11 @@ enum ValueType {
     Series,   // Vec<f64>
 }
 ```
+
 Used for: Source outputs, Compute inputs/outputs, adapter context keys.
 
 **Trigger Input/Output Types** (`TriggerValueType`):
+
 ```rust
 enum TriggerValueType {
     Number,
@@ -63,6 +68,7 @@ enum TriggerValueType {
 ```
 
 **Action Input Types** (`ActionValueType`):
+
 ```rust
 enum ActionValueType {
     Event,   // Required - actions are event-gated
@@ -73,6 +79,7 @@ enum ActionValueType {
 ```
 
 **Cluster Wiring Types** (`cluster::ValueType`):
+
 ```rust
 enum ValueType {
     Number,
@@ -95,6 +102,7 @@ enum ValueType {
 ### Event Kinds
 
 **CURRENT (v1 alpha):**
+
 - `ExternalEventKind` remains the transport enum (`Pump`, `DataAvailable`, `Command`) for supervisor scheduling mechanics.
 - Adapter semantic event kinds are open-world strings declared in adapter manifests.
 - Semantic event consistency is enforced in adapter layer:
@@ -103,6 +111,7 @@ enum ValueType {
   - Runtime binder validates `(semantic_kind, payload)` before emitting `ExternalEvent`.
 
 **PLANNED (later v1):**
+
 - Supervisor policy/routing by semantic event kind string.
 
 ### Schema vs Rules
@@ -113,6 +122,7 @@ enum ValueType {
 ### Enforcement Anchors
 
 No file:line references (they drift). Use:
+
 - Function path: `adapter::registry::register`
 - Error variant: `InvalidAdapter::DuplicateContextKey`
 - Test name: `adp_5_duplicate_context_key_rejected`
@@ -146,6 +156,7 @@ Every validation error must provide certain information to satisfy Success Crite
 | `fix` | `Option<Cow<'static, str>>` | Actionable resolution guidance | When multiple valid fixes exist |
 
 **NOT contractual (implementation freedom):**
+
 - Internal representation (typed enums vs unified struct)
 - Whether errors accumulate or early-exit
 - CLI output formatting
@@ -166,6 +177,7 @@ pub trait ErrorInfo {
 ```
 
 **Phase scoping:**
+
 - **Phase 1:** `InvalidAdapter` implements `ErrorInfo` fully.
 - **Phases 2-6:** New error enums implement `ErrorInfo` as created.
 - **Phase 7:** Retrofit all existing validation error enums + CLI presentation layer.
@@ -207,6 +219,7 @@ impl<E: ErrorInfo> From<E> for RuleViolation {
 **This is a presentation format, not an internal representation.**
 
 Validators continue to use typed error enums internally. The CLI maps these to `RuleViolation` for uniform rendering via the `ErrorInfo` trait. This preserves:
+
 - Compile-time exhaustiveness checking on error handling
 - Type-safe error construction
 - Existing test assertions
@@ -218,6 +231,7 @@ Validators continue to use typed error enums internally. The CLI maps these to `
 Composition uses explicit provides/requires:
 
 **Adapter provides:**
+
 ```yaml
 provides:
   context:
@@ -235,6 +249,7 @@ provides:
 ```
 
 **Source requires:**
+
 ```yaml
 requires:
   context:
@@ -244,6 +259,7 @@ requires:
 ```
 
 **Composition predicate:**
+
 ```
 requires.context.filter(required).keys ⊆ provides.context.keys
 ∀ r ∈ requires.context where required: r.type == provides.context[r.name].type
@@ -256,6 +272,7 @@ requires.context.filter(required).keys ⊆ provides.context.keys
 ExecutionContext may include environment state created or modified by prior actions **if obtained via adapter environment reads at episode start**. Episode outcomes must never be forwarded via supervisor/runtime context injection.
 
 This pins supervisor.md §2.2 interpretation:
+
 - **Allowed:** Adapter reads from external store → populates context
 - **Forbidden:** Supervisor forwards episode results → injects into context
 
@@ -264,10 +281,12 @@ This pins supervisor.md §2.2 interpretation:
 ### Capture Selectors (Formal Enumeration)
 
 Valid capture field selectors (current, REP-SCOPE):
+
 - `event.<kind>` for each `event_kinds[].name`
 - `meta.adapter_id`, `meta.adapter_version`, `meta.timestamp`
 
 Planned extension (requires REP-SCOPE update):
+
 - `context.<key>` for each `context_keys[].name`
 - `effect.<name>` for each `accepts.effects[].name`
 
@@ -341,20 +360,24 @@ capture:
 ```
 
 **Phase 1.1 schema clarification:**
+
 - `accepts` is optional (adapters may accept zero effects).
 - `context_keys[].description` is optional metadata.
 
 **CaptureFieldSet(adapter) (current, REP-SCOPE):**
+
 - `event.<event_kind_name>` for each `event_kinds[].name`
 - `meta.adapter_id`, `meta.adapter_version`, `meta.timestamp`
 
 **Planned extension (requires REP-SCOPE update):**
+
 - `context.<key_name>` for each `context_keys[].name`
 - `effect.<effect_name>` for each `accepts.effects[].name`
 
 **Note (planned, Phase 8):** Adapters do NOT need to pre-seed initial values for writable keys. The `ctx_get_or_default` Source implementation will handle missing keys with a default.
 
 **Deliverables:**
+
 - [x] Complete schema definition in `adapter.md`
 - [x] JSON Schema for manifest validation
 - [x] Example valid manifest
@@ -387,6 +410,7 @@ capture:
 **Note on ADP-15/ADP-16:** Planned extension. These rules depend on capture including context/effect, which conflicts with REP-SCOPE until it is explicitly expanded.
 
 **Deliverables:**
+
 - [x] Complete rule table in `adapter.md`
 - [x] Each rule has ID, description, predicate
 - [x] Rules are machine-checkable (no human judgment)
@@ -409,8 +433,8 @@ capture:
 | ADP-12 | Registration | `InvalidAdapter::DuplicateEffectName` | `adp_12_duplicate_effect_name_rejected` |
 | ADP-13 | Registration | `InvalidAdapter::InvalidEffectSchema` | `adp_13_invalid_effect_schema_rejected` |
 | ADP-14 | Registration | `InvalidAdapter::WritableWithoutSetContext` | `adp_14_writable_without_set_context_rejected` |
-| ADP-15 | Registration | `InvalidAdapter::WritableKeyNotCaptured` | `adp_15_writable_key_not_captured_rejected` | **Deferred: REP-SCOPE** |
-| ADP-16 | Registration | `InvalidAdapter::SetContextNotCaptured` | `adp_16_set_context_not_captured_rejected` | **Deferred: REP-SCOPE** |
+| ADP-15 | Registration | `InvalidAdapter::WritableKeyNotCaptured` | `adp_15_writable_key_not_captured_rejected` (Deferred: REP-SCOPE) |
+| ADP-16 | Registration | `InvalidAdapter::SetContextNotCaptured` | `adp_16_set_context_not_captured_rejected` (Deferred: REP-SCOPE) |
 | ADP-17 | Registration | `InvalidAdapter::WritableKeyRequired` | `adp_17_writable_key_required_rejected` |
 
 **Error structure (typed enum with ErrorInfo):**
@@ -589,6 +613,7 @@ Phase 7 maps this to `RuleViolation` for CLI rendering. Internal code continues 
 5. **doc_anchor format:** All `doc_anchor()` values must use exact format: `STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-N` (not ad-hoc fragments like `#adp-5-duplicate-context-key`).
 
 **Deliverables:**
+
 - [x] `InvalidAdapter` error enum in code
 - [x] `InvalidAdapter` implements `ErrorInfo` trait fully
 - [x] Error messages reference doc anchor
@@ -597,6 +622,7 @@ Phase 7 maps this to `RuleViolation` for CLI rendering. Internal code continues 
 ### 1.4 Composition Rules
 
 **Adapter provides:**
+
 ```rust
 struct AdapterProvides {
     context: HashMap<String, ContextKeySpec>,
@@ -625,6 +651,7 @@ struct ContextKeySpec {
 | COMP-3 | Capture format version supported | `runtime.supports_capture(adapter.capture.format_version)` |
 
 **Deliverables:**
+
 - [x] `AdapterProvides` struct in code
 - [x] Composition validation function
 - [x] COMP-* rules in docs
@@ -692,6 +719,7 @@ side_effects: false
 ```
 
 **Deliverables:**
+
 - [x] Add `requires.context` field to schema
 - [x] Define composition: `source.requires.context ⊆ adapter.provides.context`
 - [x] Example valid manifests
@@ -718,10 +746,12 @@ side_effects: false
 **Note on SRC-10/SRC-11:** Only keys with `required: true` must exist in adapter. Keys with `required: false` may be absent (source uses default value).
 
 **Phases:**
+
 - SRC-1 through SRC-9, SRC-12, SRC-13: Registration (manifest-only validation)
 - SRC-10 through SRC-11: Composition (adapter + source validation)
 
 **Deliverables:**
+
 - [x] Complete rule table in `source.md`
 - [x] Each rule has ID, description, predicate
 - [x] Phase clearly indicated
@@ -745,6 +775,7 @@ side_effects: false
 | SRC-13 | Registration | `SourceValidationError::InvalidCadence` | `src_13_invalid_cadence_rejected` |
 
 **Deliverables:**
+
 - [x] Enforcement table in `source.md`
 - [x] Each rule links to error variant + test
 - [x] Error messages reference doc anchor (completed in Phase 7 unified error model)
@@ -752,6 +783,7 @@ side_effects: false
 ### 2.4 Composition Rules
 
 **Source requires:**
+
 ```rust
 struct SourceRequires {
     context: HashMap<String, ContextRequirement>,
@@ -764,15 +796,18 @@ struct ContextRequirement {
 ```
 
 **Composition with Adapter (COMP-1, COMP-2 from Phase 1):**
+
 - Source's required keys must exist in adapter's provided keys
 - Types must match exactly
 
 **Composition with Compute:**
+
 | Rule ID | Rule | Predicate |
 |---------|------|-----------|
 | COMP-4 | Source output type equals Compute input type | `source.output.type == compute.input.type` |
 
 **Deliverables:**
+
 - [x] `SourceRequires` struct in code
 - [x] Composition validation wired into runtime bind step (`RuntimeHandle::run`)
 - [x] COMP-4 enforced at wiring validation
@@ -854,6 +889,7 @@ side_effects: false
 **Note:** Compute manifest structs use `common::ValueType`; runtime mapping narrows accepted types at execution.
 
 **Deliverables:**
+
 - [x] Formalize `errors` field schema (v1 work)
 - [x] Document all valid ErrorTypes
 - [x] Example manifests showing error declaration
@@ -881,6 +917,7 @@ side_effects: false
 | CMP-17 | Execution deterministic | `execution.deterministic == true` |
 
 **Deliverables:**
+
 - [x] Complete rule table in `compute.md`
 - [x] Each rule has ID, description, predicate
 - [x] Runtime invariants (CMP-11, CMP-12) documented
@@ -908,6 +945,7 @@ side_effects: false
 | CMP-17 | Registration | `ValidationError::NonDeterministicExecution` | `cmp_17_non_deterministic_execution_rejected` |
 
 **Deliverables:**
+
 - [x] Enforcement table in `compute.md`
 - [x] Each rule links to error variant + test
 - [x] CMP-11, CMP-12 enforcement implemented
@@ -920,6 +958,7 @@ side_effects: false
 | COMP-6 | Output type equals downstream input type | `compute.output.type == downstream.input.type` |
 
 **Deliverables:**
+
 - [x] Composition rules in `compute.md`
 - [x] Type equality enforced at wiring validation
 
@@ -981,10 +1020,12 @@ side_effects: false
 | output name | Not enforced | Not enforced | "not enforced today" | ✓ Documented |
 
 **v1 changes flagged:**
+
 - Event inputs enable trigger chaining (Trigger → Trigger wiring) which is already allowed by wiring matrix
 - Output name flexibility is for future extensibility
 
 **Deliverables:**
+
 - [x] Confirm schema completeness
 - [x] Statelessness requirement is unambiguous
 
@@ -1008,6 +1049,7 @@ side_effects: false
 **TriggerValueType:** Number | Bool | Series | Event (no String)
 
 **Deliverables:**
+
 - [x] Complete rule table in `trigger.md`
 - [x] TRG-9 links to TRG-STATE-1 invariant
 
@@ -1029,6 +1071,7 @@ side_effects: false
 | TRG-12 | Registration | `TriggerValidationError::InvalidInputCardinality` | `trg_12_invalid_input_cardinality_rejected` |
 
 **Deliverables:**
+
 - [x] Enforcement table in `trigger.md`
 - [x] TRG-9 enforcement verified (TRG-STATE-1)
 
@@ -1040,6 +1083,7 @@ side_effects: false
 | COMP-8 | Trigger output to Action or Trigger | `downstream.kind ∈ {"action", "trigger"}` |
 
 **Deliverables:**
+
 - [x] Composition rules reference wiring matrix
 - [x] Enforced at validation phase
 
@@ -1104,6 +1148,7 @@ effects:                      # What effects this action may emit
 **Note:** `effects.writes` declares intent. Actual write happens via `set_context` effect emitted at runtime.
 
 **Deliverables:**
+
 - [x] Confirm schema completeness
 - [x] Side effects requirement is unambiguous
 
@@ -1134,6 +1179,7 @@ effects:                      # What effects this action may emit
 **WriteValueType:** Number | Bool | String (no Series, no Event — matching ActionValueType excluding Event)
 
 **Deliverables:**
+
 - [x] Complete rule table in `action.md`
 - [x] ACT-12 links to R.7 invariant
 
@@ -1160,6 +1206,7 @@ effects:                      # What effects this action may emit
 | ACT-17 | Registration | `ActionValidationError::NonDeterministicExecution` | `act_17_non_deterministic_execution_rejected` |
 
 **Deliverables:**
+
 - [x] Enforcement table in `action.md`
 - [x] ACT-12 links to existing R.7 enforcement
 
@@ -1178,6 +1225,7 @@ effects:                      # What effects this action may emit
 **Note (planned):** COMP-15 depends on capture including context/effect; it is deferred until REP-SCOPE expands.
 
 **Decision (2026-02-25):** Action inputs are split into two channels:
+
 - `event` inputs are Trigger-gated causal inputs (`when`)
 - scalar inputs are payload inputs (`what`) and may be wired from Source/Compute
 
@@ -1186,6 +1234,7 @@ validation and frozen wiring text must be updated to replace the legacy Trigger-
 input check.
 
 **Deliverables:**
+
 - [x] Composition rules in `action.md`
 - [x] Terminal nature explicit
 
@@ -1197,7 +1246,7 @@ input check.
 | COMP-12 | Composition | `CompositionError::WriteTargetNotWritable` | `comp_12_write_target_not_writable_rejected` |
 | COMP-13 | Composition | `CompositionError::WriteTypeMismatch` | `comp_13_write_type_mismatch_rejected` |
 | COMP-14 | Composition | `CompositionError::MissingSetContextEffect` | `comp_14_missing_set_context_rejected` |
-| COMP-15 | Composition | `CompositionError::WritesNotCaptured` | `comp_15_writes_not_captured_rejected` | **Deferred: REP-SCOPE**
+| COMP-15 | Composition | `CompositionError::WritesNotCaptured` | `comp_15_writes_not_captured_rejected` (Deferred: REP-SCOPE) |
 
 ### 5.6 Implementation
 
@@ -1282,6 +1331,7 @@ pub enum Phase {
 ```
 
 **Deliverables:**
+
 - [x] `ErrorInfo` trait in `crates/kernel/runtime/src/common/error_info.rs`
 - [x] `Phase` enum
 - [x] `RuleViolation` presentation struct
@@ -1327,6 +1377,7 @@ ergo validate <manifest.yaml>
 ```
 
 **Deliverables:**
+
 - [x] `ergo validate` command
 - [x] Auto-detects kind from manifest
 - [x] Validates: Source, Compute, Trigger, Action, Adapter
@@ -1355,6 +1406,7 @@ ergo check-compose <adapter.yaml> <source.yaml>
 ```
 
 **Deliverables:**
+
 - [x] `ergo check-compose` command
 - [x] Validates Source ↔ Adapter compatibility
 - [x] Validates Action ↔ Adapter compatibility (write path)
@@ -1384,6 +1436,7 @@ fn generate_docs() -> String {
 ```
 
 **Deliverables:**
+
 - [x] `RuleDefinition` struct
 - [x] Static rule registry per extension type
 - [x] `ergo gen-docs` command generates markdown from rules (`docs/system/rule-registry.md`)
@@ -1417,6 +1470,7 @@ fn adp_5_duplicate_context_key_rejected() {
 ```
 
 **Deliverables:**
+
 - [x] One test per rule (ADP-1..17, SRC-1..11, CMP-1..17, TRG-1..12, ACT-1..17, COMP-1..15, plus cluster D./E./V. coverage)
 - [x] Tests assert rule_id and path (where meaningful; otherwise path == None)
 - [x] Tests serve as documentation
@@ -1446,6 +1500,7 @@ fn adp_5_duplicate_context_key_rejected() {
 **Kind:** Source (no inputs, reads ExecutionContext)
 
 These are a family of implementations, one per supported type:
+
 - `context_number_source@0.1.0` (parameterized key, default `"x"`)
 - `context_bool_source@0.1.0`
 - `context_string_source` (future extension)
@@ -1453,6 +1508,7 @@ These are a family of implementations, one per supported type:
 A context source reads a value from the execution context — a key-value map provided by the adapter at each event. The source does not know or care whether the adapter populated that key from external data (market feed, user command) or from a prior episode's `context_set_*` write. Both paths are identical from the source's perspective.
 
 **Manifest (context_number_source):**
+
 ```yaml
 kind: source
 id: context_number_source
@@ -1488,10 +1544,12 @@ requires:
 **Note:** `requires.context[].name` is bound from the `key` parameter at instantiation time. Since `required: false`, the source falls back when the resolved key is absent.
 
 **Semantics:**
+
 1. If `ExecutionContext[key]` exists and is Number → output it
 2. Else → output `0.0`
 
 **Runtime invariants:**
+
 - Deterministic given ExecutionContext snapshot
 - Type mismatch prevented by composition validation (COMP-2: adapter type must match source requirement)
 
@@ -1502,11 +1560,13 @@ requires:
 **Kind:** Action (terminal, emits effects)
 
 These are a family of implementations, one per supported type:
+
 - `context_set_number`
 - `context_set_bool`
 - `context_set_string`
 
 **Manifest (context_set_bool):**
+
 ```yaml
 kind: action
 id: context_set_bool
@@ -1546,7 +1606,9 @@ effects:
 **Note:** `effects.writes[].name` is bound from the `key` parameter at instantiation time.
 
 **Semantics:**
+
 1. When triggered, emit effect description:
+
    ```json
    {
      "kind": "set_context",
@@ -1555,10 +1617,12 @@ effects:
      }
    }
    ```
+
 2. Adapter applies effect to external store after episode
 3. Next episode's context snapshot reflects the write
 
 **Runtime invariants:**
+
 - Runtime emits deterministic effect payloads; supervisor captures those payloads for replay integrity
 - Deterministic command emission given inputs
 
@@ -1575,6 +1639,7 @@ effects:
 ### 8.4 Compatibility Note
 
 `context_number_source` remains `0.1.0` and is backward compatible:
+
 - Omitting `key` still reads `"x"` via manifest default.
 - Existing graphs that relied on the old hardcoded key continue to work.
 - Graphs may now override `key` to read a different context value.
@@ -1594,6 +1659,7 @@ derive_key(authoring_path, slot_name) → string
 ```
 
 **Requirements:**
+
 - Deterministic
 - Collision-free across distinct `authoring_path`
 - Stable under replay given identical authoring artifact
@@ -1604,11 +1670,13 @@ derive_key(authoring_path, slot_name) → string
 
 Key format uses length-prefixed (UTF-8 byte length) segments to guarantee injectivity
 (identifiers may contain `#`, `/`, etc.):
+
 ```
 __ergo/<len>:<cluster_id>/<len>:<node_id>/.../<len>:<slot_name>
 ```
 
 **Example:**
+
 ```
 authoring_path = [("root_cluster", "entry_node"), ("once_cluster", "gate_trigger")]
 slot_name = "has_fired"
@@ -1671,6 +1739,7 @@ OnceCluster:
 ```
 
 **Data flow:**
+
 1. `state_source` reads `$state_key` from context (`false` fallback when missing/wrong type)
 2. `not_state` inverts it — `true` before first fire, `false` after firing
 3. `gate` (`emit_if_event_and_true`) forwards the incoming event only when `not_state` is `true`

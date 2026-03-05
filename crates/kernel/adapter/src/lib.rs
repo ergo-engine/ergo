@@ -206,16 +206,10 @@ impl From<Duration> for EventTime {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(transparent)]
 pub struct EventPayload {
     pub data: Vec<u8>,
-}
-
-impl Default for EventPayload {
-    fn default() -> Self {
-        Self { data: Vec::new() }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -376,15 +370,11 @@ fn json_to_value(value: &serde_json::Value) -> Option<Value> {
         return Some(Value::Bool(flag));
     }
 
-    let Some(items) = value.as_array() else {
-        return None;
-    };
+    let items = value.as_array()?;
 
     let mut series = Vec::with_capacity(items.len());
     for item in items {
-        let Some(number) = item.as_f64() else {
-            return None;
-        };
+        let number = item.as_f64()?;
         series.push(number);
     }
 
@@ -680,6 +670,7 @@ impl RuntimeInvoker for FaultRuntimeHandle {
 }
 
 #[cfg(test)]
+#[allow(clippy::arc_with_non_send_sync)]
 mod tests {
     use super::*;
     use std::collections::{HashMap, HashSet};

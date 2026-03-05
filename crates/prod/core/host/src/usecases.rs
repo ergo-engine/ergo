@@ -427,6 +427,8 @@ fn host_replay_setup_error(message: impl Into<String>) -> HostReplayError {
 }
 
 /// Canonical run API for clients. Host owns graph loading, expansion, adapter composition, and runner setup.
+// Allow non-Send/Sync in Arc: CoreRegistries and CorePrimitiveCatalog contain non-Send/Sync types.
+#[allow(clippy::arc_with_non_send_sync)]
 pub fn run_graph_from_paths(
     request: RunGraphFromPathsRequest,
 ) -> Result<RunGraphResult, HostRunError> {
@@ -490,6 +492,8 @@ pub fn run_graph_from_paths(
 }
 
 /// Canonical replay API for clients. Host owns capture load, graph loading, adapter composition, and runner setup.
+// Allow non-Send/Sync in Arc: CoreRegistries and CorePrimitiveCatalog contain non-Send/Sync types.
+#[allow(clippy::arc_with_non_send_sync)]
 pub fn replay_graph_from_paths(
     request: ReplayGraphFromPathsRequest,
 ) -> Result<ReplayGraphResult, HostReplayError> {

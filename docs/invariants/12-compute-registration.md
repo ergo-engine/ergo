@@ -5,6 +5,7 @@
 **Source:** EXTENSION_CONTRACTS_ROADMAP.md Phase 3, compute.md (stable)
 
 **Entry invariants:**
+
 - Manifest is parseable
 - Required fields are present
 

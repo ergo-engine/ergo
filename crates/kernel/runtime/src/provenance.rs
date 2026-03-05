@@ -113,7 +113,7 @@ impl RuntimeProvenanceV1Input {
             .iter()
             .map(ProvenanceEdge::from_expanded_edge)
             .collect::<Vec<_>>();
-        edges.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+        edges.sort_by_key(|a| a.sort_key());
 
         let mut used = BTreeSet::<(String, String)>::new();
         for node in graph.nodes.values() {
