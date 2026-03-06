@@ -11,48 +11,82 @@ These protocols define your authority boundaries, escalation rules, and the mult
 ---
 
 ## Project Structure & Module Organization
-- `crates/runtime/`, `crates/adapter/`, `crates/supervisor/`: core Rust crates.
-- `crates/reference-client/`: Vite/React authoring UI (excluded from Cargo workspace).
-- `docs/`: authoritative specs and contracts (`docs/INDEX.md`); `target/` is generated.
+
+- `crates/kernel/runtime/`, `crates/kernel/adapter/`, `crates/kernel/supervisor/`: kernel crates.
+- `crates/prod/core/host/`, `crates/prod/core/loader/`: product core crates.
+- `crates/prod/clients/cli/`, `crates/prod/clients/sdk-rust/`, `crates/prod/clients/sdk-types/`: thin client crates.
+- `crates/shared/test-support/`, `crates/shared/fixtures/`: shared support crates.
+- `docs/`: canonical documentation tree (authoritative).
+- `docs/ledger/dev-work/`: delivery ledgers (implementation branches).
+- `docs/ledger/gap-work/`: doctrine/risk/gap ledgers.
+- `docs/ledger/decisions/`: authority decision records.
+- `target/`: generated artifacts.
 
 ## Build, Test, and Development Commands
+
 Rust (run from repo root):
+
 - `cargo build` — build workspace.
 - `cargo test` — run all Rust tests.
 - `cargo test -p ergo-runtime` — run a single crate.
 - `cargo fmt` — format with rustfmt.
 
-UI (run from `crates/reference-client`):
-- `npm install` — install dependencies.
-- `npm run dev` — start Vite dev server.
-- `npm run build` — production build.
-- `npm run typecheck` — TypeScript typecheck.
+UI:
+
+- Reference client is intentionally removed from the active workspace.
 
 ## Coding Style & Naming Conventions
+
 - Rust 2021; follow rustfmt defaults and standard Rust casing (`snake_case` modules/functions, `PascalCase` types).
-- Core layers must stay domain-neutral; exceptions require PR justification (see `docs/CANONICAL/TERMINOLOGY.md`).
-- UI components in `crates/reference-client/src/ui` use `PascalCase.tsx`.
+- Core layers must stay domain-neutral; exceptions require PR justification (see `docs/system/terminology.md`).
 
 ## Testing Guidelines
-- Unit tests live alongside code with `#[test]`; integration tests are in `crates/supervisor/tests`.
-- Golden Spike tests are canonical execution paths: `crates/runtime/src/runtime/tests.rs` and `crates/supervisor/tests/integration.rs`.
+
+- Unit tests live alongside code with `#[test]`; supervisor integration tests are in `crates/kernel/supervisor/tests`.
+- Golden Spike tests are canonical execution paths: `crates/kernel/runtime/src/runtime/tests.rs` and `crates/kernel/supervisor/tests/integration.rs`.
 
 ## Commit & Pull Request Guidelines
+
 - Commit messages use Conventional Commits with optional scope, e.g. `feat(supervisor): ...`.
-- PRs must map invariants + test evidence (`docs/CANONICAL/PHASE_INVARIANTS.md`); Supervisor internals require doctrine review (`docs/FROZEN/SUPERVISOR.md`); serialized term renames need compat aliases + tests (`docs/CANONICAL/TERMINOLOGY.md`).
+- PRs must map invariants + test evidence (`docs/invariants/INDEX.md` and phase files).
+- Supervisor internal behavior changes require doctrine review against `docs/orchestration/supervisor.md`.
+- Serialized term renames require compatibility aliases + tests (see `docs/system/terminology.md`).
 
 ## GitHub Mechanics & Templates
+
 - PRs use `.github/PULL_REQUEST_TEMPLATE.md`.
 - Issues use `.github/ISSUE_TEMPLATE/` with structured templates:
-  - `doctrine-gap.md` — gaps between doctrine and implementation (COLLABORATION_PROTOCOLS.md §10)
-  - `v1-proposal.md` — new semantics beyond frozen v0 kernel (KERNEL_CLOSURE.md)
+  - `doctrine-gap.md` — gaps between doctrine and implementation.
+  - `v1-proposal.md` — new semantics beyond frozen v0 kernel.
 - `config.yml` disables blank issues to force structured selection.
-- Structural forks require escalation, not issues (COLLABORATION_PROTOCOLS.md §9).
+- Structural forks require escalation, not ad hoc issues.
 
 ## Documentation Authority
-- `docs/` is the authoritative source. When specs conflict, higher authority wins: FROZEN → STABLE → CANONICAL → PROJECT.
-- CONTRACTS (`docs/CONTRACTS/`) define external interfaces separately.
-- If implementation contradicts higher-authority docs, the code is wrong.
+
+- Canonical authority is `/docs`.
+- Each doc declares authority in frontmatter.
+- Authority precedence: `FROZEN -> STABLE -> CANONICAL -> PROJECT`.
+- If implementation contradicts a higher-authority document, the implementation is wrong.
+- Do not use `docs_legacy/` as normative authority unless explicitly instructed for historical comparison.
+
+## Ledger Convention (Required)
+
+Use the ledger lanes strictly:
+
+1. **Dev work (delivery):** `docs/ledger/dev-work/open|closed`
+   - One file per delivery scope/branch.
+   - Closure rows must be objective and testable.
+2. **Gap work (risk/doctrine):** `docs/ledger/gap-work/open|closed`
+   - Use for unresolved ambiguity, contradiction, or escalation.
+   - Every row must name the decision owner and unblock condition.
+3. **Decisions:** `docs/ledger/decisions/`
+   - Record final rulings that unblock dev or close gaps.
+
+Rules:
+
+- Never mix delivery tasks and gap/escalation tasks in the same ledger file.
+- Move files from `open/` to `closed/` only when all closure conditions are met.
+- Keep cross-links accurate between lane files and `docs/ledger/closure-register.md`.
 
 ## Multi-Agent Review Flow
 

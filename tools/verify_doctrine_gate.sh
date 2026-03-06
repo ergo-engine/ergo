@@ -4,7 +4,25 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-LEDGER="docs/CANONICAL/DOCTRINE_GAPS/SUP2_RUNRESULT_ALIGNMENT.md"
+resolve_docs_root() {
+  if [[ -d "docs_legacy/CANONICAL" ]]; then
+    echo "docs_legacy"
+    return
+  fi
+  if [[ -d "docs/CANONICAL" ]]; then
+    echo "docs"
+    return
+  fi
+  echo ""
+}
+
+DOCS_ROOT="$(resolve_docs_root)"
+if [[ -z "$DOCS_ROOT" ]]; then
+  echo "error: unable to locate docs root (expected docs_legacy/CANONICAL or docs/CANONICAL)"
+  exit 1
+fi
+
+LEDGER="${DOCS_ROOT}/CANONICAL/DOCTRINE_GAPS/SUP2_RUNRESULT_ALIGNMENT.md"
 CLAIM_PATTERN='canonical complete|full canonical closure'
 
 if [[ ! -f "$LEDGER" ]]; then
@@ -37,9 +55,13 @@ PY
 
 if [[ -n "${OPEN_ROWS}" ]]; then
   if command -v rg >/dev/null 2>&1; then
+    SEARCH_ROOTS=("$DOCS_ROOT")
+    if [[ "$DOCS_ROOT" != "docs" && -d "docs" ]]; then
+      SEARCH_ROOTS+=("docs")
+    fi
     if rg -n -i "$CLAIM_PATTERN" \
-      docs ./*.md \
-      --glob '!docs/CANONICAL/DOCTRINE_GAPS/SUP2_RUNRESULT_ALIGNMENT.md' \
+      "${SEARCH_ROOTS[@]}" ./*.md \
+      --glob "!${LEDGER}" \
       >/tmp/ergo_doctrine_gate_matches.txt 2>/dev/null; then
       echo "error: DOC-GATE-1 violation: canonical-complete claim found with open doctrine gaps"
       echo "open rows:"
@@ -50,8 +72,8 @@ if [[ -n "${OPEN_ROWS}" ]]; then
       exit 1
     fi
   else
-    if grep -Ein "$CLAIM_PATTERN" docs/*.md ./*.md \
-      | grep -v "docs/CANONICAL/DOCTRINE_GAPS/SUP2_RUNRESULT_ALIGNMENT.md" \
+    if grep -Ein "$CLAIM_PATTERN" "${DOCS_ROOT}"/*.md ./*.md \
+      | grep -v "$LEDGER" \
       >/tmp/ergo_doctrine_gate_matches.txt 2>/dev/null; then
       echo "error: DOC-GATE-1 violation: canonical-complete claim found with open doctrine gaps"
       echo "open rows:"

@@ -1,6 +1,6 @@
 # Documentation Index
 
-> **Single-Source Rule:** All authoritative content lives in FROZEN/, STABLE/, CANONICAL/, or CONTRACTS/. Topic summaries in TOPICS/ are navigation aids only — they link to sources, never restate laws.
+> **Single-Source Rule:** Every fact has exactly one authoritative location. Authority level is declared in each document's frontmatter, not by directory placement. CI enforces change rules by reading frontmatter.
 
 ---
 
@@ -8,94 +8,54 @@
 
 New to the system? Read these in order:
 
-1. [KERNEL_CLOSURE](CANONICAL/KERNEL_CLOSURE.md) — What "kernel" and "closed" mean
-2. [ontology](FROZEN/ontology.md) — The four primitives and their causal roles
-3. [execution_model](FROZEN/execution_model.md) — How graphs evaluate
-4. [V0_FREEZE](FROZEN/V0_FREEZE.md) — What is frozen vs patchable
-5. [CLUSTER_SPEC](STABLE/CLUSTER_SPEC.md) — Data structures for composition
-6. [UI_RUNTIME_CONTRACT](CONTRACTS/UI_RUNTIME_CONTRACT.md) — What a UI must emit
-7. [AUTHORING_LAYER](STABLE/AUTHORING_LAYER.md) — Cluster composition concepts
-8. [PHASE_INVARIANTS](CANONICAL/PHASE_INVARIANTS.md) — Enforcement loci for all invariants
-9. [TERMINOLOGY](CANONICAL/TERMINOLOGY.md) — Canonical terms and usage
+1. [kernel](system/kernel.md) — What "kernel" and "closed" mean
+2. [kernel-prod-separation](system/kernel-prod-separation.md) — Kernel/prod boundary and host intent
+3. [ontology](system/ontology.md) — The four primitives and their causal roles
+4. [execution](system/execution.md) — How graphs evaluate
+5. [freeze](system/freeze.md) — What is frozen vs patchable
+6. [cluster-spec](authoring/cluster-spec.md) — Data structures for composition
+7. [ui-runtime](contracts/ui-runtime.md) — What a UI must emit
+8. [concepts](authoring/concepts.md) — Cluster composition concepts
+9. [invariants](invariants/INDEX.md) — Enforcement loci for all invariants
+10. [terminology](system/terminology.md) — Canonical terms and usage
 
 ---
 
 ## By Topic
 
-Quick navigation by concern:
+Directory structure is the topic map. No separate navigation aids needed.
 
-| Topic | Summary | Key Documents |
-|-------|---------|---------------|
-| [Architecture](TOPICS/architecture.md) | System layers and trust boundaries | KERNEL_CLOSURE, adapter_contract, SUPERVISOR, AUTHORING_LAYER |
-| [Semantics](TOPICS/semantics.md) | Execution rules and phase boundaries | ontology, execution_model, CLUSTER_SPEC, PHASE_INVARIANTS |
-| [Contracts](TOPICS/contracts.md) | External interface specifications | UI_RUNTIME_CONTRACT, adapter_contract |
-| [Authoring](TOPICS/authoring.md) | Building clusters and compositions | AUTHORING_LAYER, CLUSTER_SPEC |
-| [Replay](TOPICS/replay.md) | Capture and replay determinism | SUPERVISOR (replay), adapter_contract (capture) |
-| [Standard Library](TOPICS/stdlib.md) | Core primitives and implementations | KERNEL_CLOSURE, PHASE_INVARIANTS |
-| [Governance](TOPICS/governance.md) | Change rules and version boundaries | V0_FREEZE, closure_register, PHASE_INVARIANTS, TERMINOLOGY |
-
----
-
-## By Authority Level
-
-Documents organized by their change requirements:
-
-### FROZEN/ (v1 required to change)
-
-| Document | Scope |
-|----------|-------|
-| [ontology.md](FROZEN/ontology.md) | Four primitives, wiring matrix, causal roles |
-| [execution_model.md](FROZEN/execution_model.md) | Evaluation semantics, phase rules, determinism |
-| [V0_FREEZE.md](FROZEN/V0_FREEZE.md) | What is frozen vs patchable, version boundaries |
-| [adapter_contract.md](FROZEN/adapter_contract.md) | Trust boundary, replay guarantees, capture requirements |
-| [SUPERVISOR.md](FROZEN/SUPERVISOR.md) | Orchestration layer, episode semantics, replay |
-
-### STABLE/ (additive changes only)
-
-| Document | Scope |
-|----------|-------|
-| [AUTHORING_LAYER.md](STABLE/AUTHORING_LAYER.md) | Cluster concepts, fractal composition, boundary kinds |
-| [CLUSTER_SPEC.md](STABLE/CLUSTER_SPEC.md) | Data structures, inference algorithm, validation rules |
-| [PRIMITIVE_MANIFESTS/](STABLE/PRIMITIVE_MANIFESTS/) | Contracts for Source, Compute, Trigger, Action |
-
-### CANONICAL/ (tracks implementation)
-
-| Document | Scope |
-|----------|-------|
-| [KERNEL_CLOSURE.md](CANONICAL/KERNEL_CLOSURE.md) | v0 baseline declaration, v1 workstream rules |
-| [PHASE_INVARIANTS.md](CANONICAL/PHASE_INVARIANTS.md) | Phase boundaries, enforcement loci, gap tracking |
-| [TERMINOLOGY.md](CANONICAL/TERMINOLOGY.md) | Canonical terms: primitive, implementation, cluster |
-
-### CONTRACTS/ (external interfaces)
-
-| Document | Scope |
-|----------|-------|
-| [UI_RUNTIME_CONTRACT.md](CONTRACTS/UI_RUNTIME_CONTRACT.md) | Data structures UI must emit for runtime |
-| [INDEX.md](CONTRACTS/INDEX.md) | Contract index with brief descriptions |
+| Directory | Concern | Contents |
+|-----------|---------|----------|
+| [system/](system/) | Core laws and identity | Ontology, execution model, freeze declaration, kernel closure, kernel/prod separation, terminology |
+| [orchestration/](orchestration/) | Supervision and trust boundaries | Supervisor spec, adapter contract |
+| [authoring/](authoring/) | Building clusters and graphs | Authoring concepts, cluster spec, YAML format, loader contract |
+| [primitives/](primitives/) | Primitive implementation contracts | Source, Compute, Trigger, Action, Adapter manifests |
+| [contracts/](contracts/) | External interface specifications | UI ↔ Runtime contract, extension roadmap |
+| [invariants/](invariants/) | Phase boundaries and enforcement | 194 tracked invariants across 16 phase files + rule registry |
+| [ledger/](ledger/) | Operational planning and doctrine risk tracking | Closure register, dev-work ledgers, gap-work ledgers, decision log |
 
 ---
 
-## Documentation Rules
+## Authority Levels
 
-### Single-Source Principle
+Every document declares its authority in frontmatter. The four levels and their change rules:
 
-Every fact has exactly one authoritative location. Topic summaries and navigation aids:
-- Link to sources
-- Provide context
-- Never restate laws
+| Level | Change Rule | Documents |
+|-------|-------------|-----------|
+| **FROZEN** | v1 required to change | [ontology](system/ontology.md), [execution](system/execution.md), [freeze](system/freeze.md), [supervisor](orchestration/supervisor.md), [adapter](orchestration/adapter.md) |
+| **STABLE** | Additive changes only | [concepts](authoring/concepts.md), [cluster-spec](authoring/cluster-spec.md), [yaml-format](authoring/yaml-format.md), [primitives/](primitives/) (all five manifests), [rule-registry](invariants/rule-registry.md) |
+| **CANONICAL** | Tracks implementation | [kernel](system/kernel.md), [kernel-prod-separation](system/kernel-prod-separation.md), [terminology](system/terminology.md), [loader](authoring/loader.md), [invariants/](invariants/) (all phase files + INDEX) |
+| **CONTRACTS** | External interfaces | [ui-runtime](contracts/ui-runtime.md), [extension-roadmap](contracts/extension-roadmap.md) |
 
-If you find duplicate content, the FROZEN/STABLE/CANONICAL/CONTRACTS version is authoritative.
+---
 
-### How Documents Work Together
+## How Documents Work Together
 
-- **PHASE_INVARIANTS.md** tracks which invariants are enforced where
-- **closure_register.md** tracks semantic gaps and their resolutions
-- Both reference spec documents (ontology, execution_model, etc.) as the source of truth
-
-### Currency
-
-Use each document's `Last Updated` and revision history to track currency.
-This index does not pin all docs to a single release tag.
+- **[invariants/](invariants/)** tracks which invariants are enforced where — one file per phase
+- **[ledger/closure-register](ledger/closure-register.md)** tracks semantic gaps and their resolutions
+- **[ledger/dev-work/](ledger/dev-work/)** tracks implementation delivery, **[ledger/gap-work/](ledger/gap-work/)** tracks doctrine/risk gaps, and **[ledger/decisions/](ledger/decisions/)** records authority outcomes
+- All three reference spec documents (ontology, execution, etc.) as the source of truth
 
 ---
 

@@ -2,17 +2,20 @@
 resolver = "2"
 
 members = [
-    "crates/runtime",
-    "crates/adapter",
-    "crates/supervisor",
-    "crates/ergo-host",
-    "crates/ergo-cli",
+    "crates/kernel/runtime",
+    "crates/kernel/adapter",
+    "crates/kernel/supervisor",
+    "crates/prod/core/host",
+    "crates/prod/core/loader",
+    "crates/prod/clients/cli",
+    "crates/prod/clients/sdk-rust",
+    "crates/prod/clients/sdk-types",
+    "crates/shared/test-support",
+    "crates/shared/fixtures",
 ]
 
 # UI is intentionally excluded (non-Rust)
-exclude = [
-    "crates/reference-client",
-]
+exclude = []
 
 [workspace.package]
 edition = "2021"
