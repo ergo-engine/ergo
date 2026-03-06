@@ -70,5 +70,6 @@ The host retains ownership of:
 ## Relationship to Existing Gaps
 
 This branch closes:
+
 - **Gap 2** (No adapter runtime surface)
 - **Gap 5** (Fixture/adapter parity) — via the simulation adapter (AR-3)
