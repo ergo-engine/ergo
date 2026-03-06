@@ -16,5 +16,5 @@ Do not remove rows; transition status instead.
 
 ## Closure Notes
 
-- Cross-ingestion normalization parity is explicitly deferred under `INGEST-TIME-1` (`docs/ledger/gaps/ingest-time.md`).
+- Cross-ingestion normalization parity is explicitly deferred under `INGEST-TIME-1` (`docs/ledger/gap-work/open/ingest-time.md`).
 - `DOC-GATE-1` blocks "canonical complete" claims while any row in this ledger is not `CLOSED`.

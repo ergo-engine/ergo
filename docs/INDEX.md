@@ -33,7 +33,7 @@ Directory structure is the topic map. No separate navigation aids needed.
 | [primitives/](primitives/) | Primitive implementation contracts | Source, Compute, Trigger, Action, Adapter manifests |
 | [contracts/](contracts/) | External interface specifications | UI ↔ Runtime contract, extension roadmap |
 | [invariants/](invariants/) | Phase boundaries and enforcement | 194 tracked invariants across 16 phase files + rule registry |
-| [ledger/](ledger/) | Operational state of the doctrine | Closure register, open gaps, escalations |
+| [ledger/](ledger/) | Operational planning and doctrine risk tracking | Closure register, dev-work ledgers, gap-work ledgers, decision log |
 
 ---
 
@@ -54,7 +54,7 @@ Every document declares its authority in frontmatter. The four levels and their 
 
 - **[invariants/](invariants/)** tracks which invariants are enforced where — one file per phase
 - **[ledger/closure-register](ledger/closure-register.md)** tracks semantic gaps and their resolutions
-- **[ledger/gaps/](ledger/gaps/)** and **[ledger/escalations/](ledger/escalations/)** hold open items
+- **[ledger/dev-work/](ledger/dev-work/)** tracks implementation delivery, **[ledger/gap-work/](ledger/gap-work/)** tracks doctrine/risk gaps, and **[ledger/decisions/](ledger/decisions/)** records authority outcomes
 - All three reference spec documents (ontology, execution, etc.) as the source of truth
 
 ---

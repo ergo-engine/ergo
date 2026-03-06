@@ -16,7 +16,11 @@ These protocols define your authority boundaries, escalation rules, and the mult
 - `crates/prod/core/host/`, `crates/prod/core/loader/`: product core crates.
 - `crates/prod/clients/cli/`, `crates/prod/clients/sdk-rust/`, `crates/prod/clients/sdk-types/`: thin client crates.
 - `crates/shared/test-support/`, `crates/shared/fixtures/`: shared support crates.
-- `docs/`: current docs tree; `docs_legacy/` retains canonical/frozen/stable authorities during migration; `target/` is generated.
+- `docs/`: canonical documentation tree (authoritative).
+- `docs/ledger/dev-work/`: delivery ledgers (implementation branches).
+- `docs/ledger/gap-work/`: doctrine/risk/gap ledgers.
+- `docs/ledger/decisions/`: authority decision records.
+- `target/`: generated artifacts.
 
 ## Build, Test, and Development Commands
 
@@ -29,13 +33,12 @@ Rust (run from repo root):
 
 UI:
 
-- reference client is intentionally removed from active workspace.
+- Reference client is intentionally removed from the active workspace.
 
 ## Coding Style & Naming Conventions
 
 - Rust 2021; follow rustfmt defaults and standard Rust casing (`snake_case` modules/functions, `PascalCase` types).
-- Core layers must stay domain-neutral; exceptions require PR justification (see `docs/CANONICAL/TERMINOLOGY.md`).
-- UI components in `crates/reference-client/src/ui` use `PascalCase.tsx`.
+- Core layers must stay domain-neutral; exceptions require PR justification (see `docs/system/terminology.md`).
 
 ## Testing Guidelines
 
@@ -45,22 +48,45 @@ UI:
 ## Commit & Pull Request Guidelines
 
 - Commit messages use Conventional Commits with optional scope, e.g. `feat(supervisor): ...`.
-- PRs must map invariants + test evidence (`docs/CANONICAL/PHASE_INVARIANTS.md`); Supervisor internals require doctrine review (`docs/FROZEN/SUPERVISOR.md`); serialized term renames need compat aliases + tests (`docs/CANONICAL/TERMINOLOGY.md`).
+- PRs must map invariants + test evidence (`docs/invariants/INDEX.md` and phase files).
+- Supervisor internal behavior changes require doctrine review against `docs/orchestration/supervisor.md`.
+- Serialized term renames require compatibility aliases + tests (see `docs/system/terminology.md`).
 
 ## GitHub Mechanics & Templates
 
 - PRs use `.github/PULL_REQUEST_TEMPLATE.md`.
 - Issues use `.github/ISSUE_TEMPLATE/` with structured templates:
-  - `doctrine-gap.md` — gaps between doctrine and implementation (COLLABORATION_PROTOCOLS.md §10)
-  - `v1-proposal.md` — new semantics beyond frozen v0 kernel (KERNEL_CLOSURE.md)
+  - `doctrine-gap.md` — gaps between doctrine and implementation.
+  - `v1-proposal.md` — new semantics beyond frozen v0 kernel.
 - `config.yml` disables blank issues to force structured selection.
-- Structural forks require escalation, not issues (COLLABORATION_PROTOCOLS.md §9).
+- Structural forks require escalation, not ad hoc issues.
 
 ## Documentation Authority
 
-- During migration, canonical/frozen/stable doctrine remains in `docs_legacy/` with authority order: FROZEN → STABLE → CANONICAL → PROJECT.
-- CONTRACTS are in `docs_legacy/CONTRACTS/` until fully migrated.
-- If implementation contradicts higher-authority docs, the code is wrong.
+- Canonical authority is `/docs`.
+- Each doc declares authority in frontmatter.
+- Authority precedence: `FROZEN -> STABLE -> CANONICAL -> PROJECT`.
+- If implementation contradicts a higher-authority document, the implementation is wrong.
+- Do not use `docs_legacy/` as normative authority unless explicitly instructed for historical comparison.
+
+## Ledger Convention (Required)
+
+Use the ledger lanes strictly:
+
+1. **Dev work (delivery):** `docs/ledger/dev-work/open|closed`
+   - One file per delivery scope/branch.
+   - Closure rows must be objective and testable.
+2. **Gap work (risk/doctrine):** `docs/ledger/gap-work/open|closed`
+   - Use for unresolved ambiguity, contradiction, or escalation.
+   - Every row must name the decision owner and unblock condition.
+3. **Decisions:** `docs/ledger/decisions/`
+   - Record final rulings that unblock dev or close gaps.
+
+Rules:
+
+- Never mix delivery tasks and gap/escalation tasks in the same ledger file.
+- Move files from `open/` to `closed/` only when all closure conditions are met.
+- Keep cross-links accurate between lane files and `docs/ledger/closure-register.md`.
 
 ## Multi-Agent Review Flow
 
