@@ -105,7 +105,9 @@ fn requires_additional_properties_false(map: &serde_json::Map<String, Value>) ->
 
     match map.get("type") {
         Some(Value::String(ty)) => ty == "object",
-        Some(Value::Array(types)) => types.iter().any(|ty| matches!(ty, Value::String(value) if value == "object")),
+        Some(Value::Array(types)) => types
+            .iter()
+            .any(|ty| matches!(ty, Value::String(value) if value == "object")),
         _ => false,
     }
 }
@@ -451,7 +453,9 @@ fn schema_is_object(schema: &serde_json::Map<String, Value>) -> bool {
 
     match schema.get("type") {
         Some(Value::String(ty)) => ty == "object",
-        Some(Value::Array(types)) => types.iter().any(|entry| matches!(entry, Value::String(ty) if ty == "object")),
+        Some(Value::Array(types)) => types
+            .iter()
+            .any(|entry| matches!(entry, Value::String(ty) if ty == "object")),
         _ => false,
     }
 }

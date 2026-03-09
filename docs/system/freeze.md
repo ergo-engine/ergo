@@ -51,10 +51,10 @@ The following wiring rules are authoritative:
 ```
 Source → Compute     : allowed
 Source → Trigger     : forbidden (v0)
-Source → Action      : allowed only for non-Event payload inputs (v0 non-Event payload types: Number/Bool/String); does not satisfy Action gate requirement
+Source → Action      : allowed only for non-Event payload inputs (non-Event payload types: Number/Series/Bool/String); does not satisfy Action gate requirement
 Compute → Compute    : allowed
 Compute → Trigger    : allowed
-Compute → Action     : allowed only for non-Event payload inputs (v0 non-Event payload types: Number/Bool/String); does not satisfy Action gate requirement
+Compute → Action     : allowed only for non-Event payload inputs (non-Event payload types: Number/Series/Bool/String); does not satisfy Action gate requirement
 Trigger → Trigger    : allowed
 Trigger → Action     : allowed for Event gate inputs only (Event → Event); every Action must have at least one Trigger-provided Event input
 Action → *           : forbidden (terminal)
@@ -67,7 +67,7 @@ Action input gating clarification (frozen):
 
 - Every Action must have at least one Event input wired from a Trigger.
 - Only Event inputs participate in Action execution gating.
-- Non-Event Action inputs are scalar payload inputs (v0: Number/Bool/String) and may be wired from Source or Compute outputs.
+- Non-Event Action inputs are scalar payload inputs (Number/Series/Bool/String) and may be wired from Source or Compute outputs.
 - Scalar payload inputs do not satisfy the Action gate requirement.
 - Trigger outputs may satisfy Action gate ports only (Event → Event). Trigger cannot supply scalar payload inputs (v0).
 

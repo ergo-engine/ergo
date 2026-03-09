@@ -15,6 +15,7 @@ pub enum ActionKind {
 pub enum ActionValueType {
     Event,
     Number,
+    Series,
     Bool,
     String,
 }
@@ -36,6 +37,7 @@ pub enum ActionOutcome {
 pub enum ActionValue {
     Event(ActionOutcome),
     Number(f64),
+    Series(Vec<f64>),
     Bool(bool),
     String(String),
 }
@@ -45,6 +47,7 @@ impl ActionValue {
         match self {
             ActionValue::Event(_) => ActionValueType::Event,
             ActionValue::Number(_) => ActionValueType::Number,
+            ActionValue::Series(_) => ActionValueType::Series,
             ActionValue::Bool(_) => ActionValueType::Bool,
             ActionValue::String(_) => ActionValueType::String,
         }
@@ -53,6 +56,13 @@ impl ActionValue {
     pub fn as_event(&self) -> Option<&ActionOutcome> {
         match self {
             ActionValue::Event(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    pub fn as_series(&self) -> Option<&Vec<f64>> {
+        match self {
+            ActionValue::Series(series) => Some(series),
             _ => None,
         }
     }
@@ -438,7 +448,7 @@ impl ErrorInfo for ActionValidationError {
                 name
             ))),
             Self::InvalidInputType { .. } => Some(Cow::Borrowed(
-                "Use a valid input type: event, number, bool, or string",
+                "Use a valid input type: event, number, series, bool, or string",
             )),
             Self::UndeclaredOutput { .. } => Some(Cow::Borrowed("Declare a single outcome output")),
             Self::OutputNotOutcome { .. } => Some(Cow::Borrowed("Rename output to 'outcome'")),
@@ -450,7 +460,7 @@ impl ErrorInfo for ActionValidationError {
                 name
             ))),
             Self::InvalidWriteType { .. } => Some(Cow::Borrowed(
-                "Write types must be Number, Bool, or String",
+                "Write types must be Number, Series, Bool, or String",
             )),
             Self::RetryNotAllowed => Some(Cow::Borrowed("Set execution.retryable: false")),
             Self::NonDeterministicExecution => {
@@ -498,7 +508,8 @@ pub trait ActionPrimitive {
 }
 
 pub use implementations::{
-    AckAction, AnnotateAction, ContextSetBoolAction, ContextSetNumberAction, ContextSetStringAction,
+    AckAction, AnnotateAction, ContextSetBoolAction, ContextSetNumberAction,
+    ContextSetSeriesAction, ContextSetStringAction,
 };
 pub use registry::ActionRegistry;
 

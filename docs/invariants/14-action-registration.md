@@ -27,7 +27,7 @@
 | ACT-12 | Gated by trigger | action.md #ACT-12 | — | — | ✓ | act_12_action_not_gated_rejected |
 | ACT-13 | Effects block present | action.md #ACT-13 | ✓ | — | — | act_3_kind_action_accepted |
 | ACT-14 | Write names unique | action.md #ACT-14 | — | — | ✓ | act_14_duplicate_write_name_rejected |
-| ACT-15 | Write types valid | action.md #ACT-15 | — | — | ✓ | act_15_invalid_write_type_rejected |
+| ACT-15 | Write types valid | action.md #ACT-15 | — | — | ✓ | act_15_write_types_valid_accepts_all_scalar_variants |
 | ACT-16 | Retryable false | action.md #ACT-16 | — | — | ✓ | act_16_retryable_not_allowed_rejected |
 | ACT-17 | Execution deterministic | action.md #ACT-17 | — | — | ✓ | act_17_non_deterministic_execution_rejected |
 | ACT-18 | ID unique in registry | action.md #ACT-18 | — | — | ✓ | act_18_duplicate_id_rejected |

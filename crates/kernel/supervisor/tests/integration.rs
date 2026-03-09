@@ -381,7 +381,10 @@ fn deferred_episode_retried_on_tick() {
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
 
     // max_in_flight = 0 means ALL events will be deferred
-    let constraints = Constraints { max_in_flight: Some(0), ..Default::default() };
+    let constraints = Constraints {
+        max_in_flight: Some(0),
+        ..Default::default()
+    };
 
     let mut supervisor =
         Supervisor::with_runtime(GraphId::new("test"), constraints, log.clone(), runtime);

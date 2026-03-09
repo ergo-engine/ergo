@@ -2,7 +2,7 @@
 Authority: PROJECT
 Date: 2026-03-05
 Author: Sebastian (Architect) + Codex (Implementation)
-Status: DECISION_PENDING
+Status: DECIDED
 Gap-ID: S-0
 Unblocks: feat/series-action-types, feat/series-stdlib
 ---
@@ -26,9 +26,9 @@ This decision gates whether `Series` can be admitted as an Action scalar payload
 
 | ID | Task | Closure Condition | Owner | Status |
 |----|------|-------------------|-------|--------|
-| S-0 | Decide parenthetical semantics (exhaustive vs descriptive) | Decision text recorded with rationale and impacted docs list | Sebastian | DECISION_PENDING |
-| S-0A | If exhaustive: amend frozen wording via explicit authority path | Approved amendment record exists before code implementation | Sebastian | OPEN |
-| S-0B | If descriptive: confirm no frozen amendment required | Written confirmation recorded in this file | Sebastian | OPEN |
+| S-0 | Decide parenthetical semantics (exhaustive vs descriptive) | Decision text recorded with rationale and impacted docs list | Sebastian | CLOSED |
+| S-0A | If exhaustive: amend frozen wording via explicit authority path | Approved amendment record exists before code implementation | Sebastian | N/A |
+| S-0B | If descriptive: confirm no frozen amendment required | Written confirmation recorded in this file | Sebastian | CLOSED |
 
 ## Required Decision Record Fields
 
@@ -38,3 +38,17 @@ This decision gates whether `Series` can be admitted as an Action scalar payload
 - Rationale
 - Affected docs
 - Affected branch ledgers
+
+## Decision Record
+
+- Date: 2026-03-05
+- Decision owner: Sebastian
+- Selected option: Descriptive
+- Rationale: The ontology §3 parenthetical is interpreted as descriptive freeze-time inventory, not an immutable cap on future scalar payload types. Adding `Series` to Action payloads does not alter trigger gating, DAG semantics, or action terminality.
+- Affected docs:
+  - `docs/primitives/action.md`
+  - `docs/invariants/14-action-registration.md`
+  - `docs/contracts/extension-roadmap.md`
+- Affected branch ledgers:
+  - `docs/ledger/dev-work/open/series-action-types.md`
+  - `docs/ledger/dev-work/open/series-stdlib.md`

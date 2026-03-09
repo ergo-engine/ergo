@@ -904,7 +904,7 @@ const ACTION_RULES: &[RuleDefinition] = &[
         id: "ACT-15",
         phase: Phase::Registration,
         summary: "Write types valid",
-        predicate: "all(effects.writes[].type ∈ {Number, Bool, String})",
+        predicate: "all(effects.writes[].type ∈ {Number, Series, Bool, String})",
         doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-15",
         status: RuleStatus::Enforced,
     },

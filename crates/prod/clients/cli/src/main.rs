@@ -503,10 +503,7 @@ outputs:
             "adapter.yaml".to_string(),
         ])
         .expect("short replay flags should parse");
-        assert_eq!(
-            opts.graph_path.as_deref(),
-            Some(Path::new("graph.yaml"))
-        );
+        assert_eq!(opts.graph_path.as_deref(), Some(Path::new("graph.yaml")));
         assert_eq!(
             opts.adapter_path.as_deref(),
             Some(Path::new("adapter.yaml"))
@@ -522,10 +519,7 @@ outputs:
             "adapter.yaml".to_string(),
         ])
         .expect("long replay flags should parse");
-        assert_eq!(
-            opts.graph_path.as_deref(),
-            Some(Path::new("graph.yaml"))
-        );
+        assert_eq!(opts.graph_path.as_deref(), Some(Path::new("graph.yaml")));
         assert_eq!(
             opts.adapter_path.as_deref(),
             Some(Path::new("adapter.yaml"))

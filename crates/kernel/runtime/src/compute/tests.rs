@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use crate::common::Value;
 use crate::compute::implementations::{
-    Abs, Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Lt, Lte, Max, Min, Multiply,
-    Negate, Neq, Not, Or, SafeDivide, Select, SelectBool, Subtract,
+    Abs, Add, And, Append, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Len, Lt, Lte, Max, Mean,
+    Min, Multiply, Negate, Neq, Not, Or, SafeDivide, Select, SelectBool, Subtract, Sum, Window,
 };
 use crate::compute::{ComputeError, ComputePrimitive};
 
@@ -632,4 +632,133 @@ fn safe_divide_normal_succeeds() {
     );
     assert!(result.is_ok());
     assert_eq!(result.unwrap().get("result"), Some(&Value::Number(4.0)));
+}
+
+#[test]
+fn append_appends_value_and_preserves_order() {
+    let append = Append::new();
+    let outputs = append
+        .compute(
+            &HashMap::from([
+                ("series".to_string(), Value::Series(vec![1.0, 2.0])),
+                ("value".to_string(), Value::Number(3.0)),
+            ]),
+            &HashMap::new(),
+            None,
+        )
+        .expect("append should succeed");
+    assert_eq!(
+        outputs.get("result"),
+        Some(&Value::Series(vec![1.0, 2.0, 3.0]))
+    );
+}
+
+#[test]
+fn window_returns_last_n_values() {
+    let window = Window::new();
+    let outputs = window
+        .compute(
+            &HashMap::from([(
+                "series".to_string(),
+                Value::Series(vec![1.0, 2.0, 3.0, 4.0]),
+            )]),
+            &HashMap::from([("size".to_string(), Value::Number(2.0))]),
+            None,
+        )
+        .expect("window should succeed");
+    assert_eq!(outputs.get("result"), Some(&Value::Series(vec![3.0, 4.0])));
+}
+
+#[test]
+fn window_with_size_larger_than_series_returns_full_series() {
+    let window = Window::new();
+    let outputs = window
+        .compute(
+            &HashMap::from([("series".to_string(), Value::Series(vec![1.0, 2.0]))]),
+            &HashMap::from([("size".to_string(), Value::Number(10.0))]),
+            None,
+        )
+        .expect("window should succeed");
+    assert_eq!(outputs.get("result"), Some(&Value::Series(vec![1.0, 2.0])));
+}
+
+#[test]
+fn window_rejects_non_positive_size() {
+    let window = Window::new();
+    let err = window
+        .compute(
+            &HashMap::from([("series".to_string(), Value::Series(vec![1.0, 2.0]))]),
+            &HashMap::from([("size".to_string(), Value::Number(0.0))]),
+            None,
+        )
+        .expect_err("size <= 0 must be rejected");
+    assert!(matches!(
+        err,
+        ComputeError::InvalidParameter { parameter, .. } if parameter == "size"
+    ));
+}
+
+#[test]
+fn mean_returns_zero_for_empty_series() {
+    let mean = Mean::new();
+    let outputs = mean
+        .compute(
+            &HashMap::from([("series".to_string(), Value::Series(vec![]))]),
+            &HashMap::new(),
+            None,
+        )
+        .expect("mean should succeed for empty series");
+    assert_eq!(outputs.get("result"), Some(&Value::Number(0.0)));
+}
+
+#[test]
+fn mean_returns_arithmetic_mean() {
+    let mean = Mean::new();
+    let outputs = mean
+        .compute(
+            &HashMap::from([("series".to_string(), Value::Series(vec![1.0, 2.0, 3.0]))]),
+            &HashMap::new(),
+            None,
+        )
+        .expect("mean should succeed");
+    assert_eq!(outputs.get("result"), Some(&Value::Number(2.0)));
+}
+
+#[test]
+fn sum_returns_zero_for_empty_series() {
+    let sum = Sum::new();
+    let outputs = sum
+        .compute(
+            &HashMap::from([("series".to_string(), Value::Series(vec![]))]),
+            &HashMap::new(),
+            None,
+        )
+        .expect("sum should succeed for empty series");
+    assert_eq!(outputs.get("result"), Some(&Value::Number(0.0)));
+}
+
+#[test]
+fn sum_returns_series_sum() {
+    let sum = Sum::new();
+    let outputs = sum
+        .compute(
+            &HashMap::from([("series".to_string(), Value::Series(vec![1.0, 2.5, 3.5]))]),
+            &HashMap::new(),
+            None,
+        )
+        .expect("sum should succeed");
+    assert_eq!(outputs.get("result"), Some(&Value::Number(7.0)));
+}
+
+#[test]
+fn len_returns_count_as_number() {
+    let len = Len::new();
+    let outputs = len
+        .compute(
+            &HashMap::from([("series".to_string(), Value::Series(vec![1.0, 2.0, 3.0]))]),
+            &HashMap::new(),
+            None,
+        )
+        .expect("len should succeed");
+    assert_eq!(outputs.get("result"), Some(&Value::Number(3.0)));
 }

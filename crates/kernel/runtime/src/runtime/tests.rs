@@ -1505,6 +1505,198 @@ fn validate_allows_compute_scalar_payload_to_action_when_gated() {
 }
 
 #[test]
+fn validate_allows_source_series_payload_to_action_when_gated() {
+    let mut nodes = HashMap::new();
+    nodes.insert(
+        "src".to_string(),
+        ExpandedNode {
+            runtime_id: "src".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "source_series".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+    nodes.insert(
+        "trg".to_string(),
+        ExpandedNode {
+            runtime_id: "trg".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "trigger".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+    nodes.insert(
+        "act".to_string(),
+        ExpandedNode {
+            runtime_id: "act".to_string(),
+            authoring_path: vec![],
+            implementation: crate::cluster::ImplementationInstance {
+                impl_id: "action".to_string(),
+                requested_version: "0.1.0".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            parameters: HashMap::new(),
+        },
+    );
+
+    let edges = vec![
+        crate::cluster::ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "src".to_string(),
+                port_name: "out".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "act".to_string(),
+                port_name: "value".to_string(),
+            },
+        },
+        crate::cluster::ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "trg".to_string(),
+                port_name: "event".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "act".to_string(),
+                port_name: "event".to_string(),
+            },
+        },
+    ];
+
+    let expanded = ExpandedGraph {
+        nodes,
+        edges,
+        boundary_inputs: Vec::new(),
+        boundary_outputs: Vec::new(),
+    };
+
+    let mut catalog = TestCatalog::default();
+    catalog.metadata.insert(
+        ("source_series".to_string(), "0.1.0".to_string()),
+        source_metadata_with_type(ValueType::Series),
+    );
+    catalog.metadata.insert(
+        ("trigger".to_string(), "0.1.0".to_string()),
+        trigger_metadata_with_optional_input_type(ValueType::Bool),
+    );
+    catalog.metadata.insert(
+        ("action".to_string(), "0.1.0".to_string()),
+        action_metadata_with_gate_and_payload(ValueType::Series),
+    );
+
+    crate::runtime::validate(&expanded, &catalog)
+        .expect("source series payload edge into action should be valid when gated");
+}
+
+#[test]
+fn validate_allows_compute_series_payload_to_action_when_gated() {
+    let mut nodes = HashMap::new();
+    for (id, impl_id) in [
+        ("src_series", "source_series"),
+        ("cmp", "compute_series"),
+        ("trg", "trigger"),
+        ("act", "action"),
+    ] {
+        nodes.insert(
+            id.to_string(),
+            ExpandedNode {
+                runtime_id: id.to_string(),
+                authoring_path: vec![],
+                implementation: crate::cluster::ImplementationInstance {
+                    impl_id: impl_id.to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::new(),
+            },
+        );
+    }
+
+    let edges = vec![
+        crate::cluster::ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "src_series".to_string(),
+                port_name: "out".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "cmp".to_string(),
+                port_name: "in".to_string(),
+            },
+        },
+        crate::cluster::ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "cmp".to_string(),
+                port_name: "out".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "act".to_string(),
+                port_name: "value".to_string(),
+            },
+        },
+        crate::cluster::ExpandedEdge {
+            from: ExpandedEndpoint::NodePort {
+                node_id: "trg".to_string(),
+                port_name: "event".to_string(),
+            },
+            to: ExpandedEndpoint::NodePort {
+                node_id: "act".to_string(),
+                port_name: "event".to_string(),
+            },
+        },
+    ];
+
+    let expanded = ExpandedGraph {
+        nodes,
+        edges,
+        boundary_inputs: Vec::new(),
+        boundary_outputs: Vec::new(),
+    };
+
+    let mut catalog = TestCatalog::default();
+    catalog.metadata.insert(
+        ("source_series".to_string(), "0.1.0".to_string()),
+        source_metadata_with_type(ValueType::Series),
+    );
+    catalog.metadata.insert(
+        ("compute_series".to_string(), "0.1.0".to_string()),
+        PrimitiveMetadata {
+            kind: PrimitiveKind::Compute,
+            inputs: vec![InputMetadata {
+                name: "in".to_string(),
+                value_type: ValueType::Series,
+                required: true,
+            }],
+            outputs: HashMap::from([(
+                "out".to_string(),
+                OutputMetadata {
+                    value_type: ValueType::Series,
+                    cardinality: crate::cluster::Cardinality::Single,
+                },
+            )]),
+            parameters: Vec::new(),
+        },
+    );
+    catalog.metadata.insert(
+        ("trigger".to_string(), "0.1.0".to_string()),
+        trigger_metadata_with_optional_input_type(ValueType::Bool),
+    );
+    catalog.metadata.insert(
+        ("action".to_string(), "0.1.0".to_string()),
+        action_metadata_with_gate_and_payload(ValueType::Series),
+    );
+
+    crate::runtime::validate(&expanded, &catalog)
+        .expect("compute series payload edge into action should be valid when gated");
+}
+
+#[test]
 fn validate_rejects_compute_event_edge_to_action_event_input() {
     let mut nodes = HashMap::new();
     nodes.insert(
@@ -4294,6 +4486,146 @@ fn context_set_string_runtime_emits_effect_with_resolved_key_and_string_value() 
 }
 
 #[test]
+fn context_set_series_runtime_emits_effect_with_resolved_key_and_series_value() {
+    let expanded = ExpandedGraph {
+        nodes: HashMap::from([
+            (
+                "gate_src".to_string(),
+                ExpandedNode {
+                    runtime_id: "gate_src".to_string(),
+                    authoring_path: vec![],
+                    implementation: crate::cluster::ImplementationInstance {
+                        impl_id: "const_bool".to_string(),
+                        requested_version: "0.1.0".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    parameters: HashMap::from([(
+                        "value".to_string(),
+                        crate::cluster::ParameterValue::Bool(true),
+                    )]),
+                },
+            ),
+            (
+                "series_src".to_string(),
+                ExpandedNode {
+                    runtime_id: "series_src".to_string(),
+                    authoring_path: vec![],
+                    implementation: crate::cluster::ImplementationInstance {
+                        impl_id: "context_series_source".to_string(),
+                        requested_version: "0.1.0".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    parameters: HashMap::from([(
+                        "key".to_string(),
+                        crate::cluster::ParameterValue::String("samples".to_string()),
+                    )]),
+                },
+            ),
+            (
+                "emit".to_string(),
+                ExpandedNode {
+                    runtime_id: "emit".to_string(),
+                    authoring_path: vec![],
+                    implementation: crate::cluster::ImplementationInstance {
+                        impl_id: "emit_if_true".to_string(),
+                        requested_version: "0.1.0".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    parameters: HashMap::new(),
+                },
+            ),
+            (
+                "act".to_string(),
+                ExpandedNode {
+                    runtime_id: "act".to_string(),
+                    authoring_path: vec![],
+                    implementation: crate::cluster::ImplementationInstance {
+                        impl_id: "context_set_series".to_string(),
+                        requested_version: "0.1.0".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    parameters: HashMap::from([(
+                        "key".to_string(),
+                        crate::cluster::ParameterValue::String("rolling".to_string()),
+                    )]),
+                },
+            ),
+        ]),
+        edges: vec![
+            crate::cluster::ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "gate_src".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "input".to_string(),
+                },
+            },
+            crate::cluster::ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "event".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "act".to_string(),
+                    port_name: "event".to_string(),
+                },
+            },
+            crate::cluster::ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "series_src".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "act".to_string(),
+                    port_name: "value".to_string(),
+                },
+            },
+        ],
+        boundary_inputs: Vec::new(),
+        boundary_outputs: vec![crate::cluster::OutputPortSpec {
+            name: "action_outcome".to_string(),
+            maps_to: crate::cluster::OutputRef {
+                node_id: "act".to_string(),
+                port_name: "outcome".to_string(),
+            },
+        }],
+    };
+
+    let catalog = build_core_catalog();
+    let core = core_registries().unwrap();
+    let registries = Registries {
+        sources: &core.sources,
+        computes: &core.computes,
+        triggers: &core.triggers,
+        actions: &core.actions,
+    };
+
+    let ctx = ExecutionContext::from_values(HashMap::from([(
+        "samples".to_string(),
+        crate::common::Value::Series(vec![13.0, 21.0]),
+    )]));
+
+    let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
+    assert_eq!(
+        report.outputs.get("action_outcome"),
+        Some(&RuntimeValue::Event(
+            crate::runtime::types::RuntimeEvent::Action(crate::action::ActionOutcome::Attempted),
+        ))
+    );
+    assert_eq!(report.effects.len(), 1);
+    let effect = &report.effects[0];
+    assert_eq!(effect.kind, "set_context");
+    assert_eq!(effect.writes.len(), 1);
+    assert_eq!(effect.writes[0].key, "rolling");
+    assert_eq!(
+        effect.writes[0].value,
+        crate::common::Value::Series(vec![13.0, 21.0])
+    );
+}
+
+#[test]
 fn context_number_source_runtime_reads_custom_key_parameter() {
     let expanded = ExpandedGraph {
         nodes: HashMap::from([(
@@ -4477,6 +4809,371 @@ fn context_bool_source_runtime_uses_default_key_when_parameter_omitted() {
 
     let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
     assert_eq!(report.outputs.get("out"), Some(&RuntimeValue::Bool(true)));
+}
+
+#[test]
+fn context_series_source_runtime_reads_custom_key_parameter() {
+    let expanded = ExpandedGraph {
+        nodes: HashMap::from([(
+            "src".to_string(),
+            ExpandedNode {
+                runtime_id: "src".to_string(),
+                authoring_path: vec![],
+                implementation: crate::cluster::ImplementationInstance {
+                    impl_id: "context_series_source".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::from([(
+                    "key".to_string(),
+                    crate::cluster::ParameterValue::String("sample_key".to_string()),
+                )]),
+            },
+        )]),
+        edges: vec![],
+        boundary_inputs: Vec::new(),
+        boundary_outputs: vec![crate::cluster::OutputPortSpec {
+            name: "out".to_string(),
+            maps_to: crate::cluster::OutputRef {
+                node_id: "src".to_string(),
+                port_name: "value".to_string(),
+            },
+        }],
+    };
+
+    let catalog = build_core_catalog();
+    let core = core_registries().unwrap();
+    let registries = Registries {
+        sources: &core.sources,
+        computes: &core.computes,
+        triggers: &core.triggers,
+        actions: &core.actions,
+    };
+
+    let ctx = ExecutionContext::from_values(HashMap::from([(
+        "sample_key".to_string(),
+        crate::common::Value::Series(vec![2.0, 4.0, 8.0]),
+    )]));
+
+    let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
+    assert_eq!(
+        report.outputs.get("out"),
+        Some(&RuntimeValue::Series(vec![2.0, 4.0, 8.0]))
+    );
+}
+
+#[test]
+fn context_series_source_runtime_uses_default_key_when_parameter_omitted() {
+    let expanded = ExpandedGraph {
+        nodes: HashMap::from([(
+            "src".to_string(),
+            ExpandedNode {
+                runtime_id: "src".to_string(),
+                authoring_path: vec![],
+                implementation: crate::cluster::ImplementationInstance {
+                    impl_id: "context_series_source".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::new(),
+            },
+        )]),
+        edges: vec![],
+        boundary_inputs: Vec::new(),
+        boundary_outputs: vec![crate::cluster::OutputPortSpec {
+            name: "out".to_string(),
+            maps_to: crate::cluster::OutputRef {
+                node_id: "src".to_string(),
+                port_name: "value".to_string(),
+            },
+        }],
+    };
+
+    let catalog = build_core_catalog();
+    let core = core_registries().unwrap();
+    let registries = Registries {
+        sources: &core.sources,
+        computes: &core.computes,
+        triggers: &core.triggers,
+        actions: &core.actions,
+    };
+
+    let ctx = ExecutionContext::from_values(HashMap::from([(
+        "x".to_string(),
+        crate::common::Value::Series(vec![1.0, 1.5, 2.0]),
+    )]));
+
+    let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
+    assert_eq!(
+        report.outputs.get("out"),
+        Some(&RuntimeValue::Series(vec![1.0, 1.5, 2.0]))
+    );
+}
+
+#[test]
+fn series_stdlib_chain_persists_via_context_across_episodes() {
+    let expanded = ExpandedGraph {
+        nodes: HashMap::from([
+            (
+                "src_series".to_string(),
+                ExpandedNode {
+                    runtime_id: "src_series".to_string(),
+                    authoring_path: vec![],
+                    implementation: crate::cluster::ImplementationInstance {
+                        impl_id: "context_series_source".to_string(),
+                        requested_version: "0.1.0".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    parameters: HashMap::from([(
+                        "key".to_string(),
+                        crate::cluster::ParameterValue::String("samples".to_string()),
+                    )]),
+                },
+            ),
+            (
+                "src_num".to_string(),
+                ExpandedNode {
+                    runtime_id: "src_num".to_string(),
+                    authoring_path: vec![],
+                    implementation: crate::cluster::ImplementationInstance {
+                        impl_id: "number_source".to_string(),
+                        requested_version: "0.1.0".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    parameters: HashMap::from([(
+                        "value".to_string(),
+                        crate::cluster::ParameterValue::Number(5.0),
+                    )]),
+                },
+            ),
+            (
+                "append".to_string(),
+                ExpandedNode {
+                    runtime_id: "append".to_string(),
+                    authoring_path: vec![],
+                    implementation: crate::cluster::ImplementationInstance {
+                        impl_id: "append".to_string(),
+                        requested_version: "0.1.0".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    parameters: HashMap::new(),
+                },
+            ),
+            (
+                "window".to_string(),
+                ExpandedNode {
+                    runtime_id: "window".to_string(),
+                    authoring_path: vec![],
+                    implementation: crate::cluster::ImplementationInstance {
+                        impl_id: "window".to_string(),
+                        requested_version: "0.1.0".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    parameters: HashMap::from([(
+                        "size".to_string(),
+                        crate::cluster::ParameterValue::Number(3.0),
+                    )]),
+                },
+            ),
+            (
+                "mean".to_string(),
+                ExpandedNode {
+                    runtime_id: "mean".to_string(),
+                    authoring_path: vec![],
+                    implementation: crate::cluster::ImplementationInstance {
+                        impl_id: "mean".to_string(),
+                        requested_version: "0.1.0".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    parameters: HashMap::new(),
+                },
+            ),
+            (
+                "gate".to_string(),
+                ExpandedNode {
+                    runtime_id: "gate".to_string(),
+                    authoring_path: vec![],
+                    implementation: crate::cluster::ImplementationInstance {
+                        impl_id: "const_bool".to_string(),
+                        requested_version: "0.1.0".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    parameters: HashMap::from([(
+                        "value".to_string(),
+                        crate::cluster::ParameterValue::Bool(true),
+                    )]),
+                },
+            ),
+            (
+                "emit".to_string(),
+                ExpandedNode {
+                    runtime_id: "emit".to_string(),
+                    authoring_path: vec![],
+                    implementation: crate::cluster::ImplementationInstance {
+                        impl_id: "emit_if_true".to_string(),
+                        requested_version: "0.1.0".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    parameters: HashMap::new(),
+                },
+            ),
+            (
+                "act".to_string(),
+                ExpandedNode {
+                    runtime_id: "act".to_string(),
+                    authoring_path: vec![],
+                    implementation: crate::cluster::ImplementationInstance {
+                        impl_id: "context_set_series".to_string(),
+                        requested_version: "0.1.0".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    parameters: HashMap::from([(
+                        "key".to_string(),
+                        crate::cluster::ParameterValue::String("samples".to_string()),
+                    )]),
+                },
+            ),
+        ]),
+        edges: vec![
+            crate::cluster::ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "src_series".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "append".to_string(),
+                    port_name: "series".to_string(),
+                },
+            },
+            crate::cluster::ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "src_num".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "append".to_string(),
+                    port_name: "value".to_string(),
+                },
+            },
+            crate::cluster::ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "append".to_string(),
+                    port_name: "result".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "window".to_string(),
+                    port_name: "series".to_string(),
+                },
+            },
+            crate::cluster::ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "window".to_string(),
+                    port_name: "result".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "mean".to_string(),
+                    port_name: "series".to_string(),
+                },
+            },
+            crate::cluster::ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "gate".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "input".to_string(),
+                },
+            },
+            crate::cluster::ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "event".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "act".to_string(),
+                    port_name: "event".to_string(),
+                },
+            },
+            crate::cluster::ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "window".to_string(),
+                    port_name: "result".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "act".to_string(),
+                    port_name: "value".to_string(),
+                },
+            },
+        ],
+        boundary_inputs: Vec::new(),
+        boundary_outputs: vec![
+            crate::cluster::OutputPortSpec {
+                name: "window_out".to_string(),
+                maps_to: crate::cluster::OutputRef {
+                    node_id: "window".to_string(),
+                    port_name: "result".to_string(),
+                },
+            },
+            crate::cluster::OutputPortSpec {
+                name: "mean_out".to_string(),
+                maps_to: crate::cluster::OutputRef {
+                    node_id: "mean".to_string(),
+                    port_name: "result".to_string(),
+                },
+            },
+        ],
+    };
+
+    let catalog = build_core_catalog();
+    let core = core_registries().unwrap();
+    let registries = Registries {
+        sources: &core.sources,
+        computes: &core.computes,
+        triggers: &core.triggers,
+        actions: &core.actions,
+    };
+
+    let first_ctx = ExecutionContext::from_values(HashMap::from([(
+        "samples".to_string(),
+        crate::common::Value::Series(vec![1.0, 2.0]),
+    )]));
+    let first = run(&expanded, &catalog, &registries, &first_ctx).unwrap();
+    assert_eq!(
+        first.outputs.get("window_out"),
+        Some(&RuntimeValue::Series(vec![1.0, 2.0, 5.0]))
+    );
+    match first.outputs.get("mean_out") {
+        Some(RuntimeValue::Number(mean)) => {
+            assert!((*mean - (8.0 / 3.0)).abs() < 1e-9);
+        }
+        other => panic!("expected numeric mean_out, got {:?}", other),
+    }
+    assert_eq!(first.effects.len(), 1);
+    assert_eq!(first.effects[0].writes.len(), 1);
+    assert_eq!(first.effects[0].writes[0].key, "samples");
+    assert_eq!(
+        first.effects[0].writes[0].value,
+        crate::common::Value::Series(vec![1.0, 2.0, 5.0])
+    );
+
+    let second_ctx = ExecutionContext::from_values(HashMap::from([(
+        "samples".to_string(),
+        first.effects[0].writes[0].value.clone(),
+    )]));
+    let second = run(&expanded, &catalog, &registries, &second_ctx).unwrap();
+    assert_eq!(
+        second.outputs.get("window_out"),
+        Some(&RuntimeValue::Series(vec![2.0, 5.0, 5.0]))
+    );
+    assert_eq!(
+        second.outputs.get("mean_out"),
+        Some(&RuntimeValue::Number(4.0))
+    );
+    assert_eq!(
+        second.effects[0].writes[0].value,
+        crate::common::Value::Series(vec![2.0, 5.0, 5.0])
+    );
 }
 
 #[test]

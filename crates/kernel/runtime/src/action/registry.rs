@@ -101,7 +101,10 @@ impl ActionRegistry {
             }
             seen_writes.insert(&write.name, index);
 
-            if write.value_type == ValueType::Series {
+            if !matches!(
+                write.value_type,
+                ValueType::Number | ValueType::Series | ValueType::Bool | ValueType::String
+            ) {
                 return Err(ActionValidationError::InvalidWriteType {
                     name: write.name.clone(),
                     got: write.value_type.clone(),
@@ -143,6 +146,7 @@ impl ActionRegistry {
                         let compatible = matches!(
                             (&write.value_type, &inp.value_type),
                             (ValueType::Number, super::ActionValueType::Number)
+                                | (ValueType::Series, super::ActionValueType::Series)
                                 | (ValueType::Bool, super::ActionValueType::Bool)
                                 | (ValueType::String, super::ActionValueType::String)
                         );
@@ -443,20 +447,49 @@ mod tests {
     }
 
     #[test]
-    fn act_15_invalid_write_type_rejected() {
+    fn act_15_write_types_valid_accepts_all_scalar_variants() {
         let mut manifest = baseline_manifest();
-        manifest.effects.writes = vec![crate::action::ActionWriteSpec {
-            name: "series".to_string(),
-            value_type: ValueType::Series,
-            from_input: String::new(),
-        }];
-        let err = ActionRegistry::validate_manifest(&manifest).unwrap_err();
-        assert!(matches!(
-            err,
-            ActionValidationError::InvalidWriteType { .. }
-        ));
-        assert_eq!(err.rule_id(), "ACT-15");
-        assert_eq!(err.path().as_deref(), Some("$.effects.writes[].type"));
+        manifest.inputs.push(crate::action::InputSpec {
+            name: "samples".to_string(),
+            value_type: crate::action::ActionValueType::Series,
+            required: true,
+            cardinality: crate::action::Cardinality::Single,
+        });
+        manifest.inputs.push(crate::action::InputSpec {
+            name: "flag".to_string(),
+            value_type: crate::action::ActionValueType::Bool,
+            required: true,
+            cardinality: crate::action::Cardinality::Single,
+        });
+        manifest.inputs.push(crate::action::InputSpec {
+            name: "label".to_string(),
+            value_type: crate::action::ActionValueType::String,
+            required: true,
+            cardinality: crate::action::Cardinality::Single,
+        });
+        manifest.effects.writes = vec![
+            crate::action::ActionWriteSpec {
+                name: "price".to_string(),
+                value_type: ValueType::Number,
+                from_input: "value".to_string(),
+            },
+            crate::action::ActionWriteSpec {
+                name: "samples".to_string(),
+                value_type: ValueType::Series,
+                from_input: "samples".to_string(),
+            },
+            crate::action::ActionWriteSpec {
+                name: "armed".to_string(),
+                value_type: ValueType::Bool,
+                from_input: "flag".to_string(),
+            },
+            crate::action::ActionWriteSpec {
+                name: "note".to_string(),
+                value_type: ValueType::String,
+                from_input: "label".to_string(),
+            },
+        ];
+        assert!(ActionRegistry::validate_manifest(&manifest).is_ok());
     }
 
     #[test]
@@ -690,6 +723,23 @@ mod tests {
             name: "price".to_string(),
             value_type: ValueType::Number,
             from_input: "value".to_string(),
+        }];
+        assert!(ActionRegistry::validate_manifest(&manifest).is_ok());
+    }
+
+    #[test]
+    fn act_23_from_input_series_type_match_accepted() {
+        let mut manifest = baseline_manifest();
+        manifest.inputs.push(crate::action::InputSpec {
+            name: "samples".to_string(),
+            value_type: crate::action::ActionValueType::Series,
+            required: true,
+            cardinality: crate::action::Cardinality::Single,
+        });
+        manifest.effects.writes = vec![crate::action::ActionWriteSpec {
+            name: "samples".to_string(),
+            value_type: ValueType::Series,
+            from_input: "samples".to_string(),
         }];
         assert!(ActionRegistry::validate_manifest(&manifest).is_ok());
     }
