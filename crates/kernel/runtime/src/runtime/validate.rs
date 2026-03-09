@@ -297,9 +297,7 @@ fn enforce_action_gating(
     }
 
     for (id, node) in nodes {
-        if node.kind == PrimitiveKind::Action
-            && !action_inputs.get(id).copied().unwrap_or(false)
-        {
+        if node.kind == PrimitiveKind::Action && !action_inputs.get(id).copied().unwrap_or(false) {
             return Err(ValidationError::ActionNotGated(id.clone()));
         }
     }
@@ -365,7 +363,7 @@ fn wiring_allowed_for_edge(
 
         if matches!(
             target_input.value_type,
-            ValueType::Number | ValueType::Bool | ValueType::String
+            ValueType::Number | ValueType::Series | ValueType::Bool | ValueType::String
         ) {
             // Leave exact type compatibility (including source/compute output type) to V.4.
             return Ok(true);

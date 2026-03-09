@@ -62,7 +62,7 @@ Rules:
 ```yaml
 inputs:
   - name: string
-    type: event | number | bool | string
+    type: event | number | series | bool | string
     required: bool
     cardinality: single
 ```
@@ -161,7 +161,7 @@ Rules:
 effects:
   writes:
     - name: string
-      type: number | bool | string
+      type: number | series | bool | string
       from_input: string   # Required scalar action input supplying the write value
 ```
 
@@ -169,7 +169,7 @@ Rules:
 
 - `effects` block must exist (may contain empty `writes`)
 - Write names must be unique
-- Write types must be Number, Bool, or String
+- Write types must be Number, Series, Bool, or String
 - `from_input` is required and must name a declared scalar input (ACT-22/ACT-23)
 
 ---
@@ -208,7 +208,7 @@ Rules:
 | ACT-12 | Gated by trigger | (validation phase, R.7) |
 | ACT-13 | Effects block present | `effects is present` |
 | ACT-14 | Write names unique | `unique(effects.writes[].name)` |
-| ACT-15 | Write types valid | `all(effects.writes[].type ∈ {Number, Bool, String})` |
+| ACT-15 | Write types valid | `all(effects.writes[].type ∈ {Number, Series, Bool, String})` |
 | ACT-16 | Retryable false | `execution.retryable == false` |
 | ACT-17 | Execution deterministic | `execution.deterministic == true` |
 | ACT-18 | ID unique in registry | `id ∉ ActionRegistry.ids` |
@@ -220,7 +220,7 @@ Rules:
 
 **Note on ACT-18:** Uniqueness is by id only; version is not considered. Two primitives with the same id but different versions are rejected.
 
-**ActionValueType:** Event | Number | Bool | String (no Series)
+**ActionValueType:** Event | Number | Series | Bool | String
 
 ---
 
@@ -242,7 +242,7 @@ Rules:
 | ACT-12 | Validation | `ValidationError::ActionNotGated` | `act_12_action_not_gated_rejected` |
 | ACT-13 | Registration | Type (effects field required) | `act_3_kind_action_accepted` |
 | ACT-14 | Registration | `ActionValidationError::DuplicateWriteName` | `act_14_duplicate_write_name_rejected` |
-| ACT-15 | Registration | `ActionValidationError::InvalidWriteType` | `act_15_invalid_write_type_rejected` |
+| ACT-15 | Registration | `ActionValidationError::InvalidWriteType` | `act_15_write_types_valid_accepts_all_scalar_variants` |
 | ACT-16 | Registration | `ActionValidationError::RetryNotAllowed` | `act_16_retryable_not_allowed_rejected` |
 | ACT-17 | Registration | `ActionValidationError::NonDeterministicExecution` | `act_17_non_deterministic_execution_rejected` |
 | ACT-18 | Registration | `ActionValidationError::DuplicateId` | `act_18_duplicate_id_rejected` |

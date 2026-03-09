@@ -761,12 +761,12 @@ impl ErrorInfo for ActionParseError {
         match self {
             Self::WrongKind { .. } => Some(Cow::Borrowed("Set kind: action")),
             Self::InvalidInputType { .. } => Some(Cow::Borrowed(
-                "Use a valid input type: event, number, bool, or string",
+                "Use a valid input type: event, number, series, bool, or string",
             )),
             Self::InvalidOutputType { .. } => Some(Cow::Borrowed("Output type must be event")),
-            Self::InvalidWriteType { .. } => {
-                Some(Cow::Borrowed("Write types must be Number, Bool, or String"))
-            }
+            Self::InvalidWriteType { .. } => Some(Cow::Borrowed(
+                "Write types must be Number, Series, Bool, or String",
+            )),
             Self::InvalidParameterDefault { .. } => Some(Cow::Borrowed(
                 "Change parameter default value to match the declared parameter type",
             )),
@@ -1487,6 +1487,7 @@ fn parse_action_value_type(input: &str) -> Option<ActionValueType> {
     match input.to_ascii_lowercase().as_str() {
         "event" => Some(ActionValueType::Event),
         "number" => Some(ActionValueType::Number),
+        "series" => Some(ActionValueType::Series),
         "bool" | "boolean" => Some(ActionValueType::Bool),
         "string" => Some(ActionValueType::String),
         _ => None,

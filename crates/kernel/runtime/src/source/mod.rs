@@ -332,8 +332,8 @@ pub trait SourcePrimitive {
 }
 
 pub use implementations::{
-    boolean, context_bool, context_number, number, string, BooleanSource, ContextBoolSource,
-    ContextNumberSource, NumberSource, StringSource,
+    boolean, context_bool, context_number, context_series, number, string, BooleanSource,
+    ContextBoolSource, ContextNumberSource, ContextSeriesSource, NumberSource, StringSource,
 };
 pub use registry::SourceRegistry;
 

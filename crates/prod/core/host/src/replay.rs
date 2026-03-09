@@ -222,6 +222,118 @@ mod tests {
         }
     }
 
+    fn build_context_set_series_graph() -> ExpandedGraph {
+        let mut nodes = HashMap::new();
+
+        nodes.insert(
+            "gate".to_string(),
+            ExpandedNode {
+                runtime_id: "gate".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "const_bool".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::from([("value".to_string(), ParameterValue::Bool(true))]),
+            },
+        );
+
+        nodes.insert(
+            "payload".to_string(),
+            ExpandedNode {
+                runtime_id: "payload".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "context_series_source".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::from([(
+                    "key".to_string(),
+                    ParameterValue::String("samples".to_string()),
+                )]),
+            },
+        );
+
+        nodes.insert(
+            "emit".to_string(),
+            ExpandedNode {
+                runtime_id: "emit".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "emit_if_true".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::new(),
+            },
+        );
+
+        nodes.insert(
+            "ctx_set".to_string(),
+            ExpandedNode {
+                runtime_id: "ctx_set".to_string(),
+                authoring_path: vec![],
+                implementation: ImplementationInstance {
+                    impl_id: "context_set_series".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::from([(
+                    "key".to_string(),
+                    ParameterValue::String("samples_out".to_string()),
+                )]),
+            },
+        );
+
+        let edges = vec![
+            ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "gate".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "input".to_string(),
+                },
+            },
+            ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "event".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "ctx_set".to_string(),
+                    port_name: "event".to_string(),
+                },
+            },
+            ExpandedEdge {
+                from: ExpandedEndpoint::NodePort {
+                    node_id: "payload".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: ExpandedEndpoint::NodePort {
+                    node_id: "ctx_set".to_string(),
+                    port_name: "value".to_string(),
+                },
+            },
+        ];
+
+        ExpandedGraph {
+            nodes,
+            edges,
+            boundary_inputs: Vec::new(),
+            boundary_outputs: vec![OutputPortSpec {
+                name: "outcome".to_string(),
+                maps_to: OutputRef {
+                    node_id: "ctx_set".to_string(),
+                    port_name: "outcome".to_string(),
+                },
+            }],
+        }
+    }
+
     fn build_once_cluster_behavior_graph() -> ExpandedGraph {
         let mut nodes = HashMap::new();
 
@@ -596,6 +708,47 @@ mod tests {
         }
     }
 
+    fn adapter_provides_for_series_effect() -> AdapterProvides {
+        let context = HashMap::from([
+            (
+                "samples".to_string(),
+                ContextKeyProvision {
+                    ty: "Series".to_string(),
+                    required: false,
+                    writable: false,
+                },
+            ),
+            (
+                "samples_out".to_string(),
+                ContextKeyProvision {
+                    ty: "Series".to_string(),
+                    required: false,
+                    writable: true,
+                },
+            ),
+        ]);
+
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "samples": { "type": "array", "items": { "type": "number" } }
+            },
+            "additionalProperties": false
+        });
+
+        let mut event_schemas = HashMap::new();
+        event_schemas.insert("price_bar".to_string(), schema);
+
+        AdapterProvides {
+            context,
+            events: HashSet::from(["price_bar".to_string()]),
+            effects: HashSet::from(["set_context".to_string()]),
+            event_schemas,
+            capture_format_version: "1".to_string(),
+            adapter_fingerprint: ADAPTER_PROVENANCE.to_string(),
+        }
+    }
+
     // Allow non-Send/Sync in Arc: CoreRegistries and CorePrimitiveCatalog contain non-Send/Sync types.
     #[allow(clippy::arc_with_non_send_sync)]
     fn runner_for_graph(graph: ExpandedGraph, provides: AdapterProvides) -> HostedRunner {
@@ -663,6 +816,43 @@ mod tests {
 
         assert_eq!(captured.decisions[0].effects.len(), 1);
         assert_eq!(captured.decisions[0].effects[0].effect.kind, "set_context");
+
+        let replay_runner = runner_for_graph(graph, provides);
+        let replayed = replay_bundle_strict(
+            &captured,
+            replay_runner,
+            StrictReplayExpectations {
+                expected_adapter_provenance: ADAPTER_PROVENANCE,
+                expected_runtime_provenance: RUNTIME_PROVENANCE,
+            },
+        )
+        .expect("host replay should match capture");
+        assert_eq!(replayed.decisions.len(), captured.decisions.len());
+    }
+
+    #[test]
+    fn context_set_series_host_path_replays_with_effect_integrity() {
+        let graph = build_context_set_series_graph();
+        let provides = adapter_provides_for_series_effect();
+
+        let mut capture_runner = runner_for_graph(graph.clone(), provides.clone());
+        capture_runner
+            .step(HostedEvent {
+                event_id: "e1".to_string(),
+                kind: ExternalEventKind::Command,
+                at: ergo_adapter::EventTime::default(),
+                semantic_kind: Some("price_bar".to_string()),
+                payload: Some(serde_json::json!({"samples": [1.0, 2.0, 3.0]})),
+            })
+            .expect("capture step should execute");
+        let captured = capture_runner.into_capture_bundle();
+
+        assert_eq!(captured.decisions[0].effects.len(), 1);
+        assert_eq!(captured.decisions[0].effects[0].effect.kind, "set_context");
+        assert_eq!(
+            captured.decisions[0].effects[0].effect.writes[0].value,
+            Value::Series(vec![1.0, 2.0, 3.0])
+        );
 
         let replay_runner = runner_for_graph(graph, provides);
         let replayed = replay_bundle_strict(

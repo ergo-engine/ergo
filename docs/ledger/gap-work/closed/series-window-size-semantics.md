@@ -2,7 +2,7 @@
 Authority: PROJECT
 Date: 2026-03-05
 Author: Sebastian (Architect) + Codex (Implementation)
-Status: DECISION_PENDING
+Status: CLOSED
 Gap-ID: GW-SS3-1
 Unblocks: feat/series-stdlib (SS-3)
 ---
@@ -26,4 +26,14 @@ This decision controls SS-3 implementation semantics and test oracle behavior.
 
 | ID | Task | Closure Condition | Owner | Status |
 |----|------|-------------------|-------|--------|
-| GW-SS3-1 | Choose behavior for `size <= 0` | Decision recorded with exact expected output/error behavior and test requirements | Sebastian | DECISION_PENDING |
+| GW-SS3-1 | Choose behavior for `size <= 0` | Decision recorded with exact expected output/error behavior and test requirements | Sebastian | CLOSED |
+
+## Decision Record
+
+- Date: 2026-03-05
+- Decision owner: Sebastian
+- Selected behavior: Reject
+- Canonical behavior: `window(size <= 0)` returns `ComputeError::InvalidParameter { parameter: "size", reason: "size must be a positive integer" }`.
+- Test requirements:
+  - `window_rejects_non_positive_size` enforces runtime behavior.
+  - No silent coercion to empty series is permitted.

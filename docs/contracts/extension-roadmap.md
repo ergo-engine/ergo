@@ -73,8 +73,9 @@ enum TriggerValueType {
 enum ActionValueType {
     Event,   // Required - actions are event-gated
     Number,
+    Series,
     Bool,
-    String,  // No Series
+    String,
 }
 ```
 
@@ -1114,7 +1115,7 @@ version: semver
 
 inputs:
   - name: string
-    type: ActionValueType     # Event | Number | Bool | String (no Series)
+    type: ActionValueType     # Event | Number | Series | Bool | String
     required: bool
     cardinality: single       # CURRENT: only single supported
 
@@ -1143,7 +1144,7 @@ effects:                      # What effects this action may emit
       type: ValueType         # Type of value written
 ```
 
-**ActionValueType:** Event | Number | Bool | String (no Series)
+**ActionValueType:** Event | Number | Series | Bool | String
 
 **Note:** `effects.writes` declares intent. Actual write happens via `set_context` effect emitted at runtime.
 
@@ -1170,13 +1171,13 @@ effects:                      # What effects this action may emit
 | ACT-12 | Gated by trigger | (wiring validation, R.7) |
 | ACT-13 | Effects block must exist | `effects is present` (may have empty writes) |
 | ACT-14 | Write names unique | `unique(effects.writes[].name)` |
-| ACT-15 | Write types valid | `all(effects.writes[].type ∈ {Number, Bool, String})` |
+| ACT-15 | Write types valid | `all(effects.writes[].type ∈ {Number, Series, Bool, String})` |
 | ACT-16 | Retryable false | `execution.retryable == false` |
 | ACT-17 | Execution deterministic | `execution.deterministic == true` |
 
-**ActionValueType:** Event | Number | Bool | String (no Series)
+**ActionValueType:** Event | Number | Series | Bool | String
 
-**WriteValueType:** Number | Bool | String (no Series, no Event — matching ActionValueType excluding Event)
+**WriteValueType:** Number | Series | Bool | String (no Event — matching ActionValueType excluding Event)
 
 **Deliverables:**
 
@@ -1201,7 +1202,7 @@ effects:                      # What effects this action may emit
 | ACT-12 | Validation | `ValidationError::ActionNotGated` | `act_12_action_not_gated_rejected` |
 | ACT-13 | Registration | Type (effects field required) | `act_3_kind_action_accepted` |
 | ACT-14 | Registration | `ActionValidationError::DuplicateWriteName` | `act_14_duplicate_write_name_rejected` |
-| ACT-15 | Registration | `ActionValidationError::InvalidWriteType` | `act_15_invalid_write_type_rejected` |
+| ACT-15 | Registration | `ActionValidationError::InvalidWriteType` | `act_15_write_types_valid_accepts_all_scalar_variants` |
 | ACT-16 | Registration | `ActionValidationError::RetryNotAllowed` | `act_16_retryable_not_allowed_rejected` |
 | ACT-17 | Registration | `ActionValidationError::NonDeterministicExecution` | `act_17_non_deterministic_execution_rejected` |
 

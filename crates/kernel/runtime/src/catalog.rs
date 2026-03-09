@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use crate::action::{
     AckAction, ActionPrimitive, ActionRegistry, ActionValidationError, ActionValueType,
-    AnnotateAction, ContextSetBoolAction, ContextSetNumberAction, ContextSetStringAction,
+    AnnotateAction, ContextSetBoolAction, ContextSetNumberAction, ContextSetSeriesAction,
+    ContextSetStringAction,
 };
 use crate::cluster::{
     Cardinality, InputMetadata, OutputMetadata, ParameterMetadata, ParameterType, ParameterValue,
@@ -11,15 +12,15 @@ use crate::cluster::{
 use crate::common;
 use crate::common::ValidationError;
 use crate::compute::implementations::{
-    Abs, Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Lt, Lte, Max, Min, Multiply,
-    Negate, Neq, Not, Or, SafeDivide, Select, SelectBool, Subtract,
+    Abs, Add, And, Append, ConstBool, ConstNumber, Divide, Eq, Gt, Gte, Len, Lt, Lte, Max, Mean,
+    Min, Multiply, Negate, Neq, Not, Or, SafeDivide, Select, SelectBool, Subtract, Sum, Window,
 };
 use crate::compute::{
     ComputePrimitive, ComputePrimitiveManifest, PrimitiveRegistry as ComputeRegistry,
 };
 use crate::source::{
-    BooleanSource, ContextBoolSource, ContextNumberSource, NumberSource, SourcePrimitive,
-    SourceRegistry, SourceValidationError, StringSource,
+    BooleanSource, ContextBoolSource, ContextNumberSource, ContextSeriesSource, NumberSource,
+    SourcePrimitive, SourceRegistry, SourceValidationError, StringSource,
 };
 use crate::trigger::{
     EmitIfEventAndTrue, EmitIfTrue, TriggerPrimitive, TriggerRegistry, TriggerValidationError,
@@ -61,6 +62,7 @@ fn core_source_primitives() -> Vec<Box<dyn SourcePrimitive>> {
     vec![
         Box::new(NumberSource::new()),
         Box::new(ContextNumberSource::new()),
+        Box::new(ContextSeriesSource::new()),
         Box::new(ContextBoolSource::new()),
         Box::new(BooleanSource::new()),
         Box::new(StringSource::new()),
@@ -91,6 +93,11 @@ fn core_compute_primitives() -> Vec<Box<dyn ComputePrimitive>> {
         Box::new(Not::new()),
         Box::new(Select::new()),
         Box::new(SelectBool::new()),
+        Box::new(Append::new()),
+        Box::new(Window::new()),
+        Box::new(Mean::new()),
+        Box::new(Sum::new()),
+        Box::new(Len::new()),
     ]
 }
 
@@ -106,6 +113,7 @@ fn core_action_primitives() -> Vec<Box<dyn ActionPrimitive>> {
         Box::new(AckAction::new()),
         Box::new(AnnotateAction::new()),
         Box::new(ContextSetNumberAction::new()),
+        Box::new(ContextSetSeriesAction::new()),
         Box::new(ContextSetBoolAction::new()),
         Box::new(ContextSetStringAction::new()),
     ]
@@ -469,6 +477,7 @@ fn map_action_value_type(value_type: ActionValueType) -> ValueType {
     match value_type {
         ActionValueType::Event => ValueType::Event,
         ActionValueType::Number => ValueType::Number,
+        ActionValueType::Series => ValueType::Series,
         ActionValueType::Bool => ValueType::Bool,
         ActionValueType::String => ValueType::String,
     }

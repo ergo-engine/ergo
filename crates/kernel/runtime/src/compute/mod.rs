@@ -58,6 +58,7 @@ pub struct ErrorSpec {
 pub enum ErrorType {
     DivisionByZero,
     NonFiniteResult,
+    InvalidParameter,
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +85,8 @@ pub enum ComputeError {
     DivisionByZero,
     /// B.2: Result overflowed to infinity or produced NaN.
     NonFiniteResult,
+    /// Parameter value violated primitive constraints.
+    InvalidParameter { parameter: String, reason: String },
 }
 
 impl std::fmt::Display for ComputeError {
@@ -91,6 +94,9 @@ impl std::fmt::Display for ComputeError {
         match self {
             ComputeError::DivisionByZero => write!(f, "division by zero"),
             ComputeError::NonFiniteResult => write!(f, "non-finite result"),
+            ComputeError::InvalidParameter { parameter, reason } => {
+                write!(f, "invalid parameter '{}': {}", parameter, reason)
+            }
         }
     }
 }
@@ -123,9 +129,10 @@ pub trait ComputePrimitive {
 }
 
 pub use implementations::{
-    add, and, const_bool, const_number, divide, eq, gt, lt, multiply, negate, neq, not, or,
-    safe_divide, select, subtract, Add, And, ConstBool, ConstNumber, Divide, Eq, Gt, Lt, Multiply,
-    Negate, Neq, Not, Or, SafeDivide, Select, Subtract,
+    add, and, append, const_bool, const_number, divide, eq, gt, len, lt, mean, multiply, negate,
+    neq, not, or, safe_divide, select, subtract, sum, window, Add, And, Append, ConstBool,
+    ConstNumber, Divide, Eq, Gt, Len, Lt, Mean, Multiply, Negate, Neq, Not, Or, SafeDivide, Select,
+    Subtract, Sum, Window,
 };
 pub use registry::PrimitiveRegistry;
 

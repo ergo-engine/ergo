@@ -492,29 +492,31 @@ fn map_action_value(v: ActionValue) -> RuntimeValue {
     match v {
         ActionValue::Event(e) => RuntimeValue::Event(RuntimeEvent::Action(e)),
         ActionValue::Number(n) => RuntimeValue::Number(n),
+        ActionValue::Series(s) => RuntimeValue::Series(s),
         ActionValue::Bool(b) => RuntimeValue::Bool(b),
         ActionValue::String(s) => RuntimeValue::String(s),
     }
 }
 
-fn map_to_action_value(v: &RuntimeValue, node: &str, port: &str) -> Result<ActionValue, ExecError> {
-    match v {
-        RuntimeValue::Event(RuntimeEvent::Action(e)) => Ok(ActionValue::Event(e.clone())),
+fn map_to_action_value(
+    v: &RuntimeValue,
+    _node: &str,
+    _port: &str,
+) -> Result<ActionValue, ExecError> {
+    Ok(match v {
+        RuntimeValue::Event(RuntimeEvent::Action(e)) => ActionValue::Event(e.clone()),
         RuntimeValue::Event(RuntimeEvent::Trigger(TriggerEvent::Emitted)) => {
-            Ok(ActionValue::Event(crate::action::ActionOutcome::Attempted))
+            ActionValue::Event(crate::action::ActionOutcome::Attempted)
         }
         RuntimeValue::Event(RuntimeEvent::Trigger(TriggerEvent::NotEmitted)) => {
             // R.7: should_skip_action() must catch NotEmitted before this point.
             unreachable!("R.7 violation: NotEmitted must be caught by should_skip_action")
         }
-        RuntimeValue::Number(n) => Ok(ActionValue::Number(*n)),
-        RuntimeValue::Bool(b) => Ok(ActionValue::Bool(*b)),
-        RuntimeValue::String(s) => Ok(ActionValue::String(s.clone())),
-        _ => Err(ExecError::TypeConversionFailed {
-            node: node.to_string(),
-            port: port.to_string(),
-        }),
-    }
+        RuntimeValue::Number(n) => ActionValue::Number(*n),
+        RuntimeValue::Series(s) => ActionValue::Series(s.clone()),
+        RuntimeValue::Bool(b) => ActionValue::Bool(*b),
+        RuntimeValue::String(s) => ActionValue::String(s.clone()),
+    })
 }
 
 fn map_runtime_value_to_common(v: &RuntimeValue) -> Option<crate::common::Value> {

@@ -129,7 +129,7 @@ Primary spec: `STABLE/PRIMITIVE_MANIFESTS/action.md`
 | ACT-12 | Composition | alias -> V.5 | Gated by trigger | `(validation phase, R.7)` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-12` |
 | ACT-13 | Registration | enforced | Effects block present | `effects is present` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-13` |
 | ACT-14 | Registration | enforced | Write names unique | `unique(effects.writes[].name)` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-14` |
-| ACT-15 | Registration | enforced | Write types valid | `all(effects.writes[].type ∈ {Number, Bool, String})` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-15` |
+| ACT-15 | Registration | enforced | Write types valid | `all(effects.writes[].type ∈ {Number, Series, Bool, String})` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-15` |
 | ACT-16 | Registration | enforced | Retryable false | `execution.retryable == false` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-16` |
 | ACT-17 | Registration | enforced | Execution deterministic | `execution.deterministic == true` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-17` |
 | ACT-18 | Registration | enforced | ID unique in registry | `!registry.contains_key(id)` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-18` |
