@@ -2,7 +2,7 @@
 Authority: PROJECT
 Date: 2026-03-05
 Author: Sebastian (Architect) + Codex (Implementation)
-Status: DECIDED
+Status: CLOSED
 Gap-ID: S-0
 Unblocks: feat/series-action-types, feat/series-stdlib
 ---
@@ -50,5 +50,5 @@ This decision gates whether `Series` can be admitted as an Action scalar payload
   - `docs/invariants/14-action-registration.md`
   - `docs/contracts/extension-roadmap.md`
 - Affected branch ledgers:
-  - `docs/ledger/dev-work/open/series-action-types.md`
-  - `docs/ledger/dev-work/open/series-stdlib.md`
+  - `docs/ledger/dev-work/closed/series-action-types.md`
+  - `docs/ledger/dev-work/closed/series-stdlib.md`

@@ -5,7 +5,7 @@ Author: Claude Opus 4.5 (Structural Auditor)
 Status: CLOSED
 Branch: feat/series-stdlib
 Tier: 1 (Kernel Completeness)
-Depends-On: feat/series-action-types; docs/ledger/gap-work/open/series-window-size-semantics.md (for SS-3)
+Depends-On: feat/series-action-types; docs/ledger/gap-work/closed/series-window-size-semantics.md (for SS-3)
 ---
 
 # Series Stdlib Implementations

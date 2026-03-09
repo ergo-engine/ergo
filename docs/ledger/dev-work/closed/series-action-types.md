@@ -5,7 +5,7 @@ Author: Sebastian (Architect) + Codex (Implementation)
 Status: CLOSED
 Branch: feat/series-action-types
 Tier: 1 (Kernel Completeness)
-Depends-On: docs/ledger/gap-work/open/s0-series-action-types-authority.md (decision S-0)
+Depends-On: docs/ledger/gap-work/closed/s0-series-action-types-authority.md (decision S-0)
 ---
 
 # Series Action Types (Delivery Plan)
@@ -18,7 +18,7 @@ This is a kernel type-coverage change, not a causal-model change. Trigger gating
 
 ## Start Gate
 
-- S-0 must be decided in `docs/ledger/gap-work/open/s0-series-action-types-authority.md`.
+- S-0 must be decided in `docs/ledger/gap-work/closed/s0-series-action-types-authority.md`.
 
 ## Delivery Changes
 

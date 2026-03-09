@@ -9,14 +9,14 @@ Status: Active
 
 This file is the execution control board for the six extension-surface branches.
 
-Each branch has a detailed closure ledger in `docs/ledger/dev-work/open/`. This board defines start gates, merge gates, and critical path only.
+Each branch has a detailed closure ledger in `docs/ledger/dev-work/` (open for active branches, closed for completed branches). This board defines start gates, merge gates, and critical path only.
 
 ## Branch Board
 
 | Branch | Detailed Ledger | Start Gate | Merge Gate | Unblocks |
 |---|---|---|---|---|
-| `feat/series-action-types` | `docs/ledger/dev-work/open/series-action-types.md` | **Blocked on S-0** in `docs/ledger/gap-work/open/s0-series-action-types-authority.md` | S-0 resolved + S-rows closed | `feat/series-stdlib` |
-| `feat/series-stdlib` | `docs/ledger/dev-work/open/series-stdlib.md` | `feat/series-action-types` merged | SS-rows closed (including `GW-SS3-1` decision application for SS-3) | Series stdlib availability |
+| `feat/series-action-types` | `docs/ledger/dev-work/closed/series-action-types.md` | **Blocked on S-0** in `docs/ledger/gap-work/closed/s0-series-action-types-authority.md` | S-0 resolved + S-rows closed | `feat/series-stdlib` |
+| `feat/series-stdlib` | `docs/ledger/dev-work/closed/series-stdlib.md` | `feat/series-action-types` merged | SS-rows closed (including `GW-SS3-1` decision application for SS-3) | Series stdlib availability |
 | `feat/catalog-builder` | `docs/ledger/dev-work/open/catalog-builder.md` | none | CB-rows closed | `feat/ergo-init` custom impl loading path |
 | `feat/adapter-runtime` | `docs/ledger/dev-work/open/adapter-runtime.md` | none | AR-rows closed | `feat/ingestion-driver`, `feat/ergo-init` runtime adapter contract |
 | `feat/ingestion-driver` | `docs/ledger/dev-work/open/ingestion-driver.md` | `feat/adapter-runtime` merged | ID-rows closed | `feat/ergo-init` run-path completion |

@@ -2,7 +2,7 @@
 Authority: PROJECT
 Date: 2026-03-05
 Author: Sebastian (Architect) + Codex (Implementation)
-Status: DECIDED
+Status: CLOSED
 Gap-ID: GW-SS3-1
 Unblocks: feat/series-stdlib (SS-3)
 ---
