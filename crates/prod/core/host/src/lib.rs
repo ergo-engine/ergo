@@ -26,9 +26,9 @@ pub use replay_error_surface::{
 };
 pub use runner::{HostedAdapterConfig, HostedEvent, HostedRunner, HostedStepOutcome};
 pub use usecases::{
-    replay_graph, replay_graph_from_paths, run_fixture, run_graph, run_graph_from_paths,
-    scan_adapter_dependencies, validate_adapter_composition, AdapterDependencySummary,
-    HostReplayError, HostRunError, ReplayGraphFromPathsRequest, ReplayGraphRequest,
-    ReplayGraphResult, RunFixtureRequest, RunFixtureResult, RunGraphFromPathsRequest,
-    RunGraphRequest, RunGraphResult,
+    replay_graph, replay_graph_from_paths, replay_graph_from_paths_with_surfaces, run_fixture,
+    run_graph, run_graph_from_paths, run_graph_from_paths_with_surfaces, scan_adapter_dependencies,
+    validate_adapter_composition, AdapterDependencySummary, HostReplayError, HostRunError,
+    ReplayGraphFromPathsRequest, ReplayGraphRequest, ReplayGraphResult, RunFixtureRequest,
+    RunFixtureResult, RunGraphFromPathsRequest, RunGraphRequest, RunGraphResult, RuntimeSurfaces,
 };

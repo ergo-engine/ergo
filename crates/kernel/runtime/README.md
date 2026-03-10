@@ -78,6 +78,7 @@ Helpers:
 
 - `catalog::build_core_catalog()` builds a `PrimitiveCatalog` for validation/inference
 - `catalog::core_registries()` registers all stdlib implementations into runtime registries
+- `catalog::CatalogBuilder` is registration-only; it extends the shared runtime build path without changing execution semantics, and discovery/loading remains outside this crate
 
 ## Hello world graph (reference)
 
