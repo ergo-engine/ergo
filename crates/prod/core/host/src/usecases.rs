@@ -292,6 +292,24 @@ pub struct RunFixtureResult {
     pub episode_event_counts: Vec<(String, usize)>,
 }
 
+pub struct RuntimeSurfaces {
+    registries: CoreRegistries,
+    catalog: CorePrimitiveCatalog,
+}
+
+impl RuntimeSurfaces {
+    pub fn new(registries: CoreRegistries, catalog: CorePrimitiveCatalog) -> Self {
+        Self {
+            registries,
+            catalog,
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> (CoreRegistries, CorePrimitiveCatalog) {
+        (self.registries, self.catalog)
+    }
+}
+
 #[derive(Clone)]
 struct PreloadedClusterLoader {
     clusters: HashMap<(String, Version), ClusterDefinition>,
@@ -353,17 +371,34 @@ fn parse_adapter_manifest(path: &Path) -> Result<AdapterManifest, String> {
         .map_err(|err| format!("decode adapter manifest '{}': {err}", path.display()))
 }
 
+fn materialize_runtime_surfaces(
+    runtime_surfaces: Option<RuntimeSurfaces>,
+) -> Result<(CorePrimitiveCatalog, CoreRegistries), String> {
+    match runtime_surfaces {
+        Some(runtime_surfaces) => {
+            let (registries, catalog) = runtime_surfaces.into_parts();
+            Ok((catalog, registries))
+        }
+        None => {
+            let catalog = build_core_catalog();
+            let registries =
+                core_registries().map_err(|err| format!("core registries: {err:?}"))?;
+            Ok((catalog, registries))
+        }
+    }
+}
+
 fn prepare_graph_runtime(
     graph_path: &Path,
     cluster_paths: &[PathBuf],
+    runtime_surfaces: Option<RuntimeSurfaces>,
 ) -> Result<PreparedGraphRuntime, String> {
     let root = ergo_loader::parse_graph_file(graph_path).map_err(|err| err.to_string())?;
     let clusters = ergo_loader::load_cluster_tree(graph_path, &root, cluster_paths)
         .map_err(|err| err.to_string())?;
     let loader = PreloadedClusterLoader::new(clusters);
 
-    let catalog = build_core_catalog();
-    let registries = core_registries().map_err(|err| format!("core registries: {err:?}"))?;
+    let (catalog, registries) = materialize_runtime_surfaces(runtime_surfaces)?;
     let expanded = expand(&root, &loader, &catalog)
         .map_err(|err| format!("graph expansion failed: {}", summarize_error_info(&err)))?;
     let runtime_provenance =
@@ -432,6 +467,23 @@ fn host_replay_setup_error(message: impl Into<String>) -> HostReplayError {
 pub fn run_graph_from_paths(
     request: RunGraphFromPathsRequest,
 ) -> Result<RunGraphResult, HostRunError> {
+    run_graph_from_paths_internal(request, None)
+}
+
+/// Advanced run API for callers that prebuild runtime surfaces before invoking the canonical host path.
+#[allow(clippy::arc_with_non_send_sync)]
+pub fn run_graph_from_paths_with_surfaces(
+    request: RunGraphFromPathsRequest,
+    runtime_surfaces: RuntimeSurfaces,
+) -> Result<RunGraphResult, HostRunError> {
+    run_graph_from_paths_internal(request, Some(runtime_surfaces))
+}
+
+#[allow(clippy::arc_with_non_send_sync)]
+fn run_graph_from_paths_internal(
+    request: RunGraphFromPathsRequest,
+    runtime_surfaces: Option<RuntimeSurfaces>,
+) -> Result<RunGraphResult, HostRunError> {
     let RunGraphFromPathsRequest {
         graph_path,
         cluster_paths,
@@ -441,8 +493,8 @@ pub fn run_graph_from_paths(
         pretty_capture,
     } = request;
 
-    let prepared =
-        prepare_graph_runtime(&graph_path, &cluster_paths).map_err(HostRunError::InvalidInput)?;
+    let prepared = prepare_graph_runtime(&graph_path, &cluster_paths, runtime_surfaces)
+        .map_err(HostRunError::InvalidInput)?;
     let dependency_summary =
         scan_adapter_dependencies(&prepared.expanded, &prepared.catalog, &prepared.registries)
             .map_err(HostRunError::InvalidInput)?;
@@ -497,6 +549,23 @@ pub fn run_graph_from_paths(
 pub fn replay_graph_from_paths(
     request: ReplayGraphFromPathsRequest,
 ) -> Result<ReplayGraphResult, HostReplayError> {
+    replay_graph_from_paths_internal(request, None)
+}
+
+/// Advanced replay API for callers that prebuild runtime surfaces before invoking the canonical host path.
+#[allow(clippy::arc_with_non_send_sync)]
+pub fn replay_graph_from_paths_with_surfaces(
+    request: ReplayGraphFromPathsRequest,
+    runtime_surfaces: RuntimeSurfaces,
+) -> Result<ReplayGraphResult, HostReplayError> {
+    replay_graph_from_paths_internal(request, Some(runtime_surfaces))
+}
+
+#[allow(clippy::arc_with_non_send_sync)]
+fn replay_graph_from_paths_internal(
+    request: ReplayGraphFromPathsRequest,
+    runtime_surfaces: Option<RuntimeSurfaces>,
+) -> Result<ReplayGraphResult, HostReplayError> {
     let ReplayGraphFromPathsRequest {
         capture_path,
         graph_path,
@@ -517,8 +586,8 @@ pub fn replay_graph_from_paths(
         ))
     })?;
 
-    let prepared =
-        prepare_graph_runtime(&graph_path, &cluster_paths).map_err(host_replay_setup_error)?;
+    let prepared = prepare_graph_runtime(&graph_path, &cluster_paths, runtime_surfaces)
+        .map_err(host_replay_setup_error)?;
     if bundle.graph_id.as_str() != prepared.graph_id {
         return Err(HostReplayError::GraphIdMismatch {
             expected: prepared.graph_id,
@@ -758,9 +827,74 @@ pub fn run_fixture(request: RunFixtureRequest) -> Result<RunFixtureResult, HostR
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ergo_runtime::catalog::CatalogBuilder;
+    use ergo_runtime::common::{Value, ValueType};
+    use ergo_runtime::runtime::ExecutionContext;
+    use ergo_runtime::source::{
+        Cadence as SourceCadence, ExecutionSpec as SourceExecutionSpec,
+        OutputSpec as SourceOutputSpec, SourceKind, SourcePrimitive, SourcePrimitiveManifest,
+        SourceRequires, StateSpec as SourceStateSpec,
+    };
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    struct InjectedNumberSource {
+        manifest: SourcePrimitiveManifest,
+        output: f64,
+    }
+
+    impl InjectedNumberSource {
+        fn new(output: f64) -> Self {
+            Self {
+                manifest: SourcePrimitiveManifest {
+                    id: "injected_number_source".to_string(),
+                    version: "0.1.0".to_string(),
+                    kind: SourceKind::Source,
+                    inputs: vec![],
+                    outputs: vec![SourceOutputSpec {
+                        name: "value".to_string(),
+                        value_type: ValueType::Number,
+                    }],
+                    parameters: vec![],
+                    requires: SourceRequires {
+                        context: Vec::new(),
+                    },
+                    execution: SourceExecutionSpec {
+                        deterministic: true,
+                        cadence: SourceCadence::Continuous,
+                    },
+                    state: SourceStateSpec { allowed: false },
+                    side_effects: false,
+                },
+                output,
+            }
+        }
+    }
+
+    impl SourcePrimitive for InjectedNumberSource {
+        fn manifest(&self) -> &SourcePrimitiveManifest {
+            &self.manifest
+        }
+
+        fn produce(
+            &self,
+            _parameters: &HashMap<String, ergo_runtime::source::ParameterValue>,
+            _ctx: &ExecutionContext,
+        ) -> HashMap<String, Value> {
+            HashMap::from([("value".to_string(), Value::Number(self.output))])
+        }
+    }
+
+    fn build_injected_runtime_surfaces(output: f64) -> RuntimeSurfaces {
+        let mut builder = CatalogBuilder::new();
+        builder.add_source(Box::new(InjectedNumberSource::new(output)));
+        let (registries, catalog) = builder
+            .build()
+            .expect("injected runtime surfaces should build");
+        RuntimeSurfaces::new(registries, catalog)
+    }
 
     fn write_temp_file(
         base: &Path,
@@ -858,14 +992,17 @@ outputs:
         )?;
         let capture = temp_dir.join("capture.json");
 
-        let _ = run_graph_from_paths(RunGraphFromPathsRequest {
-            graph_path: graph.clone(),
-            cluster_paths: Vec::new(),
-            fixture_path: fixture,
-            adapter_path: None,
-            capture_output: Some(capture.clone()),
-            pretty_capture: false,
-        })?;
+        let _ = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph.clone(),
+                cluster_paths: Vec::new(),
+                fixture_path: fixture,
+                adapter_path: None,
+                capture_output: Some(capture.clone()),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(9.0),
+        )?;
 
         let replay = replay_graph_from_paths(ReplayGraphFromPathsRequest {
             capture_path: capture,
@@ -875,6 +1012,122 @@ outputs:
         })?;
 
         assert_eq!(replay.graph_id.as_str(), "host_path_replay");
+        assert_eq!(replay.events, 1);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn run_graph_from_paths_with_surfaces_uses_injected_runtime_surfaces(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-run-injected-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_injected_run
+version: "0.1.0"
+nodes:
+  src:
+    impl: injected_number_source@0.1.0
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+        let fixture = write_temp_file(
+            &temp_dir,
+            "fixture.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let result = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                fixture_path: fixture,
+                adapter_path: None,
+                capture_output: Some(capture.clone()),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(7.5),
+        )?;
+
+        assert_eq!(result.episodes, 1);
+        assert_eq!(result.events, 1);
+        assert_eq!(result.capture_path, capture);
+        assert!(capture.exists());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn replay_graph_from_paths_with_surfaces_uses_injected_runtime_surfaces(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-replay-injected-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_injected_replay
+version: "0.1.0"
+nodes:
+  src:
+    impl: injected_number_source@0.1.0
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+        let fixture = write_temp_file(
+            &temp_dir,
+            "fixture.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let _ = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph.clone(),
+                cluster_paths: Vec::new(),
+                fixture_path: fixture,
+                adapter_path: None,
+                capture_output: Some(capture.clone()),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(9.0),
+        )?;
+
+        let replay = replay_graph_from_paths_with_surfaces(
+            ReplayGraphFromPathsRequest {
+                capture_path: capture,
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: None,
+            },
+            build_injected_runtime_surfaces(9.0),
+        )?;
+
+        assert_eq!(replay.graph_id.as_str(), "host_injected_replay");
         assert_eq!(replay.events, 1);
 
         let _ = fs::remove_dir_all(&temp_dir);
