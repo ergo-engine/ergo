@@ -4,15 +4,24 @@ use std::path::{Path, PathBuf};
 
 use crate::error_format::{render_cli_error, CliErrorInfo};
 use crate::output;
-use ergo_host::{run_graph_from_paths, RunGraphFromPathsRequest};
+use ergo_host::{
+    run_graph_from_paths, DriverConfig, InterruptionReason, RunGraphFromPathsRequest, RunOutcome,
+};
 
 #[derive(Debug, Clone)]
 pub struct GraphRunSummary {
+    pub completion: GraphRunCompletion,
     pub episodes: usize,
     pub events: usize,
     pub invoked: usize,
     pub deferred: usize,
     pub capture_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphRunCompletion {
+    Completed,
+    Interrupted { reason: InterruptionReason },
 }
 
 pub fn run_graph_command(graph_path: &Path, args: &[String]) -> Result<GraphRunSummary, String> {
@@ -21,22 +30,33 @@ pub fn run_graph_command(graph_path: &Path, args: &[String]) -> Result<GraphRunS
         .capture_output
         .clone()
         .or_else(|| Some(default_capture_output_path(graph_path)));
-    let result = run_graph_from_paths(RunGraphFromPathsRequest {
+    let outcome = run_graph_from_paths(RunGraphFromPathsRequest {
         graph_path: graph_path.to_path_buf(),
         cluster_paths: opts.cluster_paths,
-        fixture_path: opts.fixture_path.unwrap_or_default(),
+        driver: opts.driver,
         adapter_path: opts.adapter_path,
         capture_output,
         pretty_capture: opts.pretty_capture,
     })
     .map_err(output::errors::render_host_run_error)?;
 
+    let (completion, summary) = match outcome {
+        RunOutcome::Completed(summary) => (GraphRunCompletion::Completed, summary),
+        RunOutcome::Interrupted(interrupted) => (
+            GraphRunCompletion::Interrupted {
+                reason: interrupted.reason,
+            },
+            interrupted.summary,
+        ),
+    };
+
     Ok(GraphRunSummary {
-        episodes: result.episodes,
-        events: result.events,
-        invoked: result.invoked,
-        deferred: result.deferred,
-        capture_path: result.capture_path,
+        completion,
+        episodes: summary.episodes,
+        events: summary.events,
+        invoked: summary.invoked,
+        deferred: summary.deferred,
+        capture_path: summary.capture_path,
     })
 }
 
@@ -67,17 +87,22 @@ fn sanitize_filename_component(input: &str) -> String {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct RunGraphOptions {
     adapter_path: Option<PathBuf>,
-    fixture_path: Option<PathBuf>,
+    driver: DriverConfig,
     capture_output: Option<PathBuf>,
     pretty_capture: bool,
     cluster_paths: Vec<PathBuf>,
 }
 
 fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
-    let mut options = RunGraphOptions::default();
+    let mut adapter_path = None;
+    let mut fixture_path: Option<PathBuf> = None;
+    let mut driver_command: Vec<String> = Vec::new();
+    let mut capture_output = None;
+    let mut pretty_capture = false;
+    let mut cluster_paths = Vec::new();
     let mut i = 0;
 
     while i < args.len() {
@@ -93,7 +118,7 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
                         .with_fix("provide -a <adapter.yaml>"),
                     )
                 })?;
-                options.adapter_path = Some(PathBuf::from(value));
+                adapter_path = Some(PathBuf::from(value));
                 i += 2;
             }
             "-f" | "--fixture" => {
@@ -107,7 +132,45 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
                         .with_fix("provide -f <events.jsonl>"),
                     )
                 })?;
-                options.fixture_path = Some(PathBuf::from(value));
+                fixture_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--driver-cmd" => {
+                let value = args.get(i + 1).ok_or_else(|| {
+                    render_cli_error(
+                        &CliErrorInfo::new(
+                            "cli.missing_option_value",
+                            format!("{} requires a program path", args[i]),
+                        )
+                        .with_where(format!("arg '{}'", args[i]))
+                        .with_fix("provide --driver-cmd <program>"),
+                    )
+                })?;
+                driver_command = vec![value.clone()];
+                i += 2;
+            }
+            "--driver-arg" => {
+                let value = args.get(i + 1).ok_or_else(|| {
+                    render_cli_error(
+                        &CliErrorInfo::new(
+                            "cli.missing_option_value",
+                            format!("{} requires an argv value", args[i]),
+                        )
+                        .with_where(format!("arg '{}'", args[i]))
+                        .with_fix("provide --driver-arg <value>"),
+                    )
+                })?;
+                if driver_command.is_empty() {
+                    return Err(render_cli_error(
+                        &CliErrorInfo::new(
+                            "cli.invalid_option_order",
+                            "--driver-arg requires --driver-cmd first",
+                        )
+                        .with_where(format!("arg '{}'", args[i]))
+                        .with_fix("provide --driver-cmd <program> before any --driver-arg"),
+                    ));
+                }
+                driver_command.push(value.clone());
                 i += 2;
             }
             "-o" | "--capture" | "--capture-output" => {
@@ -121,11 +184,11 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
                         .with_fix("provide -o <path>"),
                     )
                 })?;
-                options.capture_output = Some(PathBuf::from(value));
+                capture_output = Some(PathBuf::from(value));
                 i += 2;
             }
             "-p" | "--pretty-capture" => {
-                options.pretty_capture = true;
+                pretty_capture = true;
                 i += 1;
             }
             "--cluster-path" | "--search-path" => {
@@ -139,25 +202,61 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
                         .with_fix("provide a directory path"),
                     )
                 })?;
-                options.cluster_paths.push(PathBuf::from(value));
+                cluster_paths.push(PathBuf::from(value));
                 i += 2;
             }
             other => {
                 return Err(render_cli_error(
                     &CliErrorInfo::new("cli.invalid_option", format!("unknown run option '{other}'"))
                         .with_where(format!("arg '{other}'"))
-                        .with_fix("use -a|--adapter, -f|--fixture, -o|--capture|--capture-output, -p|--pretty-capture, --cluster-path, or --search-path"),
+                        .with_fix("use -a|--adapter, -f|--fixture, --driver-cmd, --driver-arg, -o|--capture|--capture-output, -p|--pretty-capture, --cluster-path, or --search-path"),
                 ))
             }
         }
     }
 
-    Ok(options)
+    let driver = match (fixture_path, driver_command.is_empty()) {
+        (Some(path), true) => DriverConfig::Fixture { path },
+        (None, false) => DriverConfig::Process {
+            command: driver_command,
+        },
+        (Some(_), false) => {
+            return Err(render_cli_error(
+                &CliErrorInfo::new(
+                    "cli.conflicting_options",
+                    "run accepts either --fixture or --driver-cmd, not both",
+                )
+                .with_where("canonical run ingress")
+                .with_fix("choose exactly one ingress source for this run"),
+            ))
+        }
+        (None, true) => {
+            return Err(render_cli_error(
+                &CliErrorInfo::new(
+                    "cli.missing_required_option",
+                    "run requires either --fixture <events.jsonl> or --driver-cmd <program>",
+                )
+                .with_where("canonical run ingress")
+                .with_fix("provide --fixture <events.jsonl> or --driver-cmd <program>"),
+            ))
+        }
+    };
+
+    Ok(RunGraphOptions {
+        adapter_path,
+        driver,
+        capture_output,
+        pretty_capture,
+        cluster_paths,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ergo_adapter::{EventTime, ExternalEventKind};
+    use ergo_host::HostedEvent;
+    use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -170,6 +269,28 @@ mod tests {
         let path = base.join(name);
         fs::write(&path, contents).map_err(|err| format!("write {}: {err}", path.display()))?;
         Ok(path)
+    }
+
+    fn write_process_driver_script(
+        base: &Path,
+        name: &str,
+        lines: &[String],
+    ) -> Result<PathBuf, String> {
+        let script = format!(
+            "#!/bin/sh\ncat <<'__ERGO_DRIVER__'\n{}\n__ERGO_DRIVER__\n",
+            lines.join("\n")
+        );
+        write_temp_file(base, name, &script)
+    }
+
+    fn host_event(event_id: &str) -> HostedEvent {
+        HostedEvent {
+            event_id: event_id.to_string(),
+            kind: ExternalEventKind::Command,
+            at: EventTime::default(),
+            semantic_kind: None,
+            payload: Some(json!({})),
+        }
     }
 
     #[test]
@@ -185,10 +306,10 @@ mod tests {
             "--cluster-path".to_string(),
             "clusters".to_string(),
         ])?;
-        assert_eq!(
-            opts.fixture_path.as_deref(),
-            Some(Path::new("fixture.jsonl"))
-        );
+        assert!(matches!(
+            opts.driver,
+            DriverConfig::Fixture { ref path } if path == Path::new("fixture.jsonl")
+        ));
         assert_eq!(
             opts.adapter_path.as_deref(),
             Some(Path::new("adapter.yaml"))
@@ -206,6 +327,10 @@ mod tests {
             "--capture".to_string(),
             "capture-alias.json".to_string(),
         ])?;
+        assert!(matches!(
+            alias_opts.driver,
+            DriverConfig::Fixture { ref path } if path == Path::new("fixture.jsonl")
+        ));
         assert_eq!(
             alias_opts.capture_output.as_deref(),
             Some(Path::new("capture-alias.json"))
@@ -224,10 +349,10 @@ mod tests {
             "capture-long.json".to_string(),
             "--pretty-capture".to_string(),
         ])?;
-        assert_eq!(
-            opts.fixture_path.as_deref(),
-            Some(Path::new("fixture.jsonl"))
-        );
+        assert!(matches!(
+            opts.driver,
+            DriverConfig::Fixture { ref path } if path == Path::new("fixture.jsonl")
+        ));
         assert_eq!(
             opts.adapter_path.as_deref(),
             Some(Path::new("adapter.yaml"))
@@ -247,13 +372,59 @@ mod tests {
         assert!(
             err.contains("code: cli.invalid_option")
                 && err.contains("where: arg '--bogus'")
-                && err.contains("fix: use -a|--adapter, -f|--fixture"),
+                && err.contains("fix: use -a|--adapter, -f|--fixture, --driver-cmd"),
             "unexpected error: {err}"
         );
     }
 
     #[test]
-    fn run_graph_command_executes_via_host_from_paths() -> Result<(), String> {
+    fn parse_run_options_supports_process_driver_argv() -> Result<(), String> {
+        let opts = parse_run_options(&[
+            "--driver-cmd".to_string(),
+            "/bin/sh".to_string(),
+            "--driver-arg".to_string(),
+            "driver.sh".to_string(),
+            "--driver-arg".to_string(),
+            "--flag".to_string(),
+        ])?;
+        assert!(matches!(
+            opts.driver,
+            DriverConfig::Process { ref command }
+                if command
+                    == &vec![
+                        "/bin/sh".to_string(),
+                        "driver.sh".to_string(),
+                        "--flag".to_string()
+                    ]
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_run_options_requires_exactly_one_ingress_source() {
+        let missing =
+            parse_run_options(&[]).expect_err("missing ingress should produce actionable error");
+        assert!(
+            missing
+                .contains("run requires either --fixture <events.jsonl> or --driver-cmd <program>"),
+            "unexpected missing ingress error: {missing}"
+        );
+
+        let conflicting = parse_run_options(&[
+            "--fixture".to_string(),
+            "fixture.jsonl".to_string(),
+            "--driver-cmd".to_string(),
+            "/bin/sh".to_string(),
+        ])
+        .expect_err("conflicting ingress should fail");
+        assert!(
+            conflicting.contains("run accepts either --fixture or --driver-cmd, not both"),
+            "unexpected conflicting ingress error: {conflicting}"
+        );
+    }
+
+    #[test]
+    fn run_graph_command_executes_fixture_driver_via_host() -> Result<(), String> {
         let index = COUNTER.fetch_add(1, Ordering::SeqCst);
         let temp_dir = std::env::temp_dir().join(format!(
             "ergo-graph-yaml-run-{}-{}",
@@ -294,6 +465,132 @@ outputs:
         ];
         let summary = run_graph_command(&graph, &args)?;
 
+        assert_eq!(summary.completion, GraphRunCompletion::Completed);
+        assert_eq!(summary.episodes, 1);
+        assert_eq!(summary.events, 1);
+        assert_eq!(summary.capture_path, capture);
+        assert!(summary.capture_path.exists());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn run_graph_command_executes_process_driver_via_host() -> Result<(), String> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-graph-yaml-process-run-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: graph_yaml_process_run
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+        let driver = write_process_driver_script(
+            &temp_dir,
+            "driver.sh",
+            &[
+                serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))
+                    .map_err(|err| format!("serialize hello: {err}"))?,
+                serde_json::to_string(&json!({"type":"event","event":host_event("evt1")}))
+                    .map_err(|err| format!("serialize event: {err}"))?,
+                serde_json::to_string(&json!({"type":"end"}))
+                    .map_err(|err| format!("serialize end: {err}"))?,
+            ],
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let args = vec![
+            "--driver-cmd".to_string(),
+            "/bin/sh".to_string(),
+            "--driver-arg".to_string(),
+            driver.to_string_lossy().to_string(),
+            "--capture-output".to_string(),
+            capture.to_string_lossy().to_string(),
+        ];
+        let summary = run_graph_command(&graph, &args)?;
+
+        assert_eq!(summary.completion, GraphRunCompletion::Completed);
+        assert_eq!(summary.episodes, 1);
+        assert_eq!(summary.events, 1);
+        assert_eq!(summary.capture_path, capture);
+        assert!(summary.capture_path.exists());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn run_graph_command_reports_interrupted_process_driver() -> Result<(), String> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-graph-yaml-process-interrupted-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: graph_yaml_process_interrupted
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+        let driver = write_process_driver_script(
+            &temp_dir,
+            "driver.sh",
+            &[
+                serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))
+                    .map_err(|err| format!("serialize hello: {err}"))?,
+                serde_json::to_string(&json!({"type":"event","event":host_event("evt1")}))
+                    .map_err(|err| format!("serialize event: {err}"))?,
+            ],
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let args = vec![
+            "--driver-cmd".to_string(),
+            "/bin/sh".to_string(),
+            "--driver-arg".to_string(),
+            driver.to_string_lossy().to_string(),
+            "--capture-output".to_string(),
+            capture.to_string_lossy().to_string(),
+        ];
+        let summary = run_graph_command(&graph, &args)?;
+
+        assert_eq!(
+            summary.completion,
+            GraphRunCompletion::Interrupted {
+                reason: InterruptionReason::DriverTerminated,
+            }
+        );
         assert_eq!(summary.episodes, 1);
         assert_eq!(summary.events, 1);
         assert_eq!(summary.capture_path, capture);

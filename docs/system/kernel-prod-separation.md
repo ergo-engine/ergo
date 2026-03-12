@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-04
+Last Updated: 2026-03-12
 Owner: Claude (Structural Auditor)
 Scope: Kernel/prod boundary and host intent
 Change Rule: Operational log
@@ -48,9 +48,12 @@ Host responsibilities:
 
 - Provide canonical entrypoints for run/replay (`run_graph_from_paths`, `replay_graph_from_paths`)
 - Own loader + kernel composition for client paths
+- Own canonical run ingress selection at the host boundary (`DriverConfig` on run requests)
 - Own adapter dependency scan and adapter composition setup for canonical runs
+- Keep replay capture-driven and driver-free
 - Own host boundary effect lifecycle (buffer drain/apply/enrich capture)
 - Enforce host lifecycle integrity guarantees (for example duplicate `event_id` rejection at host step boundary)
+- Expose truthful canonical run outcomes for product callers (`Completed` vs `Interrupted` when a trustworthy artifact exists; host errors otherwise)
 
 Host non-responsibilities:
 

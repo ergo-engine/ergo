@@ -28,7 +28,9 @@ pub use runner::{HostedAdapterConfig, HostedEvent, HostedRunner, HostedStepOutco
 pub use usecases::{
     replay_graph, replay_graph_from_paths, replay_graph_from_paths_with_surfaces, run_fixture,
     run_graph, run_graph_from_paths, run_graph_from_paths_with_surfaces, scan_adapter_dependencies,
-    validate_adapter_composition, AdapterDependencySummary, HostReplayError, HostRunError,
-    ReplayGraphFromPathsRequest, ReplayGraphRequest, ReplayGraphResult, RunFixtureRequest,
-    RunFixtureResult, RunGraphFromPathsRequest, RunGraphRequest, RunGraphResult, RuntimeSurfaces,
+    validate_adapter_composition, AdapterDependencySummary, DriverConfig, HostReplayError,
+    HostRunError, InterruptedRun, InterruptionReason, ReplayGraphFromPathsRequest,
+    ReplayGraphRequest, ReplayGraphResult, RunFixtureRequest, RunFixtureResult,
+    RunGraphFromPathsRequest, RunGraphRequest, RunGraphResponse, RunOutcome, RunSummary,
+    RuntimeSurfaces,
 };
