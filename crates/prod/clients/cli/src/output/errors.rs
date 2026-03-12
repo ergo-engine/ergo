@@ -87,15 +87,6 @@ pub fn render_adapter_required(summary: &AdapterDependencySummary) -> String {
 
 pub fn render_host_run_error(err: HostRunError) -> String {
     match err {
-        HostRunError::MissingIngressSource => render_cli_error(
-            &CliErrorInfo::new(
-                "cli.missing_required_option",
-                "canonical run requires --fixture <events.jsonl>",
-            )
-            .with_rule_id("RUN-CANON-1")
-            .with_where("canonical host ingress")
-            .with_fix("provide --fixture <events.jsonl>"),
-        ),
         HostRunError::AdapterRequired(summary) => render_adapter_required(&summary),
         HostRunError::InvalidInput(message) => {
             if message.contains("missing semantic_kind in adapter-bound canonical run") {
@@ -134,10 +125,31 @@ pub fn render_host_run_error(err: HostRunError) -> String {
             }
             message
         }
+        HostRunError::DriverStart(message) => render_cli_error(
+            &CliErrorInfo::new(
+                "driver.start_failed",
+                "failed to start canonical run driver",
+            )
+            .with_where("canonical host ingress")
+            .with_fix("verify the driver command/path and protocol startup")
+            .with_detail(message),
+        ),
+        HostRunError::DriverProtocol(message) => render_cli_error(
+            &CliErrorInfo::new("driver.protocol_invalid", "driver protocol is invalid")
+                .with_where("canonical host ingress")
+                .with_fix("send hello first, then event lines, then end")
+                .with_detail(message),
+        ),
+        HostRunError::DriverIo(message) => render_cli_error(
+            &CliErrorInfo::new("driver.io_failed", "driver I/O failed")
+                .with_where("canonical host ingress")
+                .with_fix("inspect driver stdout/stderr and process lifecycle")
+                .with_detail(message),
+        ),
         HostRunError::StepFailed(message) => render_cli_error(
             &CliErrorInfo::new("host.step_failed", "canonical host step failed")
                 .with_where("canonical host execution")
-                .with_fix("inspect fixture payload/schema and host effect handlers")
+                .with_fix("inspect ingress payload/schema and host effect handlers")
                 .with_detail(message),
         ),
         HostRunError::Io(message) => render_cli_error(

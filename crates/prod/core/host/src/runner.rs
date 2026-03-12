@@ -14,11 +14,12 @@ use ergo_supervisor::{
     CaptureBundle, CapturingSession, Constraints, Decision, DecisionLog, DecisionLogEntry,
     NO_ADAPTER_PROVENANCE,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::capture_enrichment::{enrich_bundle_with_effects, AppliedEffectsByDecision};
 use crate::error::HostedStepError;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostedEvent {
     pub event_id: String,
     pub kind: ExternalEventKind,

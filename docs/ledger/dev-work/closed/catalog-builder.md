@@ -2,7 +2,7 @@
 Authority: PROJECT
 Date: 2026-03-09
 Author: Claude Opus 4.5 (Structural Auditor) + Codex (Implementation)
-Status: READY_FOR_REVIEW
+Status: CLOSED
 Branch: feat/catalog-builder
 Tier: 2 (Extension Plumbing)
 Depends-On: none (can parallel with feat/adapter-runtime; consumed later by feat/ergo-init)

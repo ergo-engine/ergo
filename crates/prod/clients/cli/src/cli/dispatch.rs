@@ -145,6 +145,7 @@ pub(crate) fn dispatch_with_args(args: &[String]) -> Result<DispatchOutput, Stri
                             crate::graph_yaml::run_graph_command(Path::new(&target), &rest)?;
                         Ok(DispatchOutput::Text(
                             output::text::render_graph_run_summary(
+                                summary.completion,
                                 summary.episodes,
                                 summary.events,
                                 summary.invoked,

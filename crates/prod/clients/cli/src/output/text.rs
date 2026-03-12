@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use crate::graph_yaml::GraphRunCompletion;
+
 pub fn write_line(message: &str) {
     println!("{message}");
 }
@@ -9,7 +11,7 @@ pub fn usage() -> String {
         "Ergo CLI (v1)",
         "",
         "Core runtime",
-        "  ergo run <graph.yaml> -f|--fixture <events.jsonl> [-a|--adapter <adapter.yaml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path <path> ...]",
+        "  ergo run <graph.yaml> (-f|--fixture <events.jsonl> | --driver-cmd <program> [--driver-arg <arg> ...]) [-a|--adapter <adapter.yaml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path <path> ...]",
         "  ergo replay <capture.json> -g|--graph <graph.yaml> [-a|--adapter <adapter.yaml>] [--cluster-path <path> ...]",
         "",
         "Fixture operability",
@@ -39,7 +41,7 @@ pub fn help_topic(topic: &str, fixture_usage: &str) -> Option<String> {
         "run" => Some(
             [
                 "usage:",
-                "  ergo run <graph.yaml> -f|--fixture <events.jsonl> [-a|--adapter <adapter.yaml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path <path> ...]",
+                "  ergo run <graph.yaml> (-f|--fixture <events.jsonl> | --driver-cmd <program> [--driver-arg <arg> ...]) [-a|--adapter <adapter.yaml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path <path> ...]",
             ]
             .join("\n"),
         ),
@@ -94,14 +96,23 @@ pub fn render_fixture_run_summary(
 }
 
 pub fn render_graph_run_summary(
+    completion: GraphRunCompletion,
     episodes: usize,
     events: usize,
     invoked: usize,
     deferred: usize,
     capture_path: &Path,
 ) -> String {
+    let status = match completion {
+        GraphRunCompletion::Completed => "status=completed".to_string(),
+        GraphRunCompletion::Interrupted { reason } => {
+            format!("status=interrupted reason={}", reason.as_str())
+        }
+    };
     [
-        format!("episodes={episodes} events={events} invoked={invoked} deferred={deferred}"),
+        format!(
+            "{status} episodes={episodes} events={events} invoked={invoked} deferred={deferred}"
+        ),
         format!("capture artifact: {}", capture_path.display()),
     ]
     .join("\n")
