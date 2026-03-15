@@ -1,8 +1,8 @@
 ---
 Authority: PROJECT
-Date: 2026-03-12
+Date: 2026-03-15
 Author: Claude Opus 4.5 (Structural Auditor) + Codex (Rewrite/Reconciliation)
-Status: OPEN
+Status: CLOSED
 Branch: feat/adapter-runtime
 Tier: 2 (Extension Plumbing)
 Depends-On: none (can parallel with Tier 1; consumed later by feat/ergo-init)
@@ -12,29 +12,27 @@ Depends-On: none (can parallel with Tier 1; consumed later by feat/ergo-init)
 
 ## Scope
 
-Define the prod-owned ingress surface and host-owned driver execution
+Define the prod-owned ingress-channel surface and host-owned execution
 path where user-authored adapter packages connect to the canonical host
 path.
 
 This branch does not extract `HostedRunner` into a broad trait. Most
 adapter/runtime machinery already exists and must be reused. The missing
-seams are narrower:
+seam is narrower:
 
 1. Event ingress: how prod-owned or user-authored code produces
    `HostedEvent` values and feeds the canonical host step loop.
-2. Effect egress extensibility: how callers register additional
-   `EffectHandler` implementations beyond the built-in `set_context`
-   handler.
 
 Settled branch decisions:
 
 1. `RunGraphFromPathsRequest` carries `driver: DriverConfig` instead of
-   `fixture_path: PathBuf`.
+   `fixture_path: PathBuf`. `DriverConfig` is the current code term for
+   the ingress-channel selector.
 2. `ReplayGraphFromPathsRequest` accepts no `DriverConfig`; replay
    events come from capture bundles only.
 3. `DriverConfig` sits alongside `adapter_path` on the host request,
    not inside `HostedAdapterConfig` or `CanonicalAdapterSetup`.
-4. Driver setup and adapter setup are sibling preparations in
+4. Ingress setup and adapter setup are sibling preparations in
    `crates/prod/core/host/src/usecases.rs`.
 5. `HostedAdapterConfig` remains semantic-only host state: provides,
    binder, and adapter provenance.
@@ -42,17 +40,16 @@ Settled branch decisions:
    `RunGraphResponse = Result<RunOutcome, HostRunError>`, where
    `RunOutcome` is `Completed(RunSummary)` or
    `Interrupted(InterruptedRun)`.
-7. The v0 public live driver model for this branch is `Process` only.
-   `Fixture` remains the built-in reference ingress shape. Any Rust
-   trait stays private to host implementation.
+7. The v0 public live ingress-channel model for this branch is
+   `Process` only. `Fixture` remains the built-in reference ingress
+   shape. Any Rust trait stays private to host implementation.
 8. Driver config never lives in `adapter.yaml`; the adapter manifest
    remains purely semantic.
 9. Workspace-level ergonomics for specifying `DriverConfig` are
    deferred to `feat/ergo-init`.
 
-No frozen doc changes. No new kernel semantics. No replacement of
-existing adapter validation, event binding, context merge, capture, or
-replay machinery.
+No new kernel semantics. No replacement of existing adapter validation,
+event binding, context merge, capture, or replay machinery.
 
 ## Current Implemented State
 
@@ -104,19 +101,21 @@ Prod host already owns:
 - `RunGraphFromPathsRequest` in
   `crates/prod/core/host/src/usecases.rs`, which now carries
   `graph_path`, `cluster_paths`, `driver`, `adapter_path`, and capture
-  options.
+  options. `driver` is the current implementation field name for the
+  ingress-channel selector.
 - `RunGraphResponse`, `RunOutcome`, `RunSummary`, `InterruptedRun`, and
   `InterruptionReason` in
   `crates/prod/core/host/src/usecases.rs`.
 - `ReplayGraphFromPathsRequest` in
-  `crates/prod/core/host/src/usecases.rs`, which remains driver-free.
+  `crates/prod/core/host/src/usecases.rs`, which remains free of live
+  ingress or egress channel config.
 - Canonical client APIs `run_graph_from_paths()` and
   `replay_graph_from_paths()` in
   `crates/prod/core/host/src/usecases.rs`.
 - Adapter setup in `prepare_adapter_setup()` and
   `validate_adapter_composition()` in
   `crates/prod/core/host/src/usecases.rs`.
-- Driver setup in `run_fixture_driver()`, `run_process_driver()`,
+- Ingress setup in `run_fixture_driver()`, `run_process_driver()`,
   `drain_process_after_end()`, and `finalize_run_summary()` in
   `crates/prod/core/host/src/usecases.rs`.
 - Adapter dependency scan in `scan_adapter_dependencies()` in
@@ -124,14 +123,16 @@ Prod host already owns:
 
 ### Remaining Gaps
 
-The remaining open items are now narrower:
+No branch-local closure gaps remain.
 
-- Additive handler injection is still missing. `HostedRunner::new()`
-  only installs `SetContextHandler`; there is no public additive
-  registration seam for caller-supplied handlers.
-- Handler-injection proof remains open. Until callers can supply custom
-  `EffectHandler` values, the custom-handler and manifest/runtime
-  mismatch closure rows cannot close.
+Follow-on work now tracked outside this branch:
+
+- Current canonical host APIs accept one ingress-channel config per
+  run. Multi-ingress host support remains future work; today's
+  multi-source cases require an upstream multiplexer or a later host
+  request-shape extension.
+- Egress-channel configuration, lifecycle, routing, and protocol remain
+  separate follow-on work. This branch does not close that surface.
 
 ## What Must Not Be Reimplemented
 
@@ -162,18 +163,19 @@ Do not reimplement:
 
 The implemented host contract is:
 
-1. Canonical run ingress is host-owned through
-   `DriverConfig::{Fixture, Process}` on
+1. Canonical run ingress is host-owned through the current
+   `DriverConfig::{Fixture, Process}` selector on
    `RunGraphFromPathsRequest`.
-2. Canonical replay stays capture-driven and accepts no driver config.
+2. Canonical replay stays capture-driven and accepts no live ingress or
+   egress channel config.
 3. All ingress converges on the same host-owned path:
    `HostedEvent -> build_external_event() -> execute_step()`.
-4. Adapter setup and driver setup remain sibling host preparations.
-   Driver launch config never becomes adapter semantic state.
-5. `Process` is the only public live driver shape in this branch. Host
-   launches a direct child process from `command: Vec<String>` without
-   shell interpretation.
-6. `Process` protocol is host-owned:
+4. Adapter setup and ingress setup remain sibling host preparations.
+   Ingress launch config never becomes adapter semantic state.
+5. `Process` is the only public live ingress-channel shape in this
+   branch. Host launches a direct child process from
+   `command: Vec<String>` without shell interpretation.
+6. `Process` ingress protocol is host-owned:
    `stdout` is UTF-8 JSON Lines with `hello`, `event`, and `end`
    envelopes; `stderr` is diagnostics only; `stdin` is unused in v0.
 7. Backpressure is synchronous and host-owned: one event at a time
@@ -195,14 +197,20 @@ The implemented host contract is:
     observation / `hello`, bounded `termination_grace` after `end` or
     `stdout` EOF, and `poll_interval` only as an implementation detail
     of that waiting policy.
-12. Bad `Process` drivers cannot wedge canonical host forever. Silent
-    startup, malformed protocol bytes, post-`end` extra output, `stdout`
-    EOF before exit, and hang-after-`end` all map to truthful
+12. Bad `Process` ingress channels cannot wedge canonical host forever.
+    Silent startup, malformed protocol bytes, post-`end` extra output,
+    `stdout` EOF before exit, and hang-after-`end` all map to truthful
     `HostRunError` / `Interrupted` outcomes under host-owned bounded
     waits.
-13. v0 lifecycle management is scoped to the direct child process.
+13. Current canonical host run accepts one ingress-channel config per
+    run. Multi-ingress topologies are future host work and are not
+    implied by this branch.
+14. v0 lifecycle management is scoped to the direct child process.
     Full descendant process-tree containment is not part of this
     branch and must not be implied by closure.
+15. Egress-channel configuration, lifecycle, and protocol are not part
+    of this branch. Host-internal effect handling remains internal
+    machinery, not a user-facing extension surface delivered here.
 
 ## Closure Ledger
 
@@ -212,22 +220,24 @@ Status: `CLOSED`
 Closure: The ledger records the final host API shape:
 `RunGraphFromPathsRequest` carries `driver: DriverConfig`, replay
 requests carry no `DriverConfig`, `RunGraphResponse` exposes
-`Completed` vs `Interrupted`, `Process` is the only public live driver
-model, and host-owned backpressure/blocking semantics are documented.
+`Completed` vs `Interrupted`, `Process` is the only public live
+ingress-channel model, and host-owned backpressure/blocking semantics
+are documented.
 
 `AR-2`
-Keep adapter setup and driver setup as sibling preparations.
+Keep adapter setup and ingress setup as sibling preparations.
 Status: `CLOSED`
-Closure: Host usecases prepare adapter state and driver state through
+Closure: Host usecases prepare adapter state and ingress state through
 separate preparation paths. `HostedAdapterConfig` and
-`CanonicalAdapterSetup` remain semantic adapter state only; driver
+`CanonicalAdapterSetup` remain semantic adapter state only; ingress
 config is not stored there.
 
 `AR-3`
 Preserve canonical host path.
 Status: `CLOSED`
 Closure: All ingress yields or materializes `HostedEvent` as applicable
-and feeds `HostedRunner::step()`. No driver constructs canonical
+and feeds `HostedRunner::step()`. No ingress channel constructs
+canonical
 `ExternalEvent` or bypasses `build_external_event()` /
 `execute_step()`.
 
@@ -238,14 +248,6 @@ Closure: `ReplayGraphFromPathsRequest` accepts no `DriverConfig`;
 replay events come only from capture bundles; strict replay path remains
 unchanged.
 
-`AR-5`
-Widen host construction for handler injection.
-Status: `OPEN`
-Closure: `HostedRunner::new()` (or equivalent host construction API)
-accepts additive caller-supplied `Arc<dyn EffectHandler>` values
-alongside `SetContextHandler`. Existing effect routing and
-`ensure_handler_coverage()` remain authoritative.
-
 `AR-6`
 Implement `DriverConfig::Fixture`.
 Status: `CLOSED`
@@ -254,12 +256,12 @@ Closure: Current fixture-backed canonical execution is expressed through
 capture, and replay behavior.
 
 `AR-7`
-Implement public live driver shape.
+Implement public live ingress-channel shape.
 Status: `CLOSED`
-Closure: `DriverConfig::Process` is the single public live driver
-model. Host owns process launch, `hello` / `event` / `end` protocol
-handling, `Completed` vs `Interrupted` mapping, bounded startup
-behavior, and protocol-failure classification.
+Closure: `DriverConfig::Process` is the single public live
+ingress-channel model. Host owns process launch, `hello` / `event` /
+`end` protocol handling, `Completed` vs `Interrupted` mapping, bounded
+startup behavior, and protocol-failure classification.
 
 `AR-8`
 Preserve manifest/runtime alignment.
@@ -274,17 +276,17 @@ before stepping begins. Driver config remains outside `adapter.yaml`.
 `AR-9`
 Lifecycle, shutdown, and drain semantics.
 Status: `CLOSED`
-Closure: Host-owned driver execution defines and implements graceful
+Closure: Host-owned ingress execution defines and implements graceful
 shutdown, bounded startup / terminal waits, drain behavior, and
-truthful outcome mapping for supported live driver shapes. `Completed`
-requires protocol-complete clean exit; bad drivers cannot wedge
-canonical host forever.
+truthful outcome mapping for supported live ingress-channel shapes.
+`Completed` requires protocol-complete clean exit; bad ingress channels
+cannot wedge canonical host forever.
 
 `AR-10`
 Driver authoring guide published.
 Status: `CLOSED`
 Closure: A project-level developer doc exists under `docs/` at
-`docs/authoring/adapter-driver-guide.md`. It covers `HostedEvent` wire
+`docs/authoring/ingress-channel-guide.md`. It covers `HostedEvent` wire
 format, manifest/schema mapping, conceptual host handoff, working
 examples for supported ingress shapes, and explicit prohibitions
 against constructing `ExternalEvent`, bypassing `step()`, or owning
@@ -293,27 +295,13 @@ capture/replay semantics.
 `AR-11`
 Test: replay-valid fixture capture.
 Status: `CLOSED`
-Closure: Fixture driver runs through the canonical host path, produces a
-capture bundle, and that bundle passes strict replay.
-
-`AR-12`
-Test: custom effect handler receives effects.
-Status: `OPEN`
-Closure: A caller registers a custom `EffectHandler`, a graph emits that
-accepted effect kind, and the handler receives it through the canonical
-host routing path.
-
-`AR-13`
-Test: manifest/runtime mismatch rejected.
-Status: `OPEN`
-Closure: Adapter setup fails before first `step()` when
-manifest-derived accepted effects or composition requirements are not
-satisfied by the configured runtime surface and registered handlers.
+Closure: Fixture ingress runs through the canonical host path, produces
+a capture bundle, and that bundle passes strict replay.
 
 `AR-14`
 Test: live-source failure preserves host semantics.
 Status: `CLOSED`
-Closure: `Process` driver tests cover silent startup before `hello`,
+Closure: `Process` ingress-channel tests cover silent startup before `hello`,
 malformed bytes before first committed step, malformed bytes after a
 committed step with replay-valid interrupted artifact, non-zero exit
 after `end`, extra `stdout` after `end`, hang after `end`, and
@@ -324,35 +312,47 @@ after `end`, extra `stdout` after `end`, hang after `end`, and
 
 - This branch is host-led orchestration work, but it reuses existing
   kernel-adapter host primitives.
-- Prod/host owns `DriverConfig`, the event-ingress contract, process
-  launch, and canonical orchestration shape.
+- Prod/host owns the current `DriverConfig` ingress selector, the
+  event-ingress contract, process launch, and canonical orchestration
+  shape.
 - Kernel-adapter already owns `EffectHandler`, `SetContextHandler`,
   `ContextStore`, `BufferingRuntimeInvoker`, and
   `ensure_handler_coverage()`. Those surfaces are consumed, not
   replaced.
 - Driver config never lives in `adapter.yaml`; the adapter manifest
   remains purely semantic.
-- Workspace-level driver discovery and ergonomic wiring belong to
+- Workspace-level ingress-channel discovery and ergonomic wiring belong to
   `feat/ergo-init`, not this branch.
+- Current canonical host APIs accept one ingress-channel config per
+  run. Multiple live sources require upstream multiplexing or future
+  host multi-ingress support.
+- Egress-channel configuration, lifecycle, and protocol are separate
+  follow-on work. This branch does not expose custom host-handler
+  injection as a delivered extension surface.
 - No new kernel rule IDs, no semantic rewrites, and no new replay
   mechanism are allowed.
 - Replay continues to source events from capture bundles only; no replay
   API accepts `DriverConfig`.
 - The fixture path is the built-in reference ingress for this branch;
-  `Process` is the public live ingress shape.
+  `Process` is the public live ingress-channel shape.
 - `startup_grace` and `termination_grace` are private host operational
   policy. They bound how long host waits to observe protocol truth, but
   they do not change what counts as clean completion.
 - `Process` lifecycle management in v0 applies to the direct child
   process only. Full process-tree containment is out of scope.
 - No domain-specific language in this branch. Use `event ingress`,
-  `HostedEvent`, `process driver`, and `effect handler`, not
-  vertical-specific terms.
+  `HostedEvent`, `process ingress channel`, and `host-internal effect
+  handler`, not vertical-specific terms.
 
 ## Relationship to Existing Gaps
 
 This branch closes:
 
-- Gap 2: no adapter ingress surface / driver host path
+- Gap 2: no adapter ingress surface / host ingress path
 - Gap 5: fixture/adapter parity via the simulation adapter and
   canonical host-path reuse
+
+This branch does not close:
+
+- `GW-EFX-2`: multi-ingress host direction
+- `GW-EFX-3`: egress-channel contract and lifecycle

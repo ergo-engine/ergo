@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-12
+Last Updated: 2026-03-15
 Owner: Claude (Structural Auditor)
 Scope: v0 baseline declaration, v1 workstream rules
 Change Rule: Operational log
@@ -82,8 +82,12 @@ The host (`prod/core/host`) owns:
 
 - Adapter dependency scan and composition validation
 - Usecase API surface: `run_graph_from_paths`, `replay_graph_from_paths` (canonical client entrypoints); `run_graph`, `replay_graph`, `run_fixture` (lower-level)
-- Canonical run ingress selection through host-owned `DriverConfig`; replay remains capture-driven and takes no driver config
-- Effect application at host boundary (HST-1 through HST-9)
+- Canonical run ingress selection through host-owned `DriverConfig`
+  (current implementation term for ingress-channel configuration);
+  replay remains capture-driven and takes no live channel config
+- Post-episode effect dispatch at host boundary (HST-1 through HST-9);
+  host-internal effects may be realized locally while true external I/O
+  belongs to prod boundary channels
 - Canonical run outcome reporting for product callers (`Completed` vs `Interrupted` when the host can return a trustworthy artifact)
 - Canonical composition of loader + kernel semantics for product entrypoints; kernel remains semantic authority
 

@@ -26,6 +26,10 @@
 
 - Cross-ingestion normalization parity is deferred (`INGEST-TIME-1`)
 - Internal source/compute payload outputs are not replay-captured as first-class records
+- Host-internal effects may be replay-realized when needed to
+  reconstruct deterministic cross-episode state. Truly external effects
+  are verification-only in replay and must not be re-executed against
+  live external systems.
 
 ### Notes
 
@@ -50,7 +54,7 @@ additional capture mechanism is required.
 
 **Authority:** Sebastian (Freeze Authority), 2025-12-28
 
-- **REP-SCOPE:** Canonical replay for D3 is **Scope A (self-consistency)**. It enforces strict capture preflight (version + provenance), rehydrates events with hash checks, re-executes through `ergo-host`, and verifies decision/effect integrity against host-owned captured effects. Runtime provenance uses the format `rpv1:sha256:<hex>`. It still does not guarantee cross-ingestion normalization parity; that is tracked as `INGEST-TIME-1`.
+- **REP-SCOPE:** Canonical replay for D3 is **Scope A (self-consistency)**. It enforces strict capture preflight (version + provenance), rehydrates events with hash checks, re-executes through `ergo-host`, and verifies decision/effect integrity against host-owned captured effects. Runtime provenance uses the format `rpv1:sha256:<hex>`. Within this scope, host-internal effects may be replay-realized when needed for deterministic reconstruction. Truly external effects are re-derived and verified against captured intent/effect integrity; they must not be re-executed against live external systems. It still does not guarantee cross-ingestion normalization parity; that is tracked as `INGEST-TIME-1`.
 - **SOURCE-TRUST:** Source primitive determinism is trust-based, not enforced. The `SourcePrimitiveManifest` declares `execution.deterministic = true`, but the trait has no compile-time restrictions preventing non-deterministic implementations. Enforcement is by convention and code review. See `source/registry.rs::validate_manifest()`.
 
 ### UI-REF-CLIENT-1: Client Authoring is Non-Canonical

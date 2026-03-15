@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v0
-Last Updated: 2025-12-22
+Last Updated: 2026-03-15
 Owner: Claude (Structural Auditor)
 Scope: Canonical terms - primitive, implementation, cluster
 Change Rule: Operational log
@@ -170,6 +170,31 @@ This is a review tripwire, not a linter rule; exceptions require explicit justif
 The `Tick` → `Pump` rename is complete with backward-compatible `#[serde(alias = "Tick")]`. Test `legacy_tick_deserializes_to_pump` verifies old captures remain replayable.
 
 The `Filled` → `Completed` rename is complete. `ActionOutcome` is not serialized, so no backward-compat alias needed. Doc comment notes alias requirement if serialization is added.
+
+---
+
+## 10. Boundary Channels
+
+The preferred doctrinal terms for prod boundary realizations are:
+
+| Term | Meaning |
+|------|---------|
+| **Ingress channel** | Prod realization that delivers external events into host execution |
+| **Egress channel** | Prod realization that receives effect intent from host and performs true external I/O |
+
+Usage:
+
+- "An ingress channel feeds `HostedEvent` into host."
+- "An egress channel realizes externally directed effect intent."
+
+Do not use **adapter** to mean the concrete prod transport or external
+connector implementation. The adapter is the declarative contract
+boundary.
+
+`DriverConfig` remains the current host implementation term for ingress
+channel configuration. It may still appear in code or implementation
+docs that describe today's API, but `ingress channel` / `egress
+channel` are the preferred generalized terms.
 
 ---
 

@@ -20,20 +20,25 @@ Options:
 
 ## Impact
 
-This decision controls SS-3 implementation semantics and test oracle behavior.
+This decision controls SS-3 implementation semantics and test oracle
+behavior.
 
 ## Decision Ledger
 
+<!-- markdownlint-disable MD013 -->
 | ID | Task | Closure Condition | Owner | Status |
-|----|------|-------------------|-------|--------|
+| ---- | ---- | ----------------- | ----- | ------ |
 | GW-SS3-1 | Choose behavior for `size <= 0` | Decision recorded with exact expected output/error behavior and test requirements | Sebastian | CLOSED |
+<!-- markdownlint-restore -->
 
 ## Decision Record
 
 - Date: 2026-03-05
 - Decision owner: Sebastian
 - Selected behavior: Reject
-- Canonical behavior: `window(size <= 0)` returns `ComputeError::InvalidParameter { parameter: "size", reason: "size must be a positive integer" }`.
+- Canonical behavior: `window(size <= 0)` returns
+  `ComputeError::InvalidParameter { parameter: "size", reason: "size
+  must be a positive integer" }`.
 - Test requirements:
   - `window_rejects_non_positive_size` enforces runtime behavior.
   - No silent coercion to empty series is permitted.

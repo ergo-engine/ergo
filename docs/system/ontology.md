@@ -1,7 +1,7 @@
 ---
 Authority: FROZEN
 Version: v0
-Last Amended: 2026-01-11
+Last Amended: 2026-03-15
 Scope: Four primitives, wiring matrix, causal roles
 Verified Against Tag: v1.0.0-alpha.1
 Change Rule: v1 only
@@ -122,9 +122,14 @@ Characteristics:
 Action outputs are non-causal and take two forms:
 
 - **Acknowledgment records** — emitted to orchestrator for logging/audit (exactly one per attempt)
-- **Effect descriptions** — emitted to adapter for external application (zero or more per attempt)
+- **Effect descriptions** — emitted as non-causal operational instructions for post-episode realization (zero or more per attempt)
 
-Neither participates in graph causality. Acknowledgment records are metadata for accountability. Effect descriptions are operational instructions that the adapter applies to external stores after episode completion.
+Neither participates in graph causality. Acknowledgment records are
+metadata for accountability. Effect descriptions are operational
+instructions emitted as intent. Adapters declare which effect kinds are
+accepted; host dispatches these descriptions after episode completion;
+host-internal effects may be realized by host handlers, while truly
+external effects cross prod boundary channels.
 
 Action establishes agency, not logic or policy.
 
@@ -137,6 +142,14 @@ Action establishes agency, not logic or policy.
 > outputs: acknowledgments (to orchestrator) and effects (to adapter). Both are non-causal;
 > effects enable the cross-episode state pattern described in execution.md §5.4.
 > Sebastian override authorization.
+>
+> **Amended 2026-03-15** by Codex (Docs)
+>
+> Clarified that effect descriptions are post-episode intent records,
+> not direct graph-time world work. Adapters declare the accepted
+> contract, host dispatches after the episode, and true external I/O
+> belongs to prod boundary channels rather than the graph itself.
+> Sebastian freeze-authority authorization.
 
 ---
 

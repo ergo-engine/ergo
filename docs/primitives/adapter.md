@@ -1,14 +1,15 @@
 ---
 Authority: STABLE
 Version: v1
-Last Updated: 2026-02-17
+Last Updated: 2026-03-15
 ---
 
 # Adapter Manifest — v1
 
 An adapter is the bridge between the runtime and the external world.
 It defines what context data is available to the graph, what external events
-can trigger execution, and what effects the runtime can request.
+can trigger execution, and what effects the runtime can request at the
+adapter boundary.
 
 This is the authoritative contract.
 
@@ -20,7 +21,8 @@ An Adapter Primitive is the external interface layer that:
 
 - populates ExecutionContext for graph evaluation
 - emits ExternalEvents that trigger episodes
-- applies effects requested by Actions
+- declares which effects requested by Actions are accepted at the
+  boundary
 - captures replay-relevant data
 
 An adapter answers three questions:
@@ -30,6 +32,10 @@ An adapter answers three questions:
 *"What events can trigger graph execution?"* (event_kinds)
 
 *"What effects can actions request?"* (accepts.effects)
+
+Adapters are declarative contracts. Concrete post-episode dispatch
+belongs to host. Concrete external I/O belongs to prod boundary
+channels; host-internal effects may still be realized by host handlers.
 
 ---
 
@@ -108,6 +114,9 @@ Rules:
 - `accepts.effects[].name` must be unique across all effects
 - `accepts.effects[].payload_schema` must be valid JSON Schema Draft 2020-12
 - `accepts` section is optional (adapters may accept zero effects)
+- `accepts.effects` declares accepted effect vocabulary only. It does
+  not, by itself, choose whether an accepted effect is realized by a
+  host-internal handler or by a prod boundary channel
 
 ---
 

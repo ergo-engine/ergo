@@ -1,7 +1,7 @@
 ---
 Authority: FROZEN
 Version: v0
-Last Amended: 2026-03-04
+Last Amended: 2026-03-15
 Scope: Evaluation semantics, phase rules, determinism
 Verified Against Tag: v1.0.0-alpha.1
 Change Rule: v1 only
@@ -156,24 +156,26 @@ Each Action node produces exactly one `outcome` event value per pass (`Attempted
 `Rejected`/`Cancelled`/`Failed`, or `Skipped` when gated off). These records are non-causal metadata,
 not events for propagation.
 
-**Effect descriptions** are operational instructions emitted to the host boundary for external
-application after the episode completes. An Action may declare zero or more effect writes in its
-manifest. Each write declaration names a target context key, the expected value type, and which
-scalar input port provides the value.
+**Effect descriptions** are operational instructions emitted to the host
+boundary for post-episode dispatch and realization after the episode
+completes. An Action may declare zero or more effect writes in its
+manifest. Each write declaration names a target context key, the
+expected value type, and which scalar input port provides the value.
 
 Effect descriptions are not returned by the Action trait implementation itself. They are derived
 mechanically by runtime execution from manifest write declarations and the Action input snapshot.
 
 ### 6.3 Effect Lifecycle
 
-The effect lifecycle spans two layers and two episodes.
+The effect lifecycle spans runtime evaluation, host dispatch, and
+cross-episode state propagation.
 
-**Within an episode (runtime to host):**
+**Within an episode (runtime to host dispatch):**
 
 1. The runtime evaluates the graph. When an Action executes, runtime execution derives effect descriptions from the Action manifest write declarations and current input values.
 2. The runtime buffers these effect descriptions. They do not influence any node during the same evaluation pass.
-3. After the episode terminates, the host drains buffered effects and applies them via effect handlers. Adapter effect acceptance (`accepts.effects`) and handler coverage are validated before run; `set_context` application validates key existence, writability, and type before writing to the host context store.
-4. Applied effects are recorded in the capture bundle for replay verification.
+3. After the episode terminates, the host drains buffered effects and dispatches them according to their realization class. Host-internal effects may be realized directly by host effect handlers. Truly external effects cross a prod boundary realization such as an egress channel. Adapter effect acceptance (`accepts.effects`) and handler coverage are validated before run; `set_context` application validates key existence, writability, and type before writing to the host context store.
+4. The drained effect set is recorded in the capture bundle for replay verification. Host-internal effects may be replay-realized when needed to reconstruct deterministic cross-episode state. Truly external effects are re-derived and verified, not re-executed against live systems.
 
 **Across episodes (adapter-bound host path):**
 
@@ -182,7 +184,10 @@ The effect lifecycle spans two layers and two episodes.
 
 For adapter-independent paths, there is no context-store merge step.
 
-This lifecycle is the intended cross-episode causality path referenced in ontology.md §2.4: Action writes -> external store/context -> Source reads. Causality flows through the environment, not through graph wiring or Supervisor-injected state.
+This lifecycle is the intended cross-episode causality path referenced
+in ontology.md §2.4: Action intent -> host dispatch ->
+external store/context -> Source reads. Causality flows through the
+environment, not through graph wiring or Supervisor-injected state.
 
 ### 6.4 Invariant Preservation
 
@@ -205,6 +210,17 @@ Validation enforces this distinction per destination Action input port type:
 - Event input ports accept only Trigger-provided Event edges.
 - Non-Event Action input ports (v0: Number/Bool/String) may accept Source/Compute edges.
 - Scalar payload edges never satisfy the Action gate requirement.
+
+### 6.6 Amendment Record
+
+> **Amended 2026-03-15** by Codex (Docs)
+>
+> Clarified the distinction between host dispatch, host-internal
+> realization, and prod boundary channel realization for truly external
+> effects. Replay text now records that host-internal effects may be
+> replay-realized for determinism, while truly external effects are
+> verified rather than re-executed against live systems.
+> Sebastian freeze-authority authorization.
 
 ---
 
