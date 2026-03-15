@@ -3,9 +3,9 @@
 **Status:** STABLE — implemented in `ergo-loader` decode/discovery; canonically consumed via `ergo-host` path APIs (`run_graph_from_paths` / `replay_graph_from_paths`) with clients delegating
 **Scope:** How `ClusterDefinition` maps to YAML for hand-authoring and tooling
 **Litmus test:** Demo 1 graph (15 nodes, 16 edges, 4 boundary outputs)
-**Current CLI contract:** `ergo run <graph.yaml> (--fixture <events.jsonl> | --driver-cmd <program> [--driver-arg <value> ...]) [--adapter <adapter.yaml>] [--capture-output <path>] [--cluster-path <path> ...]` and `ergo fixture run <events.jsonl> [--capture-output <path>] [--pretty-capture]`
-**Related ingress guidance:** [adapter-driver-guide](adapter-driver-guide.md) documents `HostedEvent`, process-driver protocol, and fixture/process authoring expectations.
-**Future work:** Workspace-level discovery and ergonomic driver wiring remain a future extension for `feat/ergo-init`.
+**Current CLI contract:** `ergo run <graph.yaml> (--fixture <events.jsonl> | --driver-cmd <program> [--driver-arg <value> ...]) [--adapter <adapter.yaml>] [--capture-output <path>] [--cluster-path <path> ...]` and `ergo fixture run <events.jsonl> [--capture-output <path>] [--pretty-capture]` (current flag names retain legacy `driver` terminology)
+**Related ingress guidance:** [ingress-channel-guide](ingress-channel-guide.md) documents `HostedEvent`, process-channel protocol, and fixture/process authoring expectations.
+**Future work:** Workspace-level discovery and ergonomic ingress-channel wiring remain a future extension for `feat/ergo-init`.
 
 ---
 

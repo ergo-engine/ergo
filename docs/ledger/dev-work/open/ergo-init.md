@@ -59,7 +59,7 @@ Layout is TBD. The above is a starting point, not a commitment.
 | Command | Description |
 |---------|-------------|
 | `ergo init` | Scaffold a new project with the standard layout |
-| `ergo run` (inside project) | Discover graph, adapter, and driver/fixture wiring from project layout. No path flags required. |
+| `ergo run` (inside project) | Discover graph, adapter, and ingress-channel or fixture wiring from project layout. No path flags required. |
 | `ergo validate` (inside project) | Validate all graphs + adapter compositions in the project. |
 | `ergo replay` (inside project) | Replay from captures directory. |
 
@@ -73,7 +73,7 @@ When the CLI runs inside a project directory (detected by `ergo.toml`):
 2. Find clusters in `clusters/` (added to loader search paths)
 3. Find adapter manifests in `adapters/`
 4. Find fixtures in `fixtures/`
-5. Resolve driver configuration defaults from project manifest or convention using the host `DriverConfig` API from `feat/adapter-runtime`
+5. Resolve ingress-channel configuration defaults from project manifest or convention using the host `DriverConfig` API from `feat/adapter-runtime` (current code term; doctrine prefers *ingress channel*)
 6. Load custom implementations from `implementations/` (via `feat/catalog-builder`)
 
 ## Closure Ledger
@@ -84,7 +84,7 @@ When the CLI runs inside a project directory (detected by `ergo.toml`):
 | EI-2 | Define `ergo.toml` schema | Minimal project manifest: name, version. Extensible for future fields. | Codex | OPEN |
 | EI-3 | Implement `ergo init` | Command creates directory structure with template files. | Codex | OPEN |
 | EI-4 | Implement project discovery | CLI detects `ergo.toml`, resolves paths from project root. | Codex | OPEN |
-| EI-5 | `ergo run` inside project | Discovers graph + adapter + driver/fixture wiring from layout. Runs through the host runner + adapter ingress path. | Codex | OPEN |
+| EI-5 | `ergo run` inside project | Discovers graph + adapter + ingress-channel or fixture wiring from layout. Runs through the host runner + adapter ingress path. | Codex | OPEN |
 | EI-6 | `ergo validate` inside project | Discovers all graphs + adapter manifests. Validates each composition. Reports all errors, not just first. | Codex | OPEN |
 | EI-7 | Cluster search path integration | `clusters/` directory automatically added to loader search paths during project runs. | Codex | OPEN |
 | EI-8 | Custom implementation loading | Implementations from `implementations/` are loaded via `feat/catalog-builder` API using the mechanism approved in `GW-EI8-1`, with matching tests | Codex | OPEN |

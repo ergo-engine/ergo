@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-12
+Last Updated: 2026-03-15
 Owner: Claude (Structural Auditor)
 Scope: Kernel/prod boundary and host intent
 Change Rule: Operational log
@@ -34,6 +34,8 @@ Prod is the product composition layer for:
 
 - Transport/decode/discovery (`prod/core/loader`)
 - Canonical host orchestration (`prod/core/host`)
+- Boundary channel implementations that connect host execution to real
+  external systems
 - Thin client entrypoints (`prod/clients/*`) that delegate to host
 
 Prod may compose kernel APIs, but must not redefine kernel meaning.
@@ -48,10 +50,16 @@ Host responsibilities:
 
 - Provide canonical entrypoints for run/replay (`run_graph_from_paths`, `replay_graph_from_paths`)
 - Own loader + kernel composition for client paths
-- Own canonical run ingress selection at the host boundary (`DriverConfig` on run requests)
+- Own canonical run ingress selection at the host boundary
+  (`DriverConfig` in current code; ingress-channel selection in
+  doctrine)
 - Own adapter dependency scan and adapter composition setup for canonical runs
-- Keep replay capture-driven and driver-free
-- Own host boundary effect lifecycle (buffer drain/apply/enrich capture)
+- Keep replay capture-driven and free of live ingress/egress channel
+  config
+- Own post-episode effect dispatch at the host boundary (buffer
+  drain/dispatch/enrich capture). Host may realize host-internal
+  effects locally, but true external I/O belongs to prod boundary
+  channels
 - Enforce host lifecycle integrity guarantees (for example duplicate `event_id` rejection at host step boundary)
 - Expose truthful canonical run outcomes for product callers (`Completed` vs `Interrupted` when a trustworthy artifact exists; host errors otherwise)
 
