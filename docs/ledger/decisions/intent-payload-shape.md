@@ -151,7 +151,7 @@ pub struct IntentRecord {
 Current:
 ```rust
 pub struct ActionEffect {
-    pub kind: String,           // always "set_context" today
+    pub kind: String,
     pub writes: Vec<EffectWrite>,
 }
 ```
@@ -165,10 +165,18 @@ pub struct ActionEffect {
 }
 ```
 
-`writes` continues to serve `set_context`. `intents` carries external
-intent records. Both may be present on the same `ActionEffect` when an
-action has both `effects.writes` and `effects.intents` declared, or
-when `mirror_writes` generates writes from intent fields.
+Canonical stream semantics (enforced):
+
+- **Internal effect:** `kind == "set_context"`, `writes` may be non-empty,
+  `intents` must be empty.
+- **External effect:** `kind == <intent kind>`, `writes` must be empty,
+  `intents` must be non-empty, and every `intent.kind` in that record
+  must equal `effect.kind`.
+
+An action with both internal writes and external intents emits multiple
+`ActionEffect` records in deterministic order:
+1. internal `set_context` effect (top-level writes + mirror writes),
+2. one external effect per intent kind.
 
 ---
 

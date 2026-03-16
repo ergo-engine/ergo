@@ -111,6 +111,12 @@ Design choices:
 5. **One owner per kind.** If a kind has both a local handler AND an
    egress route, `ensure_handler_coverage` returns
    `ConflictingCoverage` (Phase 1 work).
+6. **Channel capability attestation.** At startup, each channel's
+   ready handshake must declare protocol `ergo-egress.v1` and
+   `handled_kinds`. For every routed kind assigned to that channel,
+   `handled_kinds` must include the kind. Missing kinds or duplicate
+   declarations are startup protocol errors. Extra declared kinds are
+   allowed.
 
 ### File format for v0
 

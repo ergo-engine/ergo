@@ -158,12 +158,18 @@ not events for propagation.
 
 **Effect descriptions** are operational instructions emitted to the host
 boundary for post-episode dispatch and realization after the episode
-completes. An Action may declare zero or more effect writes in its
-manifest. Each write declaration names a target context key, the
-expected value type, and which scalar input port provides the value.
+completes. An Action may declare zero or more effect writes and zero or
+more effect intents in its manifest. Each write declaration names a
+target context key, the expected value type, and which scalar input
+port provides the value. Each intent declaration names an external
+effect kind, a typed field set sourced from scalar inputs and/or static
+parameters, and optional mirror writes that project selected field
+values into host-managed context.
 
 Effect descriptions are not returned by the Action trait implementation itself. They are derived
-mechanically by runtime execution from manifest write declarations and the Action input snapshot.
+mechanically by runtime execution from manifest write declarations,
+intent declarations, the Action input snapshot, and static parameter
+values.
 
 ### 6.3 Effect Lifecycle
 
@@ -172,9 +178,9 @@ cross-episode state propagation.
 
 **Within an episode (runtime to host dispatch):**
 
-1. The runtime evaluates the graph. When an Action executes, runtime execution derives effect descriptions from the Action manifest write declarations and current input values.
+1. The runtime evaluates the graph. When an Action executes, runtime execution derives effect descriptions from the Action manifest write declarations, intent declarations, current input values, and any parameter-sourced intent fields.
 2. The runtime buffers these effect descriptions. They do not influence any node during the same evaluation pass.
-3. After the episode terminates, the host drains buffered effects and dispatches them according to their realization class. Host-internal effects may be realized directly by host effect handlers. Truly external effects cross a prod boundary realization such as an egress channel. Adapter effect acceptance (`accepts.effects`) and handler coverage are validated before run; `set_context` application validates key existence, writability, and type before writing to the host context store.
+3. After the episode terminates, the host drains buffered effects and dispatches them according to their realization class. Host-internal effects may be realized directly by host effect handlers. Truly external effects cross a prod boundary realization such as an egress channel. Adapter effect acceptance (`accepts.effects`) and host ownership coverage (handler-owned kinds or egress-routed kinds) are validated before run; `set_context` application validates key existence, writability, and type before writing to the host context store.
 4. The drained effect set is recorded in the capture bundle for replay verification. Host-internal effects may be replay-realized when needed to reconstruct deterministic cross-episode state. Truly external effects are re-derived and verified, not re-executed against live systems.
 
 **Across episodes (adapter-bound host path):**
@@ -200,10 +206,14 @@ The effect lifecycle preserves execution-model invariants:
 
 ### 6.5 Wiring Rules for Effect-Bearing Actions
 
-Actions that declare effect writes require two input categories:
+Actions that declare effect writes and/or intent fields sourced from
+inputs require two input categories:
 
 - **Event inputs** (from Triggers): the causal gate that determines whether the Action executes (R.7).
-- **Scalar payload inputs** (from Sources or Computes): values carried by effect writes.
+- **Scalar payload inputs** (from Sources or Computes): values carried by effect writes and any intent fields sourced via `from_input`.
+
+Intent fields sourced via `from_param` come from static parameters and
+do not require upstream graph edges.
 
 Validation enforces this distinction per destination Action input port type:
 
@@ -220,6 +230,14 @@ Validation enforces this distinction per destination Action input port type:
 > effects. Replay text now records that host-internal effects may be
 > replay-realized for determinism, while truly external effects are
 > verified rather than re-executed against live systems.
+> Sebastian freeze-authority authorization.
+>
+> **Amended 2026-03-16** by Codex (Docs)
+>
+> Widened the frozen effect-shape wording from write-only declarations
+> to write and intent declarations, and sharpened the nondeterminism
+> language so adapter vocabulary, host dispatch, and prod boundary
+> channel realization are distinguished explicitly.
 > Sebastian freeze-authority authorization.
 
 ---
@@ -251,7 +269,8 @@ Within an evaluation pass:
 - No internal randomness is permitted.
 - No hidden mutable state is permitted.
 
-External nondeterminism is handled at the adapter boundary.
+External nondeterminism enters through declared adapter inputs and
+leaves through post-episode host dispatch to prod boundary channels.
 
 For Triggers: determinism means identical behavior given identical inputs (triggers are stateless).
 For Actions: determinism means identical command emission given identical trigger events and parameters.
@@ -283,3 +302,4 @@ direct cyclic wiring.
 |---------|------|--------|---------|
 | v0 | 2025-12-28 | Original | Initial freeze |
 | v0.1 | 2026-03-04 | Claude (Structural Auditor) | §6 rewritten to document dual non-causal Action outputs (outcome + effects), runtime-to-host effect lifecycle, adapter-bound cross-episode context flow, and per-port wiring constraints for Action gating vs scalar payload. Aligned with ontology.md §2.4. Sebastian override authorization. |
+| v0.2 | 2026-03-16 | Codex (Docs) | §6 widened from write-only effect wording to write + intent declarations, and §8 sharpened the external nondeterminism boundary to distinguish adapter vocabulary from host dispatch and prod boundary channel realization. Sebastian freeze-authority authorization. |

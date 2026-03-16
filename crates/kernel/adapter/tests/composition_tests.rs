@@ -1,9 +1,12 @@
 use ergo_adapter::composition::{
     validate_action_adapter_composition, validate_capture_format,
     validate_source_adapter_composition, ContextRequirement, SourceRequires,
+    CompositionError,
 };
 use ergo_adapter::provides::{AdapterProvides, ContextKeyProvision};
-use ergo_runtime::action::{ActionEffects, ActionWriteSpec, IntentSpec};
+use ergo_runtime::action::{
+    ActionEffects, ActionWriteSpec, IntentFieldSpec, IntentMirrorWriteSpec, IntentSpec,
+};
 use ergo_runtime::cluster::ParameterValue;
 use ergo_runtime::common::{ErrorInfo, ValueType};
 use std::collections::{HashMap, HashSet};
@@ -27,6 +30,7 @@ fn make_adapter_provides(keys: Vec<(&str, &str)>) -> AdapterProvides {
         context,
         events: HashSet::new(),
         effects: HashSet::new(),
+        effect_schemas: HashMap::new(),
         event_schemas: HashMap::new(),
         capture_format_version: "1".to_string(),
         adapter_fingerprint: "adapter:test@1.0.0;sha256:test".to_string(),
@@ -57,10 +61,24 @@ fn make_adapter_provides_with_effects(
         context,
         events: HashSet::new(),
         effects,
+        effect_schemas: HashMap::new(),
         event_schemas: HashMap::new(),
         capture_format_version: "1".to_string(),
         adapter_fingerprint: "adapter:test@1.0.0;sha256:test".to_string(),
     }
+}
+
+fn make_adapter_provides_with_effect_schemas(
+    keys: Vec<(&str, &str, bool)>,
+    effects: Vec<&str>,
+    effect_schemas: Vec<(&str, serde_json::Value)>,
+) -> AdapterProvides {
+    let mut provides = make_adapter_provides_with_effects(keys, effects);
+    provides.effect_schemas = effect_schemas
+        .into_iter()
+        .map(|(name, schema)| (name.to_string(), schema))
+        .collect();
+    provides
 }
 
 fn make_source_requires(keys: Vec<(&str, ValueType, bool)>) -> SourceRequires {
@@ -211,6 +229,226 @@ fn comp_17_missing_intent_effect_rejected() {
 
     let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
     assert_comp(&err, "COMP-17", Some("$.effects.intents[0].name"));
+}
+
+#[test]
+fn comp_14_mirror_writes_require_set_context_acceptance() {
+    let adapter = make_adapter_provides_with_effects(
+        vec![("order_symbol", "String", true)],
+        vec!["place_order"],
+    );
+    let effects = ActionEffects {
+        writes: vec![],
+        intents: vec![IntentSpec {
+            name: "place_order".to_string(),
+            fields: vec![IntentFieldSpec {
+                name: "symbol".to_string(),
+                value_type: ValueType::String,
+                from_input: Some("symbol".to_string()),
+                from_param: None,
+            }],
+            mirror_writes: vec![IntentMirrorWriteSpec {
+                name: "order_symbol".to_string(),
+                value_type: ValueType::String,
+                from_field: "symbol".to_string(),
+            }],
+        }],
+    };
+
+    let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
+    assert_comp(&err, "COMP-14", Some("$.effects.writes"));
+}
+
+#[test]
+fn comp_18_missing_payload_schema_rejected() {
+    let adapter = make_adapter_provides_with_effects(vec![], vec!["place_order"]);
+    let effects = ActionEffects {
+        writes: vec![],
+        intents: vec![IntentSpec {
+            name: "place_order".to_string(),
+            fields: vec![IntentFieldSpec {
+                name: "symbol".to_string(),
+                value_type: ValueType::String,
+                from_input: Some("symbol".to_string()),
+                from_param: None,
+            }],
+            mirror_writes: vec![],
+        }],
+    };
+
+    let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
+    assert_comp(&err, "COMP-18", Some("$.effects.intents[0].fields"));
+}
+
+#[test]
+fn comp_18_and_comp_19_doc_anchors_point_to_action_manifest() {
+    let missing = CompositionError::MissingIntentPayloadSchema {
+        kind: "place_order".to_string(),
+        index: 0,
+    };
+    assert_eq!(
+        missing.doc_anchor(),
+        "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-18"
+    );
+
+    let incompatible = CompositionError::IntentPayloadSchemaIncompatible {
+        kind: "place_order".to_string(),
+        index: 0,
+        detail: "mismatch".to_string(),
+    };
+    assert_eq!(
+        incompatible.doc_anchor(),
+        "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-19"
+    );
+}
+
+#[test]
+fn comp_intent_schema_compatibility_valid_pair_passes() {
+    let adapter = make_adapter_provides_with_effect_schemas(
+        vec![],
+        vec!["place_order"],
+        vec![(
+            "place_order",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "qty": {"type": "number"}
+                },
+                "required": ["symbol", "qty"],
+                "additionalProperties": false
+            }),
+        )],
+    );
+    let effects = ActionEffects {
+        writes: vec![],
+        intents: vec![IntentSpec {
+            name: "place_order".to_string(),
+            fields: vec![
+                IntentFieldSpec {
+                    name: "symbol".to_string(),
+                    value_type: ValueType::String,
+                    from_input: Some("symbol".to_string()),
+                    from_param: None,
+                },
+                IntentFieldSpec {
+                    name: "qty".to_string(),
+                    value_type: ValueType::Number,
+                    from_input: Some("qty".to_string()),
+                    from_param: None,
+                },
+            ],
+            mirror_writes: vec![],
+        }],
+    };
+
+    assert!(validate_action_adapter_composition(&effects, &adapter, &no_params()).is_ok());
+}
+
+#[test]
+fn comp_19_required_field_mismatch_rejected() {
+    let adapter = make_adapter_provides_with_effect_schemas(
+        vec![],
+        vec!["place_order"],
+        vec![(
+            "place_order",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "qty": {"type": "number"}
+                },
+                "required": ["symbol", "qty"],
+                "additionalProperties": false
+            }),
+        )],
+    );
+    let effects = ActionEffects {
+        writes: vec![],
+        intents: vec![IntentSpec {
+            name: "place_order".to_string(),
+            fields: vec![IntentFieldSpec {
+                name: "symbol".to_string(),
+                value_type: ValueType::String,
+                from_input: Some("symbol".to_string()),
+                from_param: None,
+            }],
+            mirror_writes: vec![],
+        }],
+    };
+
+    let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
+    assert_comp(&err, "COMP-19", Some("$.effects.intents[0].fields"));
+}
+
+#[test]
+fn comp_19_field_type_mismatch_rejected() {
+    let adapter = make_adapter_provides_with_effect_schemas(
+        vec![],
+        vec!["place_order"],
+        vec![(
+            "place_order",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "number"}
+                },
+                "required": ["symbol"],
+                "additionalProperties": false
+            }),
+        )],
+    );
+    let effects = ActionEffects {
+        writes: vec![],
+        intents: vec![IntentSpec {
+            name: "place_order".to_string(),
+            fields: vec![IntentFieldSpec {
+                name: "symbol".to_string(),
+                value_type: ValueType::String,
+                from_input: Some("symbol".to_string()),
+                from_param: None,
+            }],
+            mirror_writes: vec![],
+        }],
+    };
+
+    let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
+    assert_comp(&err, "COMP-19", Some("$.effects.intents[0].fields"));
+}
+
+#[test]
+fn comp_19_unsupported_schema_keyword_rejected_fail_closed() {
+    let adapter = make_adapter_provides_with_effect_schemas(
+        vec![],
+        vec!["place_order"],
+        vec![(
+            "place_order",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"}
+                },
+                "required": ["symbol"],
+                "oneOf": [{"required": ["symbol"]}]
+            }),
+        )],
+    );
+    let effects = ActionEffects {
+        writes: vec![],
+        intents: vec![IntentSpec {
+            name: "place_order".to_string(),
+            fields: vec![IntentFieldSpec {
+                name: "symbol".to_string(),
+                value_type: ValueType::String,
+                from_input: Some("symbol".to_string()),
+                from_param: None,
+            }],
+            mirror_writes: vec![],
+        }],
+    };
+
+    let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
+    assert_comp(&err, "COMP-19", Some("$.effects.intents[0].fields"));
 }
 
 // --- $key resolution tests for source composition ---

@@ -130,6 +130,7 @@ mod tests {
             )]),
             events: HashSet::new(),
             effects: effects.iter().map(|item| item.to_string()).collect(),
+            effect_schemas: HashMap::new(),
             event_schemas: HashMap::new(),
             capture_format_version: "v2".to_string(),
             adapter_fingerprint: "adapter:test".to_string(),

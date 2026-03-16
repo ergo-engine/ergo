@@ -18,7 +18,7 @@ use ergo_supervisor::{
     NO_ADAPTER_PROVENANCE,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -214,6 +214,7 @@ impl std::error::Error for HostRunError {}
 pub enum HostReplayError {
     Hosted(HostedReplayError),
     GraphIdMismatch { expected: String, got: String },
+    ExternalKindsNotRepresentable { missing: Vec<String> },
     Setup(String),
 }
 
@@ -225,6 +226,11 @@ impl std::fmt::Display for HostReplayError {
                 f,
                 "graph_id mismatch (expected '{}', got '{}')",
                 expected, got
+            ),
+            Self::ExternalKindsNotRepresentable { missing } => write!(
+                f,
+                "capture includes external effect kinds not representable by replay graph ownership surface: [{}]",
+                missing.join(", ")
             ),
             Self::Setup(message) => write!(f, "{message}"),
         }
@@ -572,6 +578,31 @@ fn host_replay_setup_error(message: impl Into<String>) -> HostReplayError {
     HostReplayError::Setup(message.into())
 }
 
+fn captured_external_effect_kinds(bundle: &CaptureBundle) -> HashSet<String> {
+    bundle
+        .decisions
+        .iter()
+        .flat_map(|decision| decision.effects.iter())
+        .filter_map(|effect| {
+            let kind = effect.effect.kind.as_str();
+            (kind != "set_context").then(|| kind.to_string())
+        })
+        .collect()
+}
+
+fn replay_owned_external_kinds(
+    runtime: &RuntimeHandle,
+    adapter_provides: &AdapterProvides,
+    handler_kinds: &BTreeSet<String>,
+) -> HashSet<String> {
+    runtime
+        .graph_emittable_effect_kinds()
+        .into_iter()
+        .filter(|kind| adapter_provides.effects.contains(kind))
+        .filter(|kind| !handler_kinds.contains(kind))
+        .collect()
+}
+
 /// Canonical run API for clients. Host owns graph loading, expansion, adapter composition, and runner setup.
 // Allow non-Send/Sync in Arc: CoreRegistries and CorePrimitiveCatalog contain non-Send/Sync types.
 #[allow(clippy::arc_with_non_send_sync)]
@@ -637,6 +668,7 @@ fn run_graph_from_paths_internal(
         runtime_provenance,
         adapter_setup.adapter_config,
         egress_config,
+        None,
     )
     .map_err(|err| {
         HostRunError::StepFailed(format!("failed to initialize canonical host runner: {err}"))
@@ -722,8 +754,20 @@ fn replay_graph_from_paths_internal(
         Arc::new(expanded),
         Arc::new(catalog),
         Arc::new(registries),
-        adapter_setup.adapter_provides,
+        adapter_setup.adapter_provides.clone(),
     );
+    let handler_kinds = BTreeSet::from(["set_context".to_string()]);
+    let replay_external_kinds =
+        replay_owned_external_kinds(&runtime, &adapter_setup.adapter_provides, &handler_kinds);
+    let captured_external_kinds = captured_external_effect_kinds(&bundle);
+    let mut missing: Vec<String> = captured_external_kinds
+        .difference(&replay_external_kinds)
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        missing.sort();
+        return Err(HostReplayError::ExternalKindsNotRepresentable { missing });
+    }
     let runner = HostedRunner::new(
         GraphId::new(bundle.graph_id.as_str().to_string()),
         bundle.config.clone(),
@@ -731,6 +775,7 @@ fn replay_graph_from_paths_internal(
         runtime_provenance.clone(),
         adapter_setup.adapter_config,
         None,
+        Some(replay_external_kinds),
     )
     .map_err(|err| {
         host_replay_setup_error(format!(
@@ -1414,7 +1459,7 @@ fn finalize_run_summary(
     graph_path: &Path,
     capture_output: Option<PathBuf>,
     pretty_capture: bool,
-    runner: HostedRunner,
+    mut runner: HostedRunner,
     event_count: usize,
     episode_event_counts: Vec<(String, usize)>,
 ) -> Result<RunSummary, HostRunError> {
@@ -1439,7 +1484,13 @@ fn finalize_run_summary(
         .ensure_no_pending_egress_acks()
         .map_err(|err| HostRunError::StepFailed(format!("egress pending-ack invariant: {err}")))?;
 
-    let (bundle, mut egress_runtime) = runner.into_capture_bundle_and_egress();
+    // Freeze egress lifecycle before capture finalization so late channel activity
+    // cannot alter dispatch truth after artifact write.
+    runner
+        .stop_egress_channels()
+        .map_err(|err| HostRunError::DriverIo(format!("stop egress channels: {err}")))?;
+
+    let bundle = runner.into_capture_bundle();
     let capture_path = capture_output.unwrap_or_else(|| {
         let stem = graph_path
             .file_stem()
@@ -1454,12 +1505,6 @@ fn finalize_run_summary(
     };
     write_capture_bundle(&capture_path, &bundle, style)
         .map_err(|err| HostRunError::Io(format!("write capture bundle: {err}")))?;
-
-    if let Some(runtime) = egress_runtime.as_mut() {
-        runtime
-            .shutdown_channels()
-            .map_err(|err| HostRunError::DriverIo(format!("stop egress channels: {err}")))?;
-    }
 
     let invoked = bundle
         .decisions
@@ -1535,6 +1580,12 @@ pub fn run_fixture(request: RunFixtureRequest) -> Result<RunFixtureResult, HostR
 mod tests {
     use super::*;
     use ergo_adapter::ExternalEventKind;
+    use ergo_runtime::action::{
+        ActionEffects, ActionKind, ActionOutcome, ActionPrimitive, ActionPrimitiveManifest,
+        ActionValue, ActionValueType, Cardinality as ActionCardinality,
+        ExecutionSpec as ActionExecutionSpec, InputSpec as ActionInputSpec, IntentFieldSpec,
+        IntentSpec, OutputSpec as ActionOutputSpec, StateSpec as ActionStateSpec,
+    };
     use ergo_runtime::catalog::CatalogBuilder;
     use ergo_runtime::common::{Value, ValueType};
     use ergo_runtime::runtime::ExecutionContext;
@@ -1544,15 +1595,20 @@ mod tests {
         SourceRequires, StateSpec as SourceStateSpec,
     };
     use serde_json::json;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
+    use crate::egress::{EgressChannelConfig, EgressRoute};
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     struct InjectedNumberSource {
         manifest: SourcePrimitiveManifest,
         output: f64,
+    }
+
+    struct InjectedIntentAction {
+        manifest: ActionPrimitiveManifest,
     }
 
     impl InjectedNumberSource {
@@ -1597,9 +1653,77 @@ mod tests {
         }
     }
 
+    impl InjectedIntentAction {
+        fn new() -> Self {
+            Self {
+                manifest: ActionPrimitiveManifest {
+                    id: "injected_intent_action".to_string(),
+                    version: "0.1.0".to_string(),
+                    kind: ActionKind::Action,
+                    inputs: vec![
+                        ActionInputSpec {
+                            name: "event".to_string(),
+                            value_type: ActionValueType::Event,
+                            required: true,
+                            cardinality: ActionCardinality::Single,
+                        },
+                        ActionInputSpec {
+                            name: "qty".to_string(),
+                            value_type: ActionValueType::Number,
+                            required: true,
+                            cardinality: ActionCardinality::Single,
+                        },
+                    ],
+                    outputs: vec![ActionOutputSpec {
+                        name: "outcome".to_string(),
+                        value_type: ActionValueType::Event,
+                    }],
+                    parameters: vec![],
+                    effects: ActionEffects {
+                        writes: vec![],
+                        intents: vec![IntentSpec {
+                            name: "place_order".to_string(),
+                            fields: vec![IntentFieldSpec {
+                                name: "qty".to_string(),
+                                value_type: ValueType::Number,
+                                from_input: Some("qty".to_string()),
+                                from_param: None,
+                            }],
+                            mirror_writes: vec![],
+                        }],
+                    },
+                    execution: ActionExecutionSpec {
+                        deterministic: true,
+                        retryable: false,
+                    },
+                    state: ActionStateSpec { allowed: false },
+                    side_effects: true,
+                },
+            }
+        }
+    }
+
+    impl ActionPrimitive for InjectedIntentAction {
+        fn manifest(&self) -> &ActionPrimitiveManifest {
+            &self.manifest
+        }
+
+        fn execute(
+            &self,
+            _inputs: &HashMap<String, ActionValue>,
+            _parameters: &HashMap<String, ergo_runtime::action::ParameterValue>,
+        ) -> HashMap<String, ActionValue> {
+            HashMap::from([(
+                "outcome".to_string(),
+                ActionValue::Event(ActionOutcome::Completed),
+            )])
+        }
+    }
+
     fn build_injected_runtime_surfaces(output: f64) -> RuntimeSurfaces {
         let mut builder = CatalogBuilder::new();
         builder.add_source(Box::new(InjectedNumberSource::new(output)));
+        builder.add_action(Box::new(InjectedIntentAction::new()));
         let (registries, catalog) = builder
             .build()
             .expect("injected runtime surfaces should build");
@@ -1614,6 +1738,114 @@ mod tests {
         let path = base.join(name);
         fs::write(&path, contents)?;
         Ok(path)
+    }
+
+    fn write_intent_graph(base: &Path, name: &str, graph_id: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        write_temp_file(
+            base,
+            name,
+            &format!(
+                r#"
+kind: cluster
+id: {graph_id}
+version: "0.1.0"
+nodes:
+  gate:
+    impl: const_bool@0.1.0
+    params:
+      value: true
+  emit:
+    impl: emit_if_true@0.1.0
+  qty:
+    impl: injected_number_source@0.1.0
+  place:
+    impl: injected_intent_action@0.1.0
+edges:
+  - "gate.value -> emit.input"
+  - "emit.event -> place.event"
+  - "qty.value -> place.qty"
+outputs:
+  outcome: place.outcome
+"#
+            ),
+        )
+    }
+
+    fn write_intent_adapter_manifest(base: &Path, name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        write_temp_file(
+            base,
+            name,
+            r#"
+kind: adapter
+id: replay_intent_adapter
+version: 1.0.0
+runtime_compatibility: 0.1.0
+context_keys: []
+event_kinds:
+  - name: price_bar
+    payload_schema:
+      type: object
+      properties:
+        price: { type: number }
+      additionalProperties: false
+accepts:
+  effects:
+    - name: place_order
+      payload_schema:
+        type: object
+        properties:
+          qty: { type: number }
+        required: [qty]
+        additionalProperties: false
+capture:
+  format_version: "1"
+  fields:
+    - event.price_bar
+    - meta.adapter_id
+    - meta.adapter_version
+    - meta.timestamp
+"#,
+        )
+    }
+
+    fn write_egress_ack_script(base: &Path, name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        write_temp_file(
+            base,
+            name,
+            r#"#!/bin/sh
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"intent"'*)
+      intent_id=$(printf '%s' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
+      printf '{"type":"intent_ack","intent_id":"%s","status":"accepted","acceptance":"durable","egress_ref":"broker-ref-1"}\n' "$intent_id"
+      ;;
+    *'"type":"end"'*)
+      exit 0
+      ;;
+  esac
+done
+"#,
+        )
+    }
+
+    fn make_intent_egress_config(script_path: &Path) -> EgressConfig {
+        EgressConfig {
+            default_ack_timeout: Duration::from_millis(250),
+            channels: BTreeMap::from([(
+                "broker".to_string(),
+                EgressChannelConfig::Process {
+                    command: vec!["/bin/sh".to_string(), script_path.display().to_string()],
+                },
+            )]),
+            routes: BTreeMap::from([(
+                "place_order".to_string(),
+                EgressRoute {
+                    channel: "broker".to_string(),
+                    ack_timeout: None,
+                },
+            )]),
+        }
     }
 
     fn write_process_driver_script(
@@ -1901,6 +2133,233 @@ outputs:
 
         assert_eq!(replay.graph_id.as_str(), "host_injected_replay");
         assert_eq!(replay.events, 1);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn live_run_with_external_intent_graph_requires_egress_config() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-live-intent-without-egress-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_intent_live_no_egress")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let fixture = write_temp_file(
+            &temp_dir,
+            "fixture.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\",\"semantic_kind\":\"price_bar\",\"payload\":{\"price\":100.0}}}\n",
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let outcome = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Fixture { path: fixture },
+                adapter_path: Some(adapter),
+                egress_config: None,
+                capture_output: Some(capture),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(42.0),
+        );
+
+        match outcome {
+            Err(HostRunError::StepFailed(detail)) => {
+                assert!(
+                    detail.contains("handler coverage failed"),
+                    "unexpected setup error: {detail}"
+                );
+            }
+            other => panic!("expected step-failed setup error, got {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn replay_from_paths_handles_external_effect_capture_without_live_egress(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-replay-intent-no-egress-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_intent_replay")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let egress_script = write_egress_ack_script(&temp_dir, "egress.sh")?;
+        let driver = write_process_driver_script(
+            &temp_dir,
+            "driver.sh",
+            &[
+                serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+                serde_json::to_string(&json!({
+                    "type":"event",
+                    "event": HostedEvent {
+                        event_id: "evt1".to_string(),
+                        kind: ExternalEventKind::Command,
+                        at: EventTime::default(),
+                        semantic_kind: Some("price_bar".to_string()),
+                        payload: Some(json!({"price": 101.5}))
+                    }
+                }))?,
+                serde_json::to_string(&json!({"type":"end"}))?,
+            ],
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let outcome = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph.clone(),
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Process {
+                    command: vec!["/bin/sh".to_string(), driver.display().to_string()],
+                },
+                adapter_path: Some(adapter.clone()),
+                egress_config: Some(make_intent_egress_config(&egress_script)),
+                capture_output: Some(capture.clone()),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(42.0),
+        )?;
+        let summary = match outcome {
+            RunOutcome::Completed(summary) => summary,
+            RunOutcome::Interrupted(interrupted) => {
+                return Err(format!("expected completed run, got interrupted({})", interrupted.reason).into())
+            }
+        };
+        assert!(summary.capture_path.exists());
+
+        let bundle_data = fs::read_to_string(&capture)?;
+        let bundle: CaptureBundle = serde_json::from_str(&bundle_data)?;
+        let decision = bundle.decisions.first().expect("capture decision");
+        let external_effect = decision
+            .effects
+            .iter()
+            .find(|effect| effect.effect.kind != "set_context")
+            .expect("capture should contain external effect");
+        assert!(
+            external_effect.effect.writes.is_empty(),
+            "external effect writes must be empty"
+        );
+        assert!(
+            !external_effect.effect.intents.is_empty(),
+            "external effect must carry intents"
+        );
+        let durable_ack = decision
+            .intent_acks
+            .iter()
+            .find(|ack| ack.status == "accepted" && ack.acceptance == "durable")
+            .expect("capture should include durable-accept ack");
+        assert_eq!(durable_ack.channel, "broker");
+
+        let replay = replay_graph_from_paths_with_surfaces(
+            ReplayGraphFromPathsRequest {
+                capture_path: capture,
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: Some(adapter),
+            },
+            build_injected_runtime_surfaces(42.0),
+        )?;
+        assert_eq!(replay.events, 1);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn replay_from_paths_fails_when_capture_external_kind_is_not_representable(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-replay-intent-kind-mismatch-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_intent_replay_kind_mismatch")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let egress_script = write_egress_ack_script(&temp_dir, "egress.sh")?;
+        let driver = write_process_driver_script(
+            &temp_dir,
+            "driver.sh",
+            &[
+                serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+                serde_json::to_string(&json!({
+                    "type":"event",
+                    "event": HostedEvent {
+                        event_id: "evt1".to_string(),
+                        kind: ExternalEventKind::Command,
+                        at: EventTime::default(),
+                        semantic_kind: Some("price_bar".to_string()),
+                        payload: Some(json!({"price": 101.5}))
+                    }
+                }))?,
+                serde_json::to_string(&json!({"type":"end"}))?,
+            ],
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let _ = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph.clone(),
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Process {
+                    command: vec!["/bin/sh".to_string(), driver.display().to_string()],
+                },
+                adapter_path: Some(adapter.clone()),
+                egress_config: Some(make_intent_egress_config(&egress_script)),
+                capture_output: Some(capture.clone()),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(42.0),
+        )?;
+
+        let mut bundle: CaptureBundle = serde_json::from_str(&fs::read_to_string(&capture)?)?;
+        let effect = bundle
+            .decisions
+            .first_mut()
+            .and_then(|decision| decision.effects.iter_mut().find(|effect| effect.effect.kind == "place_order"))
+            .expect("captured external place_order effect");
+        effect.effect.kind = "cancel_order".to_string();
+        if let Some(intent) = effect.effect.intents.first_mut() {
+            intent.kind = "cancel_order".to_string();
+        }
+        fs::write(&capture, serde_json::to_string_pretty(&bundle)?)?;
+
+        let err = replay_graph_from_paths_with_surfaces(
+            ReplayGraphFromPathsRequest {
+                capture_path: capture,
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: Some(adapter),
+            },
+            build_injected_runtime_surfaces(42.0),
+        )
+        .expect_err("replay setup must fail for unrepresentable external effect kinds");
+
+        match err {
+            HostReplayError::ExternalKindsNotRepresentable { missing } => {
+                assert!(
+                    missing.iter().any(|kind| kind == "cancel_order"),
+                    "expected cancel_order in missing kinds, got {missing:?}"
+                );
+            }
+            other => panic!("expected ExternalKindsNotRepresentable, got {other:?}"),
+        }
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())

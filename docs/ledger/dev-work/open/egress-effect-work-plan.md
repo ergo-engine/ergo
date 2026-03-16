@@ -32,12 +32,12 @@ These decisions constrain everything below. Read them first.
 | Decision | File | What it settles |
 | --- | --- | --- |
 | Effect dispatch and channel roles | `decisions/effect-dispatch-and-channel-roles.md` | Four-role lifecycle (Action → Adapter → Host → Channel). Replay split doctrine. Ingress/egress terminology. |
-| v1 external effect intent model | `decisions/v1-external-effect-intent-model.md` | Option A (first-class intents). Two-correlated-projections. Manifest `effects.intents`. Mirror writes. Dispatch ordering. Egress handshake as classification. Startup coverage guarantee. |
+| v1 external effect intent model | `decisions/v1-external-effect-intent-model.md` | Option A (first-class intents). Two-correlated-projections. Manifest `effects.intents`. Mirror writes. Dispatch ordering. Route-table ownership + ready-handshake capability attestation. Startup coverage guarantee. |
 | Intent payload shape | `decisions/intent-payload-shape.md` | Typed fields (`Vec<IntentField>`). JSON projection at egress boundary only. Registration-time validation. |
 | Intent ID semantics | `decisions/intent-id-semantics.md` | Deterministic SHA-256 derivation (`eid1:sha256:hex`). Length-prefixed inputs. Replay-safe. |
 | Egress ack model | `decisions/egress-ack-model.md` | Durable-accept. Host waits for durably-queued ack, not completion. Completion returns via ingress. |
 | Egress routing config | `decisions/egress-routing-config.md` | Hybrid: host run request canonical, file surfaces compile into it. BTreeMap route table. TOML for v0. |
-| Egress timing/lifecycle | `decisions/egress-timing-lifecycle.md` | Start before first event, per-step blocking dispatch+ack, capture before egress stop. |
+| Egress timing/lifecycle | `decisions/egress-timing-lifecycle.md` | Start before first event, per-step blocking dispatch+ack, quiesce/stop egress before capture finalization. |
 | Crash consistency | `decisions/crash-consistency.md` | At-most-once host dispatch, egress-owned post-ack, recording gap, v2 exactness path. |
 
 ## Classification Summary
@@ -252,6 +252,26 @@ These define how egress works from the user's perspective.
 
 These follow from Phase 2 decisions.
 
+#### 3x. Phase 3 remediation pass — CLOSED
+
+- **Type:** Coherent implementation hardening (no partial patches).
+- **What landed:**
+  - Canonical effect stream + ownership routing (internal
+    `set_context` vs external intent kinds).
+  - Metadata truth guard: metadata-less `execute` / `run` reject
+    intent-emitting graphs.
+  - Mirror-write coverage/composition drift closed.
+  - Startup intent-schema compatibility checks enforced (fail-closed).
+  - Ack lifecycle integrity: real pending-ack invariant, channel
+    quiesce on timeout/protocol/I/O failures, quiesce-before-capture
+    finalization ordering.
+  - Ready-handshake capability attestation:
+    `{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":[...]}`.
+  - Capture semantic boundary moved to **v3** (`CAPTURE_FORMAT_VERSION`),
+    with strict replay scoped to the same capture semantic version.
+- **Closed:** Workspace tests green after remediation (`cargo test
+  --workspace`).
+
 #### 3a. GW-EFX-3J — Egress failure and partial-apply semantics — DECISION RECORD
 
 - **The fork:** User-visible failure taxonomy for egress. Current
@@ -269,8 +289,10 @@ These follow from Phase 2 decisions.
 
 #### 3b. GW-EFX-3C — Egress channel provenance — DECISION RECORD
 
-- **The fork:** Current capture has adapter and runtime provenance
-  only. Adding egress provenance requires decisions:
+- **The fork:** Capture currently has adapter and runtime provenance.
+  Per-ack channel identity now exists in capture via
+  `CapturedIntentAck.channel`. The remaining question is run-level
+  egress provenance granularity and replay strictness. Decisions:
   - **Identity granularity:** Per-channel? Per-route-table? Per-run
     config hash?
   - **What's included:** Process path? Version? Config hash?
@@ -324,6 +346,7 @@ block and is not blocked by any row above.
 | 2 | 3D — routing config | Decision record | CLOSED |
 | 2 | 3E — timing | Downstream design | CLOSED |
 | 2 | 3I — crash consistency | Decision record | CLOSED |
+| 3 | 3x — remediation pass | Code/design hardening | CLOSED |
 | 3 | 3J — failure taxonomy | Decision record | Ready (2e done) |
 | 3 | 3C — egress provenance | Decision record | Ready (2c+2d done) |
 

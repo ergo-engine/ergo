@@ -18,10 +18,11 @@ dispatches post-episode, and channels realize boundary I/O. It did not
 define the concrete mechanism by which the graph produces external effect
 intents like `place_order`.
 
-The current system emits exactly one effect kind: `set_context`. The
-runtime hardcodes this in `execute.rs`. The action manifest schema
-supports only `effects.writes` (context key writes). There is no way for
-a user to author an Action that emits a first-class external intent.
+At decision time, the system emitted exactly one effect kind:
+`set_context`. The runtime hardcoded this in `execute.rs`, and the
+action manifest schema supported only `effects.writes` (context key
+writes). There was no way for a user to author an Action that emitted a
+first-class external intent.
 
 This decision defines the v1 model for external effect intents.
 
@@ -147,9 +148,16 @@ Intent emission is manifest-derived, not implementation-emitted:
 - Action implementations continue to return outputs only.
 - The runtime generically constructs intent records from the manifest
   `intents` declarations and the action's input snapshot.
-- The runtime emits intent records alongside existing write records.
+- The runtime emits a canonical effect stream:
+  - internal `set_context` effect (`writes` only, `intents=[]`)
+  - external effects keyed by real intent kind (`writes=[]`,
+    `intents` non-empty, each `intent.kind == effect.kind`)
 - The hardcoded assumption that effects are only `set_context` is
   removed.
+- Metadata-less execution paths (`execute` / `run`) reject
+  intent-emitting graphs. Intent emission requires metadata-aware
+  execution (`execute_with_metadata`) to derive deterministic
+  `intent_id` values from real `graph_id` / `event_id`.
 
 ### Adapter manifest
 
@@ -191,10 +199,10 @@ optionally keyed by `intent_id`.
 
 The system will not start a run if a graph can emit an intent kind for
 which no egress channel has declared coverage. This is enforced at run
-startup via the egress coverage mechanism defined by the route-table and
-handshake decisions. Therefore: if a decision was made during a run, the
-ability to act on that intent kind was true at run start under that
-mechanism.
+startup via route-table ownership checks plus ready-handshake capability
+attestation (`handled_kinds`). Therefore: if a decision was made during a
+run, the ability to act on that intent kind was true at run start under
+that mechanism.
 
 This is a startup-time guarantee, not a step-time delivery guarantee.
 
@@ -217,39 +225,23 @@ runtime code; emission is manifest-derived.
 
 ---
 
-## What This Decision Does NOT Resolve
+## Follow-On Resolution Status
 
-The following require their own decision records before implementation:
+Resolved after this decision:
 
-1. **ActionEffect v1 payload shape.** Current `ActionEffect` is
-   `kind: String` + `writes: Vec<EffectWrite>`. Needs a payload field
-   for non-write intents. Typed fields vs arbitrary JSON is undecided.
+1. **ActionEffect payload shape** — `intent-payload-shape.md`
+2. **`intent_id` semantics** — `intent-id-semantics.md`
+3. **Routing configuration** — `egress-routing-config.md`
+4. **Ack model** — `egress-ack-model.md`
+5. **Timing/lifecycle** — `egress-timing-lifecycle.md`
+6. **Crash consistency** — `crash-consistency.md`
+7. **Artifact policy on dispatch failure** — resolved inline as Option C
+   in GW-EFX-3B implementation.
 
-2. **Correlation semantics.** `intent_id` generation, format, and
-   uniqueness scope.
+Still open in the work plan:
 
-3. **Host route-table schema.** Format, location, and startup validation
-   for the effect-kind-to-egress-channel mapping.
-
-4. **Capture provenance extension.** Egress channel identity and version
-   in capture artifacts, and replay validation of same.
-
-5. **Egress acknowledgment model.** What does the host wait for:
-   accepted intent, completed work, or async confirmation via ingress?
-
-6. **Egress failure taxonomy.** `InterruptionReason` is ingress-centric
-   today. Egress needs its own failure vocabulary.
-
-7. **Crash consistency and delivery guarantees.** Best-effort, at-most-
-   once, at-least-once with dedup, or egress-owned idempotency.
-
-8. **Artifact-preserving policy for post-step egress failure.** Whether
-   partial capture is written or the run hard-errors. Handled as an
-   inline fork within GW-EFX-3B implementation, not as a standalone
-   decision record.
-
-9. **Atomicity / partial-apply semantics.** Whether partial delivery
-   across multiple intent targets is acceptable.
+1. **Egress provenance extension** (GW-EFX-3C)
+2. **Egress failure taxonomy / partial-apply semantics** (GW-EFX-3J)
 
 ---
 

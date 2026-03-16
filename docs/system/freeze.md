@@ -1,7 +1,7 @@
 ---
 Authority: FROZEN
 Version: v0
-Last Amended: 2025-12-28
+Last Amended: 2026-03-16
 Scope: What is frozen vs patchable, version boundaries
 Verified Against Tag: v1.0.0-alpha.1
 Change Rule: v1 only
@@ -151,9 +151,21 @@ Behaviors requiring memory (once, count, latch, debounce, edge detection) are
 ### 2.7 Determinism
 
 - Given identical inputs and identical declared node state, node outputs must be identical.
-- External nondeterminism is confined to the adapter boundary.
+- External nondeterminism is confined to the adapter vocabulary
+  boundary. Host dispatch and prod boundary channel realization operate
+  after the episode within the deterministic capture/replay contract.
 
 📍 Defined in: `execution.md`, `adapter.md`
+
+#### Amendment Record
+
+> **Amended 2026-03-16** by Codex (Docs)
+>
+> Sharpened the determinism wording so "adapter boundary" refers to the
+> declarative vocabulary boundary, while host dispatch and prod boundary
+> channel realization remain post-episode operational mechanisms within
+> the capture/replay contract.
+> Sebastian freeze-authority authorization.
 
 ### 2.8 Trigger vs Risk Distinction
 

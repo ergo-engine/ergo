@@ -36,6 +36,16 @@
 | ACT-21 | $key write references must be String type | action.md #ACT-21 | — | — | ✓ | act_21_dollar_key_write_referencing_non_string_param_rejected |
 | ACT-22 | Write from_input references declared input | action.md #ACT-22 | — | — | ✓ | act_22_from_input_not_found_rejected |
 | ACT-23 | Write from_input type compatible with write type | action.md #ACT-23 | — | — | ✓ | act_23_from_input_event_type_rejected |
+| ACT-24 | Intent names unique | action.md #ACT-24 | — | — | ✓ | intent_validation_duplicate_intent_names_rejected |
+| ACT-25 | Intent field names unique within each intent | action.md #ACT-25 | — | — | ✓ | intent_validation_duplicate_field_names_rejected |
+| ACT-26 | Intent field declares a source | action.md #ACT-26 | — | — | ✓ | intent_validation_neither_source_set_rejected |
+| ACT-27 | Intent field declares only one source | action.md #ACT-27 | — | — | ✓ | intent_validation_both_sources_set_rejected |
+| ACT-28 | Intent field from_input references declared input | action.md #ACT-28 | — | — | ✓ | — |
+| ACT-29 | Intent field from_input type compatible with field type | action.md #ACT-29 | — | — | ✓ | — |
+| ACT-30 | Intent field from_param references declared parameter | action.md #ACT-30 | — | — | ✓ | — |
+| ACT-31 | Intent field from_param type compatible with field type | action.md #ACT-31 | — | — | ✓ | — |
+| ACT-32 | Mirror write from_field references declared intent field | action.md #ACT-32 | — | — | ✓ | intent_validation_from_field_missing_rejected |
+| ACT-33 | Mirror write type matches referenced field type | action.md #ACT-33 | — | — | ✓ | intent_validation_from_field_type_mismatch_rejected |
 
 ### Notes
 
@@ -43,6 +53,7 @@
 - **ACT-19:** Enforced in `action/registry.rs::validate_manifest` by rejecting manifests where a parameter default value type does not match the declared parameter type (`ActionValidationError::InvalidParameterType`).
 - **ACT-20/ACT-21:** Registration-time cross-check for parameter-bound write names (`$key` convention). Ensures `$`-prefixed write spec names reference declared String-typed parameters.
 - **ACT-22/ACT-23:** Registration-time checks for write payload binding (`from_input`) and scalar type compatibility. These define the declarative "what" channel for action writes; they do not by themselves authorize upstream wiring.
+- **ACT-24 through ACT-33:** Registration-time validation of first-class intent declarations. These checks enforce unique intent names, unique field names, exactly-one-source semantics for each field (`from_input` xor `from_param`), source existence/type compatibility, and `mirror_writes[].from_field` integrity.
 - **Registration enforcement location:** `crates/kernel/runtime/src/action/registry.rs`
 - **Registration test location:** `crates/kernel/runtime/src/action/registry.rs`
 - **Validation test location:** `crates/kernel/runtime/src/runtime/tests.rs`

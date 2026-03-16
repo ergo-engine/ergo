@@ -339,7 +339,7 @@ mod tests {
 
     fn sample_bundle() -> CaptureBundle {
         CaptureBundle {
-            capture_version: "v2".to_string(),
+            capture_version: crate::CAPTURE_FORMAT_VERSION.to_string(),
             graph_id: GraphId::new("capture_test"),
             config: Constraints::default(),
             events: Vec::new(),
@@ -489,7 +489,7 @@ mod tests {
         };
 
         let bundle = Arc::new(Mutex::new(CaptureBundle {
-            capture_version: "v2".to_string(),
+            capture_version: crate::CAPTURE_FORMAT_VERSION.to_string(),
             graph_id: GraphId::new("hash_test"),
             config: Constraints::default(),
             events: Vec::new(),

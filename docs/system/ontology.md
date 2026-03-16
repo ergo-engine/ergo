@@ -1,7 +1,7 @@
 ---
 Authority: FROZEN
 Version: v0
-Last Amended: 2026-03-15
+Last Amended: 2026-03-16
 Scope: Four primitives, wiring matrix, causal roles
 Verified Against Tag: v1.0.0-alpha.1
 Change Rule: v1 only
@@ -139,8 +139,9 @@ Action establishes agency, not logic or policy.
 >
 > Prior language mentioned only "acknowledgment records" without distinguishing them from
 > effect descriptions. This amendment clarifies that Actions emit two types of non-causal
-> outputs: acknowledgments (to orchestrator) and effects (to adapter). Both are non-causal;
-> effects enable the cross-episode state pattern described in execution.md §5.4.
+> outputs: acknowledgments (to orchestrator) and effects (to the host boundary for
+> dispatch). Both are non-causal; effects enable the cross-episode state pattern described
+> in execution.md §5.4.
 > Sebastian override authorization.
 >
 > **Amended 2026-03-15** by Codex (Docs)
@@ -149,6 +150,13 @@ Action establishes agency, not logic or policy.
 > not direct graph-time world work. Adapters declare the accepted
 > contract, host dispatches after the episode, and true external I/O
 > belongs to prod boundary channels rather than the graph itself.
+> Sebastian freeze-authority authorization.
+>
+> **Amended 2026-03-16** by Codex (Docs)
+>
+> Corrected the earlier amendment note so the historical wording no
+> longer implies that effect descriptions are executed "to adapter"
+> rather than dispatched at the host boundary.
 > Sebastian freeze-authority authorization.
 
 ---

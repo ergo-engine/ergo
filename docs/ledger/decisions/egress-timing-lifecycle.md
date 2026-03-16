@@ -27,7 +27,7 @@ the step pipeline and capture artifact write.
 
 Egress processes launch when the run begins, before the first ingress
 event. After the last step, host verifies no pending acks remain,
-writes capture, then stops egress with a bounded graceful shutdown.
+quiesces/stops egress with bounded shutdown, then writes capture.
 
 ### Option (ii) — Lazy start on first intent (rejected)
 
@@ -116,16 +116,17 @@ step's acks were resolved before the next step. End-of-run is:
 
 1. **Invariant check:** Assert zero pending acks. (This should always
    be true under per-step blocking. If violated, it's a bug.)
-2. **Write capture artifact.** All steps, all effects, all ack
-   records are finalized.
-3. **Stop egress channels.** Send shutdown signal (protocol TBD —
+2. **Stop/quiesce egress channels.** Send shutdown signal (protocol TBD —
    may mirror ingress `end` message). Bounded graceful shutdown with
    timeout. If egress doesn't exit within the shutdown timeout, force
    kill.
+3. **Write capture artifact.** All steps, all effects, all ack
+   records are finalized after egress is quiesced, so late channel
+   frames cannot mutate truth after artifact write.
 
-Capture write happens BEFORE egress stop. The capture must be
-finalized while the run state is complete and consistent, not after
-a potentially messy process teardown.
+Capture write happens AFTER egress quiesce/stop. This freezes external
+channel activity before artifact finalization and prevents post-capture
+ack drift.
 
 ### Replay behavior
 
@@ -146,9 +147,12 @@ This is already enforced by the `StepMode` gate from Phase 1
 ## What This Decides
 
 - Egress starts before first ingress event, stops after capture write.
+- Egress starts before first ingress event; capture finalization occurs
+  only after egress is quiesced/stopped.
 - Per-step blocking: dispatch + wait for all acks before next step.
 - No pending acks at run end (invariant under per-step blocking).
-- Capture write order: all acks settled → write capture → stop egress.
+- Capture write order: all acks settled → quiesce/stop egress →
+  write capture.
 - Startup failure → run does not begin.
 - Ack timeout → dispatch failure → interrupted run.
 - Replay never contacts egress.

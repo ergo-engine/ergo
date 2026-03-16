@@ -62,6 +62,7 @@ pub fn run_demo_fixture_from_path(
         runtime_provenance,
         None,
         None,
+        None,
     )
     .map_err(|err| {
         HostRunError::StepFailed(format!("failed to initialize hosted fixture runner: {err}"))

@@ -38,7 +38,7 @@ fn make_payload_record(id: &str, at: Duration, payload: &[u8]) -> ExternalEventR
 
 fn baseline_bundle(events: Vec<ExternalEventRecord>, constraints: Constraints) -> CaptureBundle {
     CaptureBundle {
-        capture_version: "v2".to_string(),
+        capture_version: "v3".to_string(),
         graph_id: ergo_adapter::GraphId::new("g"),
         config: constraints,
         events,
@@ -216,8 +216,33 @@ fn no_wall_clock_usage() {
 
 #[test]
 fn sample_bundle_deserializes() {
-    let data = include_str!("data/capture_v2_sample.json");
+    let data = include_str!("data/capture_v3_sample.json");
     let bundle: CaptureBundle = serde_json::from_str(data).expect("sample bundle should parse");
+    assert_eq!(bundle.capture_version, "v3");
+
+    let decision = bundle.decisions.first().expect("sample decision");
+    let external_effect = decision
+        .effects
+        .iter()
+        .find(|effect| effect.effect.kind != "set_context")
+        .expect("sample bundle must include external effect");
+    assert_ne!(external_effect.effect.kind, "set_context");
+    assert!(
+        external_effect.effect.writes.is_empty(),
+        "external effect writes must be empty"
+    );
+    assert!(
+        !external_effect.effect.intents.is_empty(),
+        "external effect intents must be non-empty"
+    );
+    assert!(
+        decision
+            .intent_acks
+            .iter()
+            .any(|ack| ack.status == "accepted" && ack.acceptance == "durable"),
+        "sample bundle must include at least one durable-accept ack"
+    );
+
     let runtime = FaultRuntimeHandle::new(RunTermination::Completed);
     let records = replay(&bundle, runtime);
     assert_eq!(records.len(), bundle.events.len());
@@ -226,7 +251,7 @@ fn sample_bundle_deserializes() {
 #[test]
 fn legacy_adapter_version_field_fails_deserialization() {
     let legacy = r#"{
-        "capture_version":"v2",
+        "capture_version":"v3",
         "graph_id":"g",
         "config":{"max_in_flight":null,"max_per_window":null,"rate_window":null,"deadline":null,"max_retries":0},
         "events":[],
@@ -247,7 +272,7 @@ fn legacy_adapter_version_field_fails_deserialization() {
 #[test]
 fn missing_effects_field_fails_deserialization() {
     let legacy = r#"{
-        "capture_version":"v2",
+        "capture_version":"v3",
         "graph_id":"g",
         "config":{"max_in_flight":null,"max_per_window":null,"rate_window":null,"deadline":null,"max_retries":0},
         "events":[],

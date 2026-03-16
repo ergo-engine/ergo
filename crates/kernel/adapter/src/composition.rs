@@ -1,8 +1,8 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use ergo_runtime::action::ActionEffects;
+use ergo_runtime::action::{ActionEffects, IntentSpec};
 use ergo_runtime::common::{resolve_manifest_name, ErrorInfo, Phase, ValueType};
 pub use ergo_runtime::source::{ContextRequirement, SourceRequires};
 
@@ -42,6 +42,15 @@ pub enum CompositionError {
         kind: String,
         index: usize,
     },
+    MissingIntentPayloadSchema {
+        kind: String,
+        index: usize,
+    },
+    IntentPayloadSchemaIncompatible {
+        kind: String,
+        index: usize,
+        detail: String,
+    },
     ManifestNameResolutionFailed {
         binding: String,
         index: usize,
@@ -60,6 +69,8 @@ impl ErrorInfo for CompositionError {
             Self::WriteTypeMismatch { .. } => "COMP-13",
             Self::MissingSetContextEffect => "COMP-14",
             Self::MissingIntentEffect { .. } => "COMP-17",
+            Self::MissingIntentPayloadSchema { .. } => "COMP-18",
+            Self::IntentPayloadSchemaIncompatible { .. } => "COMP-19",
             Self::ManifestNameResolutionFailed { .. } => "COMP-16",
         }
     }
@@ -78,6 +89,10 @@ impl ErrorInfo for CompositionError {
             Self::WriteTypeMismatch { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-13",
             Self::MissingSetContextEffect => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-14",
             Self::MissingIntentEffect { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-17",
+            Self::MissingIntentPayloadSchema { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-18",
+            Self::IntentPayloadSchemaIncompatible { .. } => {
+                "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-19"
+            }
             Self::ManifestNameResolutionFailed { .. } => "CANONICAL/PHASE_INVARIANTS.md#COMP-16",
         }
     }
@@ -118,6 +133,14 @@ impl ErrorInfo for CompositionError {
                 "Adapter does not accept intent effect kind '{}' required by action manifest",
                 kind
             )),
+            Self::MissingIntentPayloadSchema { kind, .. } => Cow::Owned(format!(
+                "Adapter effect '{}' is missing payload_schema required for intent compatibility checks",
+                kind
+            )),
+            Self::IntentPayloadSchemaIncompatible { kind, detail, .. } => Cow::Owned(format!(
+                "Adapter payload_schema for intent kind '{}' is incompatible: {}",
+                kind, detail
+            )),
             Self::ManifestNameResolutionFailed { binding, .. } => Cow::Owned(format!(
                 "Failed to resolve parameter-bound manifest name '{}'",
                 binding
@@ -148,6 +171,10 @@ impl ErrorInfo for CompositionError {
             Self::MissingSetContextEffect => Some(Cow::Borrowed("$.effects.writes")),
             Self::MissingIntentEffect { index, .. } => {
                 Some(Cow::Owned(format!("$.effects.intents[{}].name", index)))
+            }
+            Self::MissingIntentPayloadSchema { index, .. }
+            | Self::IntentPayloadSchemaIncompatible { index, .. } => {
+                Some(Cow::Owned(format!("$.effects.intents[{}].fields", index)))
             }
             Self::ManifestNameResolutionFailed { index, context, .. } => {
                 Some(Cow::Owned(format!("$.{context}[{index}].name")))
@@ -187,6 +214,13 @@ impl ErrorInfo for CompositionError {
                 "Add '{}' to adapter accepts.effects",
                 kind
             ))),
+            Self::MissingIntentPayloadSchema { kind, .. } => Some(Cow::Owned(format!(
+                "Add payload_schema for '{}' under adapter accepts.effects",
+                kind
+            ))),
+            Self::IntentPayloadSchemaIncompatible { .. } => Some(Cow::Borrowed(
+                "Adjust accepts.effects payload_schema to match the intent fields/types declared by the action manifest",
+            )),
             Self::ManifestNameResolutionFailed { binding, .. } => Some(Cow::Owned(format!(
                 "Ensure parameter referenced by '{}' exists and is a String type",
                 binding
@@ -290,6 +324,10 @@ pub fn validate_action_adapter_composition(
     if effects.writes.is_empty() && effects.intents.is_empty() {
         return Ok(());
     }
+    let has_mirror_writes = effects
+        .intents
+        .iter()
+        .any(|intent| !intent.mirror_writes.is_empty());
 
     for (index, write) in effects.writes.iter().enumerate() {
         // COMP-16: Resolve $key bindings
@@ -340,7 +378,8 @@ pub fn validate_action_adapter_composition(
         }
     }
 
-    if !effects.writes.is_empty() && !adapter.effects.contains("set_context") {
+    if (!effects.writes.is_empty() || has_mirror_writes) && !adapter.effects.contains("set_context")
+    {
         return Err(CompositionError::MissingSetContextEffect);
     }
 
@@ -351,9 +390,166 @@ pub fn validate_action_adapter_composition(
                 index,
             });
         }
+
+        let payload_schema = adapter.effect_schemas.get(&intent.name).ok_or_else(|| {
+            CompositionError::MissingIntentPayloadSchema {
+                kind: intent.name.clone(),
+                index,
+            }
+        })?;
+        validate_intent_schema_compatibility(intent, payload_schema).map_err(|detail| {
+            CompositionError::IntentPayloadSchemaIncompatible {
+                kind: intent.name.clone(),
+                index,
+                detail,
+            }
+        })?;
     }
 
     Ok(())
+}
+
+fn validate_intent_schema_compatibility(
+    intent: &IntentSpec,
+    payload_schema: &serde_json::Value,
+) -> Result<(), String> {
+    let schema = payload_schema
+        .as_object()
+        .ok_or_else(|| "payload_schema must be a JSON object".to_string())?;
+
+    if let Some(keyword) = unsupported_schema_keyword(schema) {
+        return Err(format!("unsupported JSON Schema keyword '{}'", keyword));
+    }
+
+    let schema_type = schema
+        .get("type")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "payload_schema.type must be present and set to 'object'".to_string())?;
+    if schema_type != "object" {
+        return Err(format!(
+            "payload_schema.type must be 'object', found '{}'",
+            schema_type
+        ));
+    }
+
+    let properties = schema
+        .get("properties")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| "payload_schema.properties must be present and be an object".to_string())?;
+
+    let field_names: HashSet<&str> = intent.fields.iter().map(|field| field.name.as_str()).collect();
+
+    if let Some(required) = schema.get("required") {
+        let required = required
+            .as_array()
+            .ok_or_else(|| "payload_schema.required must be an array of field names".to_string())?;
+        for item in required {
+            let required_name = item
+                .as_str()
+                .ok_or_else(|| "payload_schema.required entries must be strings".to_string())?;
+            if !field_names.contains(required_name) {
+                return Err(format!(
+                    "required field '{}' is not declared in intent.fields",
+                    required_name
+                ));
+            }
+        }
+    }
+
+    for field in &intent.fields {
+        let property_schema = properties.get(&field.name).ok_or_else(|| {
+            format!(
+                "intent field '{}' is missing from payload_schema.properties",
+                field.name
+            )
+        })?;
+        validate_field_schema_compatibility(&field.value_type, property_schema, &field.name)?;
+    }
+
+    Ok(())
+}
+
+fn validate_field_schema_compatibility(
+    field_type: &ValueType,
+    property_schema: &serde_json::Value,
+    field_name: &str,
+) -> Result<(), String> {
+    let property = property_schema
+        .as_object()
+        .ok_or_else(|| format!("field '{}' schema must be a JSON object", field_name))?;
+    if let Some(keyword) = unsupported_schema_keyword(property) {
+        return Err(format!(
+            "field '{}' uses unsupported JSON Schema keyword '{}'",
+            field_name, keyword
+        ));
+    }
+
+    match field_type {
+        ValueType::Number | ValueType::Bool | ValueType::String => {
+            let expected = value_type_to_json_type(field_type);
+            let actual = property
+                .get("type")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| format!("field '{}' schema must declare type '{}'", field_name, expected))?;
+            if actual != expected {
+                return Err(format!(
+                    "field '{}' expected JSON type '{}', found '{}'",
+                    field_name, expected, actual
+                ));
+            }
+        }
+        ValueType::Series => {
+            let actual = property
+                .get("type")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| format!("field '{}' schema must declare type 'array'", field_name))?;
+            if actual != "array" {
+                return Err(format!(
+                    "field '{}' expected JSON type 'array', found '{}'",
+                    field_name, actual
+                ));
+            }
+            let items = property
+                .get("items")
+                .and_then(|value| value.as_object())
+                .ok_or_else(|| format!("field '{}' array schema must define object 'items'", field_name))?;
+            if let Some(keyword) = unsupported_schema_keyword(items) {
+                return Err(format!(
+                    "field '{}' array items use unsupported JSON Schema keyword '{}'",
+                    field_name, keyword
+                ));
+            }
+            let item_type = items
+                .get("type")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| format!("field '{}' array items must declare type 'number'", field_name))?;
+            if item_type != "number" {
+                return Err(format!(
+                    "field '{}' array items expected type 'number', found '{}'",
+                    field_name, item_type
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn value_type_to_json_type(value_type: &ValueType) -> &'static str {
+    match value_type {
+        ValueType::Number => "number",
+        ValueType::Bool => "boolean",
+        ValueType::String => "string",
+        ValueType::Series => "array",
+    }
+}
+
+fn unsupported_schema_keyword(schema: &serde_json::Map<String, serde_json::Value>) -> Option<&str> {
+    [
+        "$ref", "oneOf", "anyOf", "allOf", "not", "if", "then", "else",
+    ]
+    .iter()
+    .copied()
+    .find(|keyword| schema.contains_key(*keyword))
 }
 
 fn parse_value_type(value: &str) -> Option<ValueType> {

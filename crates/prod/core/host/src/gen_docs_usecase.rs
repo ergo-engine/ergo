@@ -973,6 +973,86 @@ const ACTION_RULES: &[RuleDefinition] = &[
         doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-23",
         status: RuleStatus::Enforced,
     },
+    RuleDefinition {
+        id: "ACT-24",
+        phase: Phase::Registration,
+        summary: "Intent names unique",
+        predicate: "unique(effects.intents[].name)",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-24",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "ACT-25",
+        phase: Phase::Registration,
+        summary: "Intent field names unique within each intent",
+        predicate: "∀ intent: unique(intent.fields[].name)",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-25",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "ACT-26",
+        phase: Phase::Registration,
+        summary: "Intent field declares a source",
+        predicate: "∀ field: field.from_input != None OR field.from_param != None",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-26",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "ACT-27",
+        phase: Phase::Registration,
+        summary: "Intent field declares only one source",
+        predicate: "∀ field: !(field.from_input != None AND field.from_param != None)",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-27",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "ACT-28",
+        phase: Phase::Registration,
+        summary: "Intent field from_input references declared input",
+        predicate: "∀ field where from_input != None: from_input ∈ inputs[].name",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-28",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "ACT-29",
+        phase: Phase::Registration,
+        summary: "Intent field from_input type compatible with field type",
+        predicate: "∀ field where from_input != None: inputs[from_input].type is scalar AND matches field.value_type",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-29",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "ACT-30",
+        phase: Phase::Registration,
+        summary: "Intent field from_param references declared parameter",
+        predicate: "∀ field where from_param != None: from_param ∈ parameters[].name",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-30",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "ACT-31",
+        phase: Phase::Registration,
+        summary: "Intent field from_param type compatible with field type",
+        predicate: "∀ field where from_param != None: parameters[from_param].type matches field.value_type",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-31",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "ACT-32",
+        phase: Phase::Registration,
+        summary: "Mirror write from_field references declared intent field",
+        predicate: "∀ mirror_write: from_field ∈ intent.fields[].name",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-32",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "ACT-33",
+        phase: Phase::Registration,
+        summary: "Mirror write type matches referenced field type",
+        predicate: "∀ mirror_write: mirror_write.value_type == intent.fields[from_field].value_type",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-33",
+        status: RuleStatus::Enforced,
+    },
 ];
 
 const COMPOSITION_RULES: &[RuleDefinition] = &[
@@ -1083,8 +1163,8 @@ const COMPOSITION_RULES: &[RuleDefinition] = &[
     RuleDefinition {
         id: "COMP-14",
         phase: Phase::Composition,
-        summary: "If action writes, adapter accepts set_context",
-        predicate: "writes.len > 0 => accepts.effects contains \"set_context\"",
+        summary: "If action writes or mirror writes, adapter accepts set_context",
+        predicate: "(writes.len > 0 OR any(intent.mirror_writes.len > 0)) => accepts.effects contains \"set_context\"",
         doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-14",
         status: RuleStatus::Enforced,
     },
@@ -1103,6 +1183,30 @@ const COMPOSITION_RULES: &[RuleDefinition] = &[
         summary: "Parameter-bound manifest names resolve",
         predicate: "$-prefixed names resolve to String parameter values",
         doc_anchor: "CANONICAL/PHASE_INVARIANTS.md#COMP-16",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "COMP-17",
+        phase: Phase::Composition,
+        summary: "If action declares intents, adapter accepts each intent effect kind",
+        predicate: "effects.intents.names ⊆ accepts.effects.names",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-17",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "COMP-18",
+        phase: Phase::Composition,
+        summary: "Declared intent kinds must have payload schemas in adapter acceptance surface",
+        predicate: "∀ intent: accepts.effects[intent.name].payload_schema exists",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-18",
+        status: RuleStatus::Enforced,
+    },
+    RuleDefinition {
+        id: "COMP-19",
+        phase: Phase::Composition,
+        summary: "Intent fields are structurally compatible with adapter payload schema",
+        predicate: "∀ intent: intent.fields structurally compatible with accepts.effects[intent.name].payload_schema",
+        doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-19",
         status: RuleStatus::Enforced,
     },
 ];
@@ -1245,3 +1349,30 @@ const CLUSTER_RULES: &[RuleDefinition] = &[
         status: RuleStatus::Enforced,
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::generate_rule_registry_markdown;
+
+    #[test]
+    fn generated_registry_includes_act_24_through_act_33() {
+        let rendered = generate_rule_registry_markdown();
+        for id in 24..=33 {
+            assert!(
+                rendered.contains(&format!("| ACT-{id} |")),
+                "missing ACT-{id} in generated registry"
+            );
+        }
+    }
+
+    #[test]
+    fn generated_registry_includes_comp_17_through_comp_19() {
+        let rendered = generate_rule_registry_markdown();
+        for id in 17..=19 {
+            assert!(
+                rendered.contains(&format!("| COMP-{id} |")),
+                "missing COMP-{id} in generated registry"
+            );
+        }
+    }
+}

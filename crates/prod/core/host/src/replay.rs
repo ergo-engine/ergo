@@ -660,6 +660,7 @@ mod tests {
             context,
             events: HashSet::from(["price_bar".to_string()]),
             effects: HashSet::from(["set_context".to_string()]),
+            effect_schemas: HashMap::new(),
             event_schemas,
             capture_format_version: "1".to_string(),
             adapter_fingerprint: ADAPTER_PROVENANCE.to_string(),
@@ -702,6 +703,7 @@ mod tests {
             context,
             events: HashSet::from(["price_bar".to_string()]),
             effects: HashSet::from(["set_context".to_string()]),
+            effect_schemas: HashMap::new(),
             event_schemas,
             capture_format_version: "1".to_string(),
             adapter_fingerprint: ADAPTER_PROVENANCE.to_string(),
@@ -743,6 +745,7 @@ mod tests {
             context,
             events: HashSet::from(["price_bar".to_string()]),
             effects: HashSet::from(["set_context".to_string()]),
+            effect_schemas: HashMap::new(),
             event_schemas,
             capture_format_version: "1".to_string(),
             adapter_fingerprint: ADAPTER_PROVENANCE.to_string(),
@@ -772,6 +775,7 @@ mod tests {
             runtime,
             RUNTIME_PROVENANCE.to_string(),
             Some(adapter),
+            None,
             None,
         )
         .expect("hosted runner must initialize")

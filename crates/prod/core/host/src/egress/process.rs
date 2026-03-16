@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -14,6 +14,7 @@ use super::{EgressChannelConfig, EgressConfig};
 const DEFAULT_EGRESS_STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_EGRESS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const CHANNEL_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const EGRESS_PROTOCOL: &str = "ergo-egress.v1";
 
 #[derive(Debug)]
 pub enum EgressProcessError {
@@ -34,6 +35,10 @@ pub enum EgressProcessError {
         channel: String,
         intent_id: String,
         timeout: Duration,
+    },
+    PendingAcks {
+        channel: String,
+        detail: String,
     },
 }
 
@@ -59,6 +64,10 @@ impl std::fmt::Display for EgressProcessError {
                 "egress channel '{channel}' timed out waiting for durable-accept ack for intent '{intent_id}' after {}ms",
                 timeout.as_millis()
             ),
+            Self::PendingAcks { channel, detail } => write!(
+                f,
+                "egress channel '{channel}' has unresolved ack state: {detail}"
+            ),
         }
     }
 }
@@ -79,7 +88,10 @@ enum OutboundMessage {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum InboundMessage {
-    Ready,
+    Ready {
+        protocol: String,
+        handled_kinds: Vec<String>,
+    },
     IntentAck {
         intent_id: String,
         status: String,
@@ -102,6 +114,8 @@ struct EgressChannelHandle {
     stdin: ChildStdin,
     stdout_rx: Receiver<ChannelObservation>,
     stderr_handle: Option<JoinHandle<String>>,
+    handled_kinds: HashSet<String>,
+    in_flight_intent_ids: BTreeSet<String>,
 }
 
 impl EgressChannelHandle {
@@ -148,10 +162,16 @@ impl EgressChannelHandle {
             stdin,
             stdout_rx,
             stderr_handle,
+            handled_kinds: HashSet::new(),
+            in_flight_intent_ids: BTreeSet::new(),
         })
     }
 
-    fn wait_ready(&mut self, timeout: Duration) -> Result<(), EgressProcessError> {
+    fn wait_ready(
+        &mut self,
+        timeout: Duration,
+        required_kinds: &BTreeSet<String>,
+    ) -> Result<(), EgressProcessError> {
         let observation = recv_observation(&self.stdout_rx, Some(timeout)).map_err(|failure| {
             self.force_terminate();
             match failure {
@@ -181,7 +201,51 @@ impl EgressChannelHandle {
                 })?;
 
                 match message {
-                    InboundMessage::Ready => Ok(()),
+                    InboundMessage::Ready {
+                        protocol,
+                        handled_kinds,
+                    } => {
+                        if protocol != EGRESS_PROTOCOL {
+                            self.force_terminate();
+                            return Err(EgressProcessError::Protocol {
+                                channel: self.channel_id.clone(),
+                                detail: format!(
+                                    "ready frame protocol mismatch: expected '{}', got '{}'",
+                                    EGRESS_PROTOCOL, protocol
+                                ),
+                            });
+                        }
+
+                        let mut seen = HashSet::new();
+                        for kind in &handled_kinds {
+                            if !seen.insert(kind.clone()) {
+                                self.force_terminate();
+                                return Err(EgressProcessError::Protocol {
+                                    channel: self.channel_id.clone(),
+                                    detail: format!(
+                                        "ready frame contains duplicate handled_kinds entry '{}'",
+                                        kind
+                                    ),
+                                });
+                            }
+                        }
+
+                        let handled_kind_set: HashSet<String> = handled_kinds.into_iter().collect();
+                        for required_kind in required_kinds {
+                            if !handled_kind_set.contains(required_kind) {
+                                self.force_terminate();
+                                return Err(EgressProcessError::Protocol {
+                                    channel: self.channel_id.clone(),
+                                    detail: format!(
+                                        "ready frame missing required handled kind '{}'",
+                                        required_kind
+                                    ),
+                                });
+                            }
+                        }
+                        self.handled_kinds = handled_kind_set;
+                        Ok(())
+                    }
                     InboundMessage::IntentAck { .. } => {
                         self.force_terminate();
                         Err(EgressProcessError::Protocol {
@@ -213,27 +277,49 @@ impl EgressChannelHandle {
         intent: &IntentRecord,
         timeout: Duration,
     ) -> Result<CapturedIntentAck, EgressProcessError> {
+        if !self.in_flight_intent_ids.insert(intent.intent_id.clone()) {
+            return Err(EgressProcessError::Protocol {
+                channel: self.channel_id.clone(),
+                detail: format!(
+                    "intent '{}' is already in-flight on channel",
+                    intent.intent_id
+                ),
+            });
+        }
+
         let outbound = OutboundMessage::Intent {
             intent_id: intent.intent_id.clone(),
             kind: intent.kind.clone(),
             fields: intent_fields_to_json_object(&intent.fields),
         };
-        let payload = serde_json::to_string(&outbound).map_err(|err| EgressProcessError::Io {
-            channel: self.channel_id.clone(),
-            detail: format!("serialize intent payload: {err}"),
-        })?;
+        let payload = match serde_json::to_string(&outbound) {
+            Ok(payload) => payload,
+            Err(err) => {
+                self.in_flight_intent_ids.remove(&intent.intent_id);
+                return Err(EgressProcessError::Io {
+                    channel: self.channel_id.clone(),
+                    detail: format!("serialize intent payload: {err}"),
+                });
+            }
+        };
 
-        writeln!(self.stdin, "{payload}").map_err(|err| EgressProcessError::Io {
-            channel: self.channel_id.clone(),
-            detail: format!("write intent payload: {err}"),
-        })?;
-        self.stdin.flush().map_err(|err| EgressProcessError::Io {
-            channel: self.channel_id.clone(),
-            detail: format!("flush intent payload: {err}"),
-        })?;
+        if let Err(err) = writeln!(self.stdin, "{payload}") {
+            self.in_flight_intent_ids.remove(&intent.intent_id);
+            return Err(EgressProcessError::Io {
+                channel: self.channel_id.clone(),
+                detail: format!("write intent payload: {err}"),
+            });
+        }
+        if let Err(err) = self.stdin.flush() {
+            self.in_flight_intent_ids.remove(&intent.intent_id);
+            return Err(EgressProcessError::Io {
+                channel: self.channel_id.clone(),
+                detail: format!("flush intent payload: {err}"),
+            });
+        }
 
-        let observation =
-            recv_observation(&self.stdout_rx, Some(timeout)).map_err(|failure| match failure {
+        let observation = recv_observation(&self.stdout_rx, Some(timeout)).map_err(|failure| {
+            match failure {
                 RecvTimeoutError::Timeout => EgressProcessError::Timeout {
                     channel: self.channel_id.clone(),
                     intent_id: intent.intent_id.clone(),
@@ -243,9 +329,10 @@ impl EgressChannelHandle {
                     channel: self.channel_id.clone(),
                     detail: "stdout reader disconnected while waiting for ack".to_string(),
                 },
-            })?;
+            }
+        })?;
 
-        match observation {
+        let result = match observation {
             ChannelObservation::Line(line) => {
                 let message = serde_json::from_str::<InboundMessage>(line.trim_end_matches('\n'))
                     .map_err(|err| EgressProcessError::Protocol {
@@ -254,7 +341,7 @@ impl EgressChannelHandle {
                 })?;
 
                 match message {
-                    InboundMessage::Ready => Err(EgressProcessError::Protocol {
+                    InboundMessage::Ready { .. } => Err(EgressProcessError::Protocol {
                         channel: self.channel_id.clone(),
                         detail: "unexpected ready frame after startup".to_string(),
                     }),
@@ -301,7 +388,12 @@ impl EgressChannelHandle {
                 channel: self.channel_id.clone(),
                 detail,
             }),
+        };
+
+        if result.is_ok() {
+            self.in_flight_intent_ids.remove(&intent.intent_id);
         }
+        result
     }
 
     fn shutdown(&mut self, timeout: Duration) -> Result<(), EgressProcessError> {
@@ -316,6 +408,43 @@ impl EgressChannelHandle {
             detail: format!("wait for graceful shutdown: {err}"),
         })?;
         Ok(())
+    }
+
+    fn assert_no_pending_acks(&self) -> Result<(), EgressProcessError> {
+        if !self.in_flight_intent_ids.is_empty() {
+            return Err(EgressProcessError::PendingAcks {
+                channel: self.channel_id.clone(),
+                detail: format!("in-flight intent IDs: {:?}", self.in_flight_intent_ids),
+            });
+        }
+
+        match self.stdout_rx.try_recv() {
+            Ok(ChannelObservation::Line(line)) => Err(EgressProcessError::PendingAcks {
+                channel: self.channel_id.clone(),
+                detail: format!(
+                    "unexpected buffered stdout frame after final dispatch: {}",
+                    line.trim_end_matches('\n')
+                ),
+            }),
+            Ok(ChannelObservation::Eof) => Err(EgressProcessError::PendingAcks {
+                channel: self.channel_id.clone(),
+                detail: "stdout reached EOF with no explicit shutdown".to_string(),
+            }),
+            Ok(ChannelObservation::ReadError(detail)) => Err(EgressProcessError::PendingAcks {
+                channel: self.channel_id.clone(),
+                detail: format!("stdout reader observed post-dispatch read error: {detail}"),
+            }),
+            Err(TryRecvError::Empty) => Ok(()),
+            Err(TryRecvError::Disconnected) => Err(EgressProcessError::PendingAcks {
+                channel: self.channel_id.clone(),
+                detail: "stdout reader disconnected unexpectedly".to_string(),
+            }),
+        }
+    }
+
+    fn quiesce(&mut self) {
+        self.in_flight_intent_ids.clear();
+        self.force_terminate();
     }
 
     fn force_terminate(&mut self) {
@@ -362,7 +491,8 @@ impl EgressRuntime {
         let mut started = BTreeMap::new();
         for (channel_id, channel_config) in &self.config.channels {
             let mut handle = EgressChannelHandle::spawn(channel_id, channel_config)?;
-            handle.wait_ready(DEFAULT_EGRESS_STARTUP_TIMEOUT)?;
+            let required_kinds = self.required_route_kinds_for_channel(channel_id);
+            handle.wait_ready(DEFAULT_EGRESS_STARTUP_TIMEOUT, &required_kinds)?;
             started.insert(channel_id.clone(), handle);
         }
         self.channels = started;
@@ -401,12 +531,25 @@ impl EgressRuntime {
             ))
         })?;
 
-        handle.dispatch_intent(intent, timeout)
+        match handle.dispatch_intent(intent, timeout) {
+            Ok(ack) => Ok(ack),
+            Err(err @ EgressProcessError::Timeout { .. })
+            | Err(err @ EgressProcessError::Protocol { .. })
+            | Err(err @ EgressProcessError::Io { .. }) => {
+                self.quiesce_channel(&route.channel);
+                self.quiesce_all_channels();
+                Err(err)
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub fn assert_no_pending_acks(&self) -> Result<(), EgressProcessError> {
         if !self.started {
             return Ok(());
+        }
+        for handle in self.channels.values() {
+            handle.assert_no_pending_acks()?;
         }
         Ok(())
     }
@@ -431,6 +574,33 @@ impl EgressRuntime {
             return Err(err);
         }
         Ok(())
+    }
+
+    pub fn quiesce_all_channels(&mut self) {
+        for handle in self.channels.values_mut() {
+            handle.quiesce();
+        }
+        self.channels.clear();
+        self.started = false;
+    }
+
+    fn quiesce_channel(&mut self, channel_id: &str) {
+        if let Some(mut handle) = self.channels.remove(channel_id) {
+            handle.quiesce();
+        }
+        if self.channels.is_empty() {
+            self.started = false;
+        }
+    }
+
+    fn required_route_kinds_for_channel(&self, channel_id: &str) -> BTreeSet<String> {
+        self.config
+            .routes
+            .iter()
+            .filter_map(|(intent_kind, route)| {
+                (route.channel == channel_id).then_some(intent_kind.clone())
+            })
+            .collect()
     }
 }
 
@@ -598,7 +768,7 @@ mod tests {
             &dir,
             "egress.sh",
             r#"#!/bin/sh
-printf '%s\n' '{"type":"ready"}'
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
 while IFS= read -r line; do
   echo "$line" | grep -q '"type":"end"' && exit 0
   id=$(printf '%s\n' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
@@ -633,7 +803,7 @@ done
             &dir,
             "egress.sh",
             r#"#!/bin/sh
-printf '%s\n' '{"type":"ready"}'
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
 while IFS= read -r line; do
   echo "$line" | grep -q '"type":"end"' && exit 0
   sleep 1
@@ -663,7 +833,7 @@ done
             &dir,
             "egress.sh",
             r#"#!/bin/sh
-printf '%s\n' '{"type":"ready"}'
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
 while IFS= read -r line; do
   echo "$line" | grep -q '"type":"end"' && exit 0
   printf '%s\n' '{"type":"intent_ack","intent_id":"wrong","status":"accepted","acceptance":"durable"}'
@@ -707,13 +877,82 @@ exit 0
     }
 
     #[test]
+    fn startup_fails_when_ready_protocol_mismatches() -> Result<(), String> {
+        let dir = temp_dir("startup-proto-mismatch")?;
+        let script = write_script(
+            &dir,
+            "egress.sh",
+            r#"#!/bin/sh
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v0","handled_kinds":["place_order"]}'
+while IFS= read -r line; do
+  echo "$line" | grep -q '"type":"end"' && exit 0
+done
+"#,
+        )?;
+
+        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
+        let err = runtime
+            .start_channels()
+            .expect_err("protocol mismatch must fail startup");
+        assert!(matches!(err, EgressProcessError::Protocol { .. }));
+        let _ = fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn startup_fails_when_ready_missing_routed_kind() -> Result<(), String> {
+        let dir = temp_dir("startup-missing-kind")?;
+        let script = write_script(
+            &dir,
+            "egress.sh",
+            r#"#!/bin/sh
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["cancel_order"]}'
+while IFS= read -r line; do
+  echo "$line" | grep -q '"type":"end"' && exit 0
+done
+"#,
+        )?;
+
+        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
+        let err = runtime
+            .start_channels()
+            .expect_err("missing routed kind must fail startup");
+        assert!(matches!(err, EgressProcessError::Protocol { .. }));
+        let _ = fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn startup_fails_when_ready_contains_duplicate_handled_kinds() -> Result<(), String> {
+        let dir = temp_dir("startup-duplicate-kind")?;
+        let script = write_script(
+            &dir,
+            "egress.sh",
+            r#"#!/bin/sh
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order","place_order"]}'
+while IFS= read -r line; do
+  echo "$line" | grep -q '"type":"end"' && exit 0
+done
+"#,
+        )?;
+
+        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
+        let err = runtime
+            .start_channels()
+            .expect_err("duplicate handled kinds must fail startup");
+        assert!(matches!(err, EgressProcessError::Protocol { .. }));
+        let _ = fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    #[test]
     fn multiple_intents_dispatch_and_ack() -> Result<(), String> {
         let dir = temp_dir("ack-multi")?;
         let script = write_script(
             &dir,
             "egress.sh",
             r#"#!/bin/sh
-printf '%s\n' '{"type":"ready"}'
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
 while IFS= read -r line; do
   echo "$line" | grep -q '"type":"end"' && exit 0
   id=$(printf '%s\n' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
@@ -734,6 +973,79 @@ done
             .map_err(|err| format!("dispatch second: {err}"))?;
         assert_eq!(first.intent_id, "eid1:sha256:first");
         assert_eq!(second.intent_id, "eid1:sha256:second");
+        runtime
+            .shutdown_channels()
+            .map_err(|err| format!("shutdown channels: {err}"))?;
+        let _ = fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn timeout_quiesces_channels_for_consistency() -> Result<(), String> {
+        let dir = temp_dir("quiesce-timeout")?;
+        let script = write_script(
+            &dir,
+            "egress.sh",
+            r#"#!/bin/sh
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
+while IFS= read -r line; do
+  echo "$line" | grep -q '"type":"end"' && exit 0
+  sleep 1
+done
+"#,
+        )?;
+
+        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_millis(50)));
+        runtime
+            .start_channels()
+            .map_err(|err| format!("start channels: {err}"))?;
+        let err = runtime
+            .dispatch_intent(&sample_intent("eid1:sha256:timeout-quiesce"))
+            .expect_err("timeout should fail dispatch");
+        assert!(matches!(err, EgressProcessError::Timeout { .. }));
+
+        let second = runtime
+            .dispatch_intent(&sample_intent("eid1:sha256:after-timeout"))
+            .expect_err("quiesced runtime should reject further dispatch");
+        assert!(matches!(second, EgressProcessError::Startup { .. }));
+        assert!(
+            runtime.assert_no_pending_acks().is_ok(),
+            "quiesced runtime should not expose pending ack state"
+        );
+        let _ = fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn pending_ack_assertion_fails_when_extra_stdout_frame_is_buffered() -> Result<(), String> {
+        let dir = temp_dir("pending-buffered-frame")?;
+        let script = write_script(
+            &dir,
+            "egress.sh",
+            r#"#!/bin/sh
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
+while IFS= read -r line; do
+  echo "$line" | grep -q '"type":"end"' && exit 0
+  id=$(printf '%s\n' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
+  printf '{"type":"intent_ack","intent_id":"%s","status":"accepted","acceptance":"durable"}\n' "$id"
+  printf '%s\n' '{"type":"intent_ack","intent_id":"unexpected","status":"accepted","acceptance":"durable"}'
+done
+"#,
+        )?;
+
+        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
+        runtime
+            .start_channels()
+            .map_err(|err| format!("start channels: {err}"))?;
+        runtime
+            .dispatch_intent(&sample_intent("eid1:sha256:buffered"))
+            .map_err(|err| format!("dispatch: {err}"))?;
+
+        let err = runtime
+            .assert_no_pending_acks()
+            .expect_err("buffered stdout frame must fail pending-ack invariant");
+        assert!(matches!(err, EgressProcessError::PendingAcks { .. }));
+
         runtime
             .shutdown_channels()
             .map_err(|err| format!("shutdown channels: {err}"))?;

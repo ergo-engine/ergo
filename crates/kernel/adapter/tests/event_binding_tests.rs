@@ -23,6 +23,7 @@ fn make_adapter_provides(
         context,
         events: event_schemas.keys().cloned().collect::<HashSet<_>>(),
         effects: HashSet::new(),
+        effect_schemas: HashMap::new(),
         event_schemas,
         capture_format_version: "1".to_string(),
         adapter_fingerprint: "adapter:test@1.0.0;sha256:test".to_string(),

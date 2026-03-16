@@ -3348,6 +3348,338 @@ impl crate::action::ActionPrimitive for WriteAction {
     }
 }
 
+#[derive(Clone)]
+struct IntentAction {
+    manifest: crate::action::ActionPrimitiveManifest,
+}
+
+impl IntentAction {
+    fn intent_only(id: &str, intent_kind: &str) -> Self {
+        Self {
+            manifest: crate::action::ActionPrimitiveManifest {
+                id: id.to_string(),
+                version: "0.1.0".to_string(),
+                kind: crate::action::ActionKind::Action,
+                inputs: vec![
+                    crate::action::InputSpec {
+                        name: "event".to_string(),
+                        value_type: crate::action::ActionValueType::Event,
+                        required: true,
+                        cardinality: crate::action::Cardinality::Single,
+                    },
+                    crate::action::InputSpec {
+                        name: "symbol".to_string(),
+                        value_type: crate::action::ActionValueType::String,
+                        required: true,
+                        cardinality: crate::action::Cardinality::Single,
+                    },
+                    crate::action::InputSpec {
+                        name: "qty".to_string(),
+                        value_type: crate::action::ActionValueType::Number,
+                        required: true,
+                        cardinality: crate::action::Cardinality::Single,
+                    },
+                ],
+                outputs: vec![crate::action::OutputSpec {
+                    name: "outcome".to_string(),
+                    value_type: crate::action::ActionValueType::Event,
+                }],
+                parameters: vec![],
+                effects: crate::action::ActionEffects {
+                    writes: vec![],
+                    intents: vec![crate::action::IntentSpec {
+                        name: intent_kind.to_string(),
+                        fields: vec![
+                            crate::action::IntentFieldSpec {
+                                name: "symbol".to_string(),
+                                value_type: crate::common::ValueType::String,
+                                from_input: Some("symbol".to_string()),
+                                from_param: None,
+                            },
+                            crate::action::IntentFieldSpec {
+                                name: "qty".to_string(),
+                                value_type: crate::common::ValueType::Number,
+                                from_input: Some("qty".to_string()),
+                                from_param: None,
+                            },
+                        ],
+                        mirror_writes: vec![],
+                    }],
+                },
+                execution: crate::action::ExecutionSpec {
+                    deterministic: true,
+                    retryable: false,
+                },
+                state: crate::action::StateSpec { allowed: false },
+                side_effects: true,
+            },
+        }
+    }
+
+    fn mixed(id: &str, intent_kind: &str) -> Self {
+        Self {
+            manifest: crate::action::ActionPrimitiveManifest {
+                id: id.to_string(),
+                version: "0.1.0".to_string(),
+                kind: crate::action::ActionKind::Action,
+                inputs: vec![
+                    crate::action::InputSpec {
+                        name: "event".to_string(),
+                        value_type: crate::action::ActionValueType::Event,
+                        required: true,
+                        cardinality: crate::action::Cardinality::Single,
+                    },
+                    crate::action::InputSpec {
+                        name: "symbol".to_string(),
+                        value_type: crate::action::ActionValueType::String,
+                        required: true,
+                        cardinality: crate::action::Cardinality::Single,
+                    },
+                    crate::action::InputSpec {
+                        name: "qty".to_string(),
+                        value_type: crate::action::ActionValueType::Number,
+                        required: true,
+                        cardinality: crate::action::Cardinality::Single,
+                    },
+                ],
+                outputs: vec![crate::action::OutputSpec {
+                    name: "outcome".to_string(),
+                    value_type: crate::action::ActionValueType::Event,
+                }],
+                parameters: vec![],
+                effects: crate::action::ActionEffects {
+                    writes: vec![crate::action::ActionWriteSpec {
+                        name: "order_qty".to_string(),
+                        value_type: crate::common::ValueType::Number,
+                        from_input: "qty".to_string(),
+                    }],
+                    intents: vec![crate::action::IntentSpec {
+                        name: intent_kind.to_string(),
+                        fields: vec![
+                            crate::action::IntentFieldSpec {
+                                name: "symbol".to_string(),
+                                value_type: crate::common::ValueType::String,
+                                from_input: Some("symbol".to_string()),
+                                from_param: None,
+                            },
+                            crate::action::IntentFieldSpec {
+                                name: "qty".to_string(),
+                                value_type: crate::common::ValueType::Number,
+                                from_input: Some("qty".to_string()),
+                                from_param: None,
+                            },
+                        ],
+                        mirror_writes: vec![crate::action::IntentMirrorWriteSpec {
+                            name: "last_symbol".to_string(),
+                            value_type: crate::common::ValueType::String,
+                            from_field: "symbol".to_string(),
+                        }],
+                    }],
+                },
+                execution: crate::action::ExecutionSpec {
+                    deterministic: true,
+                    retryable: false,
+                },
+                state: crate::action::StateSpec { allowed: false },
+                side_effects: true,
+            },
+        }
+    }
+}
+
+impl crate::action::ActionPrimitive for IntentAction {
+    fn manifest(&self) -> &crate::action::ActionPrimitiveManifest {
+        &self.manifest
+    }
+
+    fn execute(
+        &self,
+        _inputs: &HashMap<String, crate::action::ActionValue>,
+        _parameters: &HashMap<String, crate::action::ParameterValue>,
+    ) -> HashMap<String, crate::action::ActionValue> {
+        HashMap::from([(
+            "outcome".to_string(),
+            crate::action::ActionValue::Event(crate::action::ActionOutcome::Completed),
+        )])
+    }
+}
+
+fn intent_action_graph(action_impl_id: &str) -> crate::runtime::types::ValidatedGraph {
+    crate::runtime::types::ValidatedGraph {
+        nodes: HashMap::from([
+            (
+                "src_bool".to_string(),
+                crate::runtime::types::ValidatedNode {
+                    runtime_id: "src_bool".to_string(),
+                    impl_id: "boolean_source".to_string(),
+                    version: "0.1.0".to_string(),
+                    kind: PrimitiveKind::Source,
+                    inputs: vec![],
+                    outputs: HashMap::from([(
+                        "value".to_string(),
+                        OutputMetadata {
+                            value_type: ValueType::Bool,
+                            cardinality: crate::cluster::Cardinality::Single,
+                        },
+                    )]),
+                    parameters: HashMap::from([(
+                        "value".to_string(),
+                        crate::cluster::ParameterValue::Bool(true),
+                    )]),
+                },
+            ),
+            (
+                "src_symbol".to_string(),
+                crate::runtime::types::ValidatedNode {
+                    runtime_id: "src_symbol".to_string(),
+                    impl_id: "string_source".to_string(),
+                    version: "0.1.0".to_string(),
+                    kind: PrimitiveKind::Source,
+                    inputs: vec![],
+                    outputs: HashMap::from([(
+                        "value".to_string(),
+                        OutputMetadata {
+                            value_type: ValueType::String,
+                            cardinality: crate::cluster::Cardinality::Single,
+                        },
+                    )]),
+                    parameters: HashMap::from([(
+                        "value".to_string(),
+                        crate::cluster::ParameterValue::String("EURUSD".to_string()),
+                    )]),
+                },
+            ),
+            (
+                "src_qty".to_string(),
+                crate::runtime::types::ValidatedNode {
+                    runtime_id: "src_qty".to_string(),
+                    impl_id: "number_source".to_string(),
+                    version: "0.1.0".to_string(),
+                    kind: PrimitiveKind::Source,
+                    inputs: vec![],
+                    outputs: HashMap::from([(
+                        "value".to_string(),
+                        OutputMetadata {
+                            value_type: ValueType::Number,
+                            cardinality: crate::cluster::Cardinality::Single,
+                        },
+                    )]),
+                    parameters: HashMap::from([(
+                        "value".to_string(),
+                        crate::cluster::ParameterValue::Number(100.0),
+                    )]),
+                },
+            ),
+            (
+                "emit".to_string(),
+                crate::runtime::types::ValidatedNode {
+                    runtime_id: "emit".to_string(),
+                    impl_id: "emit_if_true".to_string(),
+                    version: "0.1.0".to_string(),
+                    kind: PrimitiveKind::Trigger,
+                    inputs: vec![InputMetadata {
+                        name: "input".to_string(),
+                        value_type: ValueType::Bool,
+                        required: true,
+                    }],
+                    outputs: HashMap::from([(
+                        "event".to_string(),
+                        OutputMetadata {
+                            value_type: ValueType::Event,
+                            cardinality: crate::cluster::Cardinality::Single,
+                        },
+                    )]),
+                    parameters: HashMap::new(),
+                },
+            ),
+            (
+                "act".to_string(),
+                crate::runtime::types::ValidatedNode {
+                    runtime_id: "act".to_string(),
+                    impl_id: action_impl_id.to_string(),
+                    version: "0.1.0".to_string(),
+                    kind: PrimitiveKind::Action,
+                    inputs: vec![
+                        InputMetadata {
+                            name: "event".to_string(),
+                            value_type: ValueType::Event,
+                            required: true,
+                        },
+                        InputMetadata {
+                            name: "symbol".to_string(),
+                            value_type: ValueType::String,
+                            required: true,
+                        },
+                        InputMetadata {
+                            name: "qty".to_string(),
+                            value_type: ValueType::Number,
+                            required: true,
+                        },
+                    ],
+                    outputs: HashMap::from([(
+                        "outcome".to_string(),
+                        OutputMetadata {
+                            value_type: ValueType::Event,
+                            cardinality: crate::cluster::Cardinality::Single,
+                        },
+                    )]),
+                    parameters: HashMap::new(),
+                },
+            ),
+        ]),
+        edges: vec![
+            crate::runtime::types::ValidatedEdge {
+                from: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "src_bool".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "input".to_string(),
+                },
+            },
+            crate::runtime::types::ValidatedEdge {
+                from: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "emit".to_string(),
+                    port_name: "event".to_string(),
+                },
+                to: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "act".to_string(),
+                    port_name: "event".to_string(),
+                },
+            },
+            crate::runtime::types::ValidatedEdge {
+                from: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "src_symbol".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "act".to_string(),
+                    port_name: "symbol".to_string(),
+                },
+            },
+            crate::runtime::types::ValidatedEdge {
+                from: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "src_qty".to_string(),
+                    port_name: "value".to_string(),
+                },
+                to: crate::runtime::types::Endpoint::NodePort {
+                    node_id: "act".to_string(),
+                    port_name: "qty".to_string(),
+                },
+            },
+        ],
+        topo_order: vec![
+            "src_bool".to_string(),
+            "src_symbol".to_string(),
+            "src_qty".to_string(),
+            "emit".to_string(),
+            "act".to_string(),
+        ],
+        boundary_outputs: vec![],
+    }
+}
+
 /// Action with one declared write emits one ActionEffect with value sourced from from_input.
 #[test]
 fn effect_action_one_write_emits_effect() {
@@ -3528,6 +3860,113 @@ fn effect_action_one_write_emits_effect() {
     assert_eq!(effect.writes.len(), 1);
     assert_eq!(effect.writes[0].key, "price");
     assert_eq!(effect.writes[0].value, crate::common::Value::Number(42.0));
+}
+
+#[test]
+fn metadata_less_execute_rejects_intent_emitting_graph() {
+    let core_regs = crate::catalog::core_registries().unwrap();
+    let mut act_reg = crate::action::ActionRegistry::new();
+    act_reg
+        .register(Box::new(IntentAction::intent_only(
+            "intent_only_action",
+            "place_order",
+        )))
+        .unwrap();
+
+    let graph = intent_action_graph("intent_only_action");
+    let regs = Registries {
+        sources: &core_regs.sources,
+        computes: &core_regs.computes,
+        triggers: &core_regs.triggers,
+        actions: &act_reg,
+    };
+    let ctx = ExecutionContext::default();
+    let err = crate::runtime::execute(&graph, &regs, &ctx).unwrap_err();
+
+    match err {
+        ExecError::IntentMetadataRequired { node } => assert_eq!(node, "act"),
+        other => panic!("expected IntentMetadataRequired, got {other:?}"),
+    }
+}
+
+#[test]
+fn metadata_aware_execute_emits_intent_only_external_effect_kind() {
+    let core_regs = crate::catalog::core_registries().unwrap();
+    let mut act_reg = crate::action::ActionRegistry::new();
+    act_reg
+        .register(Box::new(IntentAction::intent_only(
+            "intent_only_action",
+            "place_order",
+        )))
+        .unwrap();
+
+    let graph = intent_action_graph("intent_only_action");
+    let regs = Registries {
+        sources: &core_regs.sources,
+        computes: &core_regs.computes,
+        triggers: &core_regs.triggers,
+        actions: &act_reg,
+    };
+    let ctx = ExecutionContext::default();
+    let report =
+        crate::runtime::execute_with_metadata(&graph, &regs, &ctx, "graph-1", "event-1").unwrap();
+
+    assert_eq!(report.effects.len(), 1);
+    let effect = &report.effects[0];
+    assert_eq!(effect.kind, "place_order");
+    assert!(effect.writes.is_empty());
+    assert_eq!(effect.intents.len(), 1);
+    assert_eq!(effect.intents[0].kind, "place_order");
+    assert!(
+        effect.intents[0].intent_id.starts_with("eid1:sha256:"),
+        "intent_id should use eid1 derivation"
+    );
+}
+
+#[test]
+fn metadata_aware_execute_emits_canonical_internal_then_external_effects() {
+    let core_regs = crate::catalog::core_registries().unwrap();
+    let mut act_reg = crate::action::ActionRegistry::new();
+    act_reg
+        .register(Box::new(IntentAction::mixed(
+            "intent_mixed_action",
+            "place_order",
+        )))
+        .unwrap();
+
+    let graph = intent_action_graph("intent_mixed_action");
+    let regs = Registries {
+        sources: &core_regs.sources,
+        computes: &core_regs.computes,
+        triggers: &core_regs.triggers,
+        actions: &act_reg,
+    };
+    let ctx = ExecutionContext::default();
+    let report =
+        crate::runtime::execute_with_metadata(&graph, &regs, &ctx, "graph-1", "event-2").unwrap();
+
+    assert_eq!(report.effects.len(), 2);
+
+    let internal = &report.effects[0];
+    assert_eq!(internal.kind, "set_context");
+    assert!(internal.intents.is_empty());
+    assert_eq!(internal.writes.len(), 2);
+    let write_map: HashMap<_, _> = internal
+        .writes
+        .iter()
+        .map(|write| (write.key.as_str(), &write.value))
+        .collect();
+    assert_eq!(write_map.get("order_qty"), Some(&&crate::common::Value::Number(100.0)));
+    assert_eq!(
+        write_map.get("last_symbol"),
+        Some(&&crate::common::Value::String("EURUSD".to_string()))
+    );
+
+    let external = &report.effects[1];
+    assert_eq!(external.kind, "place_order");
+    assert!(external.writes.is_empty());
+    assert_eq!(external.intents.len(), 1);
+    assert_eq!(external.intents[0].kind, external.kind);
 }
 
 /// Action with no writes emits no effects.

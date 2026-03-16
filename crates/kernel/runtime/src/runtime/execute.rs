@@ -15,6 +15,9 @@ pub fn execute(
     registries: &Registries,
     ctx: &ExecutionContext,
 ) -> Result<ExecutionReport, ExecError> {
+    if let Some(node) = first_intent_emitting_action(graph, registries) {
+        return Err(ExecError::IntentMetadataRequired { node });
+    }
     execute_with_metadata(graph, registries, ctx, "graph", "event")
 }
 
@@ -341,7 +344,6 @@ fn execute_action(
 
     // Build effects from manifest write declarations and v1 intent declarations.
     let manifest = primitive.manifest();
-    let mut effects = Vec::new();
     let mut writes = Vec::new();
     for spec in &manifest.effects.writes {
         // Resolve $key via Decision 2 infrastructure
@@ -372,7 +374,7 @@ fn execute_action(
         });
     }
 
-    let mut intents = Vec::new();
+    let mut intents_by_kind: Vec<(String, Vec<IntentRecord>)> = Vec::new();
     for (intent_ordinal, intent_spec) in manifest.effects.intents.iter().enumerate() {
         let mut fields = Vec::new();
         let mut field_values_by_name = HashMap::new();
@@ -446,7 +448,7 @@ fn execute_action(
             });
         }
 
-        intents.push(IntentRecord {
+        let intent = IntentRecord {
             kind: intent_spec.name.clone(),
             intent_id: derive_intent_id(
                 graph_id,
@@ -456,13 +458,31 @@ fn execute_action(
                 intent_ordinal,
             ),
             fields,
-        });
+        };
+
+        if let Some((_, records)) = intents_by_kind
+            .iter_mut()
+            .find(|(kind, _)| kind == &intent_spec.name)
+        {
+            records.push(intent);
+        } else {
+            intents_by_kind.push((intent_spec.name.clone(), vec![intent]));
+        }
     }
 
-    if !writes.is_empty() || !intents.is_empty() {
+    let mut effects = Vec::new();
+    if !writes.is_empty() {
         effects.push(ActionEffect {
             kind: "set_context".to_string(),
             writes,
+            intents: vec![],
+        });
+    }
+
+    for (intent_kind, intents) in intents_by_kind {
+        effects.push(ActionEffect {
+            kind: intent_kind,
+            writes: vec![],
             intents,
         });
     }
@@ -509,6 +529,28 @@ fn ensure_finite(
     }
 
     Ok(())
+}
+
+fn first_intent_emitting_action(
+    graph: &ValidatedGraph,
+    registries: &Registries,
+) -> Option<String> {
+    for node_id in &graph.topo_order {
+        let Some(node) = graph.nodes.get(node_id) else {
+            continue;
+        };
+        if node.kind != PrimitiveKind::Action {
+            continue;
+        }
+
+        let Some(action) = registries.actions.get(&node.impl_id) else {
+            continue;
+        };
+        if !action.manifest().effects.intents.is_empty() {
+            return Some(node.runtime_id.clone());
+        }
+    }
+    None
 }
 
 fn map_common_value(v: crate::common::Value) -> RuntimeValue {

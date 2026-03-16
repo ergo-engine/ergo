@@ -134,7 +134,8 @@ rest:
 2. validate semantic payload and bind it through the adapter binder when
    an adapter is configured
 3. execute the graph step
-4. drain and apply effects through registered handlers
+4. drain and dispatch effects through registered handlers
+   (handler-owned kinds) and egress channels (egress-owned kinds)
 5. enrich the capture artifact
 6. keep replay capture-driven and separate from live ingress
 

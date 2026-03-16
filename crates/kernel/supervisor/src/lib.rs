@@ -12,7 +12,7 @@ use ergo_runtime::common::ActionEffect;
 use serde::{Deserialize, Serialize};
 
 /// Capture bundle format version. This repo treats captures as ephemeral artifacts.
-pub(crate) const CAPTURE_FORMAT_VERSION: &str = "v2";
+pub(crate) const CAPTURE_FORMAT_VERSION: &str = "v3";
 pub const NO_ADAPTER_PROVENANCE: &str = "none";
 
 mod capture;

@@ -200,6 +200,15 @@ pub fn describe_host_replay_error(err: &HostReplayError) -> HostErrorDescriptor 
                 .with_detail(format!("expected: '{}'", expected))
                 .with_detail(format!("got: '{}'", got))
         }
+        HostReplayError::ExternalKindsNotRepresentable { missing } => {
+            HostErrorDescriptor::new(
+                "replay.external_effect_kind_unrepresentable",
+                "capture contains external effect kinds not representable by replay graph ownership",
+            )
+            .with_where("replay ownership preflight")
+            .with_fix("replay with the matching graph/adapter pair used during capture")
+            .with_detail(format!("missing kinds: {}", missing.join(", ")))
+        }
         HostReplayError::Setup(detail) => {
             HostErrorDescriptor::new("replay.host_setup_failed", "host replay setup failed")
                 .with_where("ergo-host replay setup")

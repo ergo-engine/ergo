@@ -275,6 +275,9 @@ pub enum ExecError {
     MissingNode {
         node: String,
     },
+    IntentMetadataRequired {
+        node: String,
+    },
 }
 
 impl ErrorInfo for ExecError {
@@ -290,6 +293,7 @@ impl ErrorInfo for ExecError {
             Self::ContextKeyTypeMismatch { .. } => "SRC-11",
             Self::UnknownPrimitive { .. } => "INTERNAL",
             Self::MissingNode { .. } => "INTERNAL",
+            Self::IntentMetadataRequired { .. } => "GW-EFX-META-1",
         }
     }
 
@@ -307,6 +311,7 @@ impl ErrorInfo for ExecError {
             "I.4" => "STABLE/CLUSTER_SPEC.md#I.4",
             "NUM-FINITE-1" => "CANONICAL/PHASE_INVARIANTS.md#NUM-FINITE-1",
             "X.11" => "CANONICAL/PHASE_INVARIANTS.md#X.11",
+            "GW-EFX-META-1" => "PROJECT/ledger/decisions/intent-id-semantics.md",
             _ => "CANONICAL/PHASE_INVARIANTS.md",
         }
     }
@@ -361,6 +366,10 @@ impl ErrorInfo for ExecError {
                 output, node
             )),
             Self::MissingNode { node } => Cow::Owned(format!("Missing node '{}'", node)),
+            Self::IntentMetadataRequired { node } => Cow::Owned(format!(
+                "Action node '{}' declares intents; execute_with_metadata must be used",
+                node
+            )),
         }
     }
 
@@ -383,6 +392,7 @@ impl ErrorInfo for ExecError {
             Self::MissingOutput { node, output } => {
                 Some(Cow::Owned(format!("$.nodes.{}.outputs.{}", node, output)))
             }
+            Self::IntentMetadataRequired { node } => Some(Cow::Owned(format!("$.nodes.{node}"))),
             _ => None,
         }
     }
@@ -409,6 +419,9 @@ impl ErrorInfo for ExecError {
             )),
             Self::ParameterOutOfRange { .. } => Some(Cow::Borrowed(
                 "Use an Int parameter within f64 exact range (|i| <= 2^53)",
+            )),
+            Self::IntentMetadataRequired { .. } => Some(Cow::Borrowed(
+                "Use execute_with_metadata/run path that supplies graph_id and event_id for deterministic intent IDs",
             )),
             _ => None,
         }
@@ -511,6 +524,19 @@ mod tests {
         assert_eq!(err.rule_id(), "INTERNAL");
         assert_eq!(err.phase(), crate::common::Phase::Execution);
         assert_eq!(err.doc_anchor(), "CANONICAL/PHASE_INVARIANTS.md");
+    }
+
+    #[test]
+    fn exec_intent_metadata_required_uses_decision_anchor() {
+        let err = ExecError::IntentMetadataRequired {
+            node: "act".to_string(),
+        };
+
+        assert_eq!(err.rule_id(), "GW-EFX-META-1");
+        assert_eq!(
+            err.doc_anchor(),
+            "PROJECT/ledger/decisions/intent-id-semantics.md"
+        );
     }
 
     #[test]
