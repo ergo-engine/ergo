@@ -25,7 +25,10 @@ pub fn annotate_action_manifest() -> ActionPrimitiveManifest {
             required: false,
             bounds: None,
         }],
-        effects: ActionEffects { writes: vec![] },
+        effects: ActionEffects {
+            writes: vec![],
+            intents: vec![],
+        },
         execution: ExecutionSpec {
             deterministic: true,
             retryable: false,

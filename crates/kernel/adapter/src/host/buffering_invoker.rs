@@ -133,6 +133,7 @@ mod tests {
                 key: key.to_string(),
                 value: Value::Number(value),
             }],
+            intents: vec![],
         }
     }
 

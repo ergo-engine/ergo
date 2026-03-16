@@ -3318,6 +3318,7 @@ impl WriteAction {
                         value_type: crate::common::ValueType::Number,
                         from_input: from_input.to_string(),
                     }],
+                    intents: vec![],
                 },
                 execution: crate::action::ExecutionSpec {
                     deterministic: true,
@@ -3886,6 +3887,7 @@ fn effect_action_multiple_writes_emits_writes_in_declaration_order() {
                         from_input: "val_b".to_string(),
                     },
                 ],
+                intents: vec![],
             },
             execution: crate::action::ExecutionSpec {
                 deterministic: true,

@@ -1399,6 +1399,7 @@ fn raw_to_action_manifest(
                 })
             })
             .collect::<Result<Vec<_>, ActionParseError>>()?,
+        intents: vec![],
     };
 
     let execution = ergo_runtime::action::ExecutionSpec {

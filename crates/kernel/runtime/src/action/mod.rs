@@ -133,9 +133,32 @@ pub struct ActionWriteSpec {
     pub from_input: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntentFieldSpec {
+    pub name: String,
+    pub value_type: ValueType,
+    pub from_input: Option<String>,
+    pub from_param: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntentMirrorWriteSpec {
+    pub name: String,
+    pub value_type: ValueType,
+    pub from_field: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntentSpec {
+    pub name: String,
+    pub fields: Vec<IntentFieldSpec>,
+    pub mirror_writes: Vec<IntentMirrorWriteSpec>,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ActionEffects {
     pub writes: Vec<ActionWriteSpec>,
+    pub intents: Vec<IntentSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -241,6 +264,61 @@ pub enum ActionValidationError {
         expected: ValueType,
         found: ActionValueType,
     },
+    DuplicateIntentName {
+        name: String,
+        first_index: usize,
+        second_index: usize,
+    },
+    DuplicateIntentFieldName {
+        intent_name: String,
+        field_name: String,
+        first_index: usize,
+        second_index: usize,
+    },
+    IntentFieldMissingSource {
+        intent_name: String,
+        field_name: String,
+    },
+    IntentFieldMultipleSources {
+        intent_name: String,
+        field_name: String,
+    },
+    IntentFieldFromInputNotFound {
+        intent_name: String,
+        field_name: String,
+        from_input: String,
+    },
+    IntentFieldFromInputTypeMismatch {
+        intent_name: String,
+        field_name: String,
+        from_input: String,
+        expected: ValueType,
+        found: ActionValueType,
+    },
+    IntentFieldFromParamNotFound {
+        intent_name: String,
+        field_name: String,
+        from_param: String,
+    },
+    IntentFieldFromParamTypeMismatch {
+        intent_name: String,
+        field_name: String,
+        from_param: String,
+        expected: ValueType,
+        found: ParameterType,
+    },
+    MirrorWriteFromFieldNotFound {
+        intent_name: String,
+        write_name: String,
+        from_field: String,
+    },
+    MirrorWriteTypeMismatch {
+        intent_name: String,
+        write_name: String,
+        from_field: String,
+        expected: ValueType,
+        found: ValueType,
+    },
 }
 
 impl ErrorInfo for ActionValidationError {
@@ -267,6 +345,16 @@ impl ErrorInfo for ActionValidationError {
             Self::WriteKeyReferenceNotString { .. } => "ACT-21",
             Self::WriteFromInputNotFound { .. } => "ACT-22",
             Self::WriteFromInputTypeMismatch { .. } => "ACT-23",
+            Self::DuplicateIntentName { .. } => "ACT-24",
+            Self::DuplicateIntentFieldName { .. } => "ACT-25",
+            Self::IntentFieldMissingSource { .. } => "ACT-26",
+            Self::IntentFieldMultipleSources { .. } => "ACT-27",
+            Self::IntentFieldFromInputNotFound { .. } => "ACT-28",
+            Self::IntentFieldFromInputTypeMismatch { .. } => "ACT-29",
+            Self::IntentFieldFromParamNotFound { .. } => "ACT-30",
+            Self::IntentFieldFromParamTypeMismatch { .. } => "ACT-31",
+            Self::MirrorWriteFromFieldNotFound { .. } => "ACT-32",
+            Self::MirrorWriteTypeMismatch { .. } => "ACT-33",
         }
     }
 
@@ -297,6 +385,16 @@ impl ErrorInfo for ActionValidationError {
             "ACT-21" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-21",
             "ACT-22" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-22",
             "ACT-23" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-23",
+            "ACT-24" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-24",
+            "ACT-25" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-25",
+            "ACT-26" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-26",
+            "ACT-27" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-27",
+            "ACT-28" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-28",
+            "ACT-29" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-29",
+            "ACT-30" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-30",
+            "ACT-31" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-31",
+            "ACT-32" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-32",
+            "ACT-33" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-33",
             _ => "CANONICAL/PHASE_INVARIANTS.md",
         }
     }
@@ -390,6 +488,85 @@ impl ErrorInfo for ActionValidationError {
                 "Write '{}' type {:?} does not match input '{}' type {:?}",
                 write_name, expected, from_input, found
             )),
+            Self::DuplicateIntentName { name, .. } => {
+                Cow::Owned(format!("Duplicate intent name: '{}'", name))
+            }
+            Self::DuplicateIntentFieldName {
+                intent_name,
+                field_name,
+                ..
+            } => Cow::Owned(format!(
+                "Intent '{}' has duplicate field name '{}'",
+                intent_name, field_name
+            )),
+            Self::IntentFieldMissingSource {
+                intent_name,
+                field_name,
+            } => Cow::Owned(format!(
+                "Intent '{}' field '{}' must set exactly one source (from_input or from_param)",
+                intent_name, field_name
+            )),
+            Self::IntentFieldMultipleSources {
+                intent_name,
+                field_name,
+            } => Cow::Owned(format!(
+                "Intent '{}' field '{}' sets both from_input and from_param",
+                intent_name, field_name
+            )),
+            Self::IntentFieldFromInputNotFound {
+                intent_name,
+                field_name,
+                from_input,
+            } => Cow::Owned(format!(
+                "Intent '{}' field '{}' references undeclared input '{}'",
+                intent_name, field_name, from_input
+            )),
+            Self::IntentFieldFromInputTypeMismatch {
+                intent_name,
+                field_name,
+                from_input,
+                expected,
+                found,
+            } => Cow::Owned(format!(
+                "Intent '{}' field '{}' expects {:?} but input '{}' is {:?}",
+                intent_name, field_name, expected, from_input, found
+            )),
+            Self::IntentFieldFromParamNotFound {
+                intent_name,
+                field_name,
+                from_param,
+            } => Cow::Owned(format!(
+                "Intent '{}' field '{}' references undeclared parameter '{}'",
+                intent_name, field_name, from_param
+            )),
+            Self::IntentFieldFromParamTypeMismatch {
+                intent_name,
+                field_name,
+                from_param,
+                expected,
+                found,
+            } => Cow::Owned(format!(
+                "Intent '{}' field '{}' expects {:?} but parameter '{}' is {:?}",
+                intent_name, field_name, expected, from_param, found
+            )),
+            Self::MirrorWriteFromFieldNotFound {
+                intent_name,
+                write_name,
+                from_field,
+            } => Cow::Owned(format!(
+                "Intent '{}' mirror write '{}' references undeclared field '{}'",
+                intent_name, write_name, from_field
+            )),
+            Self::MirrorWriteTypeMismatch {
+                intent_name,
+                write_name,
+                from_field,
+                expected,
+                found,
+            } => Cow::Owned(format!(
+                "Intent '{}' mirror write '{}' type {:?} does not match field '{}' type {:?}",
+                intent_name, write_name, expected, from_field, found
+            )),
         }
     }
 
@@ -429,6 +606,42 @@ impl ErrorInfo for ActionValidationError {
             Self::WriteFromInputTypeMismatch { .. } => {
                 Some(Cow::Borrowed("$.effects.writes[].from_input"))
             }
+            Self::DuplicateIntentName { second_index, .. } => Some(Cow::Owned(format!(
+                "$.effects.intents[{}].name",
+                second_index
+            ))),
+            Self::DuplicateIntentFieldName {
+                intent_name,
+                second_index,
+                ..
+            } => Some(Cow::Owned(format!(
+                "$.effects.intents[?(@.name==\"{}\")].fields[{}].name",
+                intent_name, second_index
+            ))),
+            Self::IntentFieldMissingSource { intent_name, .. }
+            | Self::IntentFieldMultipleSources { intent_name, .. } => Some(Cow::Owned(format!(
+                "$.effects.intents[?(@.name==\"{}\")].fields[]",
+                intent_name
+            ))),
+            Self::IntentFieldFromInputNotFound { intent_name, .. }
+            | Self::IntentFieldFromInputTypeMismatch { intent_name, .. } => {
+                Some(Cow::Owned(format!(
+                    "$.effects.intents[?(@.name==\"{}\")].fields[].from_input",
+                    intent_name
+                )))
+            }
+            Self::IntentFieldFromParamNotFound { intent_name, .. }
+            | Self::IntentFieldFromParamTypeMismatch { intent_name, .. } => {
+                Some(Cow::Owned(format!(
+                    "$.effects.intents[?(@.name==\"{}\")].fields[].from_param",
+                    intent_name
+                )))
+            }
+            Self::MirrorWriteFromFieldNotFound { intent_name, .. }
+            | Self::MirrorWriteTypeMismatch { intent_name, .. } => Some(Cow::Owned(format!(
+                "$.effects.intents[?(@.name==\"{}\")].mirror_writes[]",
+                intent_name
+            ))),
         }
     }
 
@@ -492,6 +705,56 @@ impl ErrorInfo for ActionValidationError {
             } => Some(Cow::Owned(format!(
                 "Change input '{}' type to match write type {:?}, or use a scalar-typed input",
                 from_input, expected
+            ))),
+            Self::DuplicateIntentName { name, .. } => Some(Cow::Owned(format!(
+                "Rename intent '{}' to a unique value",
+                name
+            ))),
+            Self::DuplicateIntentFieldName { field_name, .. } => Some(Cow::Owned(format!(
+                "Rename intent field '{}' to a unique value within its intent",
+                field_name
+            ))),
+            Self::IntentFieldMissingSource { .. } => Some(Cow::Borrowed(
+                "Set exactly one source on each intent field: from_input or from_param",
+            )),
+            Self::IntentFieldMultipleSources { .. } => Some(Cow::Borrowed(
+                "Set only one source on each intent field: from_input or from_param",
+            )),
+            Self::IntentFieldFromInputNotFound { from_input, .. } => Some(Cow::Owned(format!(
+                "Declare input '{}' in the action manifest inputs",
+                from_input
+            ))),
+            Self::IntentFieldFromInputTypeMismatch {
+                from_input,
+                expected,
+                ..
+            } => Some(Cow::Owned(format!(
+                "Change input '{}' type to match intent field type {:?}",
+                from_input, expected
+            ))),
+            Self::IntentFieldFromParamNotFound { from_param, .. } => Some(Cow::Owned(format!(
+                "Declare parameter '{}' in the action manifest parameters",
+                from_param
+            ))),
+            Self::IntentFieldFromParamTypeMismatch {
+                from_param,
+                expected,
+                ..
+            } => Some(Cow::Owned(format!(
+                "Change parameter '{}' type to match intent field type {:?}",
+                from_param, expected
+            ))),
+            Self::MirrorWriteFromFieldNotFound { from_field, .. } => Some(Cow::Owned(format!(
+                "Declare intent field '{}' before referencing it from mirror_writes",
+                from_field
+            ))),
+            Self::MirrorWriteTypeMismatch {
+                from_field,
+                expected,
+                ..
+            } => Some(Cow::Owned(format!(
+                "Change mirror write type to match field '{}' type {:?}",
+                from_field, expected
             ))),
         }
     }

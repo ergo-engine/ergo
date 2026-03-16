@@ -140,6 +140,7 @@ fn comp_11_write_target_not_provided_rejected() {
             value_type: ValueType::Number,
             from_input: String::new(),
         }],
+        intents: vec![],
     };
 
     let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
@@ -156,6 +157,7 @@ fn comp_12_write_target_not_writable_rejected() {
             value_type: ValueType::Number,
             from_input: String::new(),
         }],
+        intents: vec![],
     };
 
     let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
@@ -172,6 +174,7 @@ fn comp_13_write_type_mismatch_rejected() {
             value_type: ValueType::Bool,
             from_input: String::new(),
         }],
+        intents: vec![],
     };
 
     let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
@@ -187,6 +190,7 @@ fn comp_14_missing_set_context_rejected() {
             value_type: ValueType::Number,
             from_input: String::new(),
         }],
+        intents: vec![],
     };
 
     let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
@@ -319,6 +323,7 @@ fn comp_action_dollar_key_resolves_to_parameter_value() {
             value_type: ValueType::Number,
             from_input: String::new(),
         }],
+        intents: vec![],
     };
     let params = HashMap::from([(
         "key".to_string(),
@@ -338,6 +343,7 @@ fn comp_action_dollar_key_missing_provision_rejected() {
             value_type: ValueType::Number,
             from_input: String::new(),
         }],
+        intents: vec![],
     };
     let params = HashMap::from([(
         "key".to_string(),
@@ -360,6 +366,7 @@ fn comp_action_dollar_key_missing_parameter_rejected() {
             value_type: ValueType::Number,
             from_input: String::new(),
         }],
+        intents: vec![],
     };
 
     let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
@@ -380,6 +387,7 @@ fn comp_action_dollar_key_non_string_param_rejected() {
             value_type: ValueType::Number,
             from_input: String::new(),
         }],
+        intents: vec![],
     };
     let params = HashMap::from([("key".to_string(), ParameterValue::Number(42.0))]);
 

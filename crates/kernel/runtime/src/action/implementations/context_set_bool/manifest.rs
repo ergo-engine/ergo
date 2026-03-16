@@ -40,6 +40,7 @@ pub fn context_set_bool_manifest() -> ActionPrimitiveManifest {
                 value_type: ValueType::Bool,
                 from_input: "value".to_string(),
             }],
+            intents: vec![],
         },
         execution: ExecutionSpec {
             deterministic: true,

@@ -485,6 +485,7 @@ mod tests {
                 key: "price".to_string(),
                 value: Value::Number(42.0),
             }],
+            intents: vec![],
         };
 
         let bundle = Arc::new(Mutex::new(CaptureBundle {

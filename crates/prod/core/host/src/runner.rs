@@ -73,6 +73,12 @@ struct AdapterMode {
     binder: ergo_adapter::EventBinder,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StepMode {
+    Live,
+    Replay,
+}
+
 pub struct HostedRunner {
     session: CapturingSession<HostDecisionLog, BufferingRuntimeInvoker>,
     decision_log: HostDecisionLog,
@@ -82,6 +88,8 @@ pub struct HostedRunner {
     adapter: Option<AdapterMode>,
     handlers: BTreeMap<String, Arc<dyn EffectHandler>>,
     applied_effects: AppliedEffectsByDecision,
+    #[cfg(test)]
+    last_step_mode: Option<StepMode>,
 }
 
 impl HostedRunner {
@@ -102,6 +110,7 @@ impl HostedRunner {
                 &config.provides,
                 &graph_emittable_effect_kinds,
                 &handler_kinds,
+                &HashSet::new(),
             )?;
         }
 
@@ -136,25 +145,34 @@ impl HostedRunner {
             adapter,
             handlers,
             applied_effects: AppliedEffectsByDecision::default(),
+            #[cfg(test)]
+            last_step_mode: None,
         })
     }
 
     pub fn step(&mut self, event: HostedEvent) -> Result<HostedStepOutcome, HostedStepError> {
         let external_event = self.build_external_event(event)?;
-        self.execute_step(external_event)
+        self.execute_step(external_event, StepMode::Live)
     }
 
     pub fn replay_step(
         &mut self,
         external_event: ExternalEvent,
     ) -> Result<HostedStepOutcome, HostedStepError> {
-        self.execute_step(external_event)
+        self.execute_step(external_event, StepMode::Replay)
     }
 
     fn execute_step(
         &mut self,
         external_event: ExternalEvent,
+        mode: StepMode,
     ) -> Result<HostedStepOutcome, HostedStepError> {
+        let _ = mode;
+        #[cfg(test)]
+        {
+            self.last_step_mode = Some(mode);
+        }
+
         let event_id = external_event.event_id().as_str().to_string();
         if !self.seen_event_ids.insert(event_id.clone()) {
             return Err(HostedStepError::DuplicateEventId { event_id });
@@ -259,6 +277,11 @@ impl HostedRunner {
 
     pub fn context_snapshot(&self) -> &BTreeMap<String, serde_json::Value> {
         self.context_store.snapshot()
+    }
+
+    #[cfg(test)]
+    fn last_step_mode(&self) -> Option<StepMode> {
+        self.last_step_mode
     }
 
     fn build_external_event(&self, event: HostedEvent) -> Result<ExternalEvent, HostedStepError> {
@@ -990,6 +1013,27 @@ mod tests {
             runner.context_snapshot().get("armed"),
             Some(&serde_json::json!(false))
         );
+    }
+
+    #[test]
+    fn replay_step_threads_replay_mode_into_execute_step() {
+        let runtime = runtime_for_graph(build_number_source_graph(), AdapterProvides::default());
+        let mut runner = HostedRunner::new(
+            GraphId::new("g"),
+            Constraints::default(),
+            runtime,
+            "runtime:test".to_string(),
+            None,
+        )
+        .expect("hosted runner should initialize");
+
+        let event =
+            ExternalEvent::mechanical(EventId::new("replay_mode"), ExternalEventKind::Command);
+        runner
+            .replay_step(event)
+            .expect("replay_step should execute");
+
+        assert_eq!(runner.last_step_mode(), Some(StepMode::Replay));
     }
 
     #[test]

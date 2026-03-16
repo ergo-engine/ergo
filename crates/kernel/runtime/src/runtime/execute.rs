@@ -364,6 +364,7 @@ fn execute_action(
         effects.push(ActionEffect {
             kind: "set_context".to_string(),
             writes,
+            intents: vec![],
         });
     }
 

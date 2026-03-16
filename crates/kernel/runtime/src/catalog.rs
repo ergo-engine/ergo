@@ -866,7 +866,10 @@ mod tests {
                         required: false,
                         bounds: None,
                     }],
-                    effects: ActionEffects { writes: Vec::new() },
+                    effects: ActionEffects {
+                        writes: Vec::new(),
+                        intents: Vec::new(),
+                    },
                     execution: ActionExecutionSpec {
                         deterministic: true,
                         retryable: false,

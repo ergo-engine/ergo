@@ -33,30 +33,35 @@ These decisions constrain everything below. Read them first.
 | --- | --- | --- |
 | Effect dispatch and channel roles | `decisions/effect-dispatch-and-channel-roles.md` | Four-role lifecycle (Action → Adapter → Host → Channel). Replay split doctrine. Ingress/egress terminology. |
 | v1 external effect intent model | `decisions/v1-external-effect-intent-model.md` | Option A (first-class intents). Two-correlated-projections. Manifest `effects.intents`. Mirror writes. Dispatch ordering. Egress handshake as classification. Startup coverage guarantee. |
+| Intent payload shape | `decisions/intent-payload-shape.md` | Typed fields (`Vec<IntentField>`). JSON projection at egress boundary only. Registration-time validation. |
+| Intent ID semantics | `decisions/intent-id-semantics.md` | Deterministic SHA-256 derivation (`eid1:sha256:hex`). Length-prefixed inputs. Replay-safe. |
 
 ## Classification Summary
 
-**6 decision records needed:**
+**Phase 1 items (all CLOSED):**
 
-1. ActionEffect v1 payload shape (typed fields vs arbitrary JSON)
-2. `intent_id` correlation semantics (must be deterministic for replay)
-3. GW-EFX-3H — Egress acknowledgment and result semantics
-4. GW-EFX-3I — Crash consistency and delivery guarantees
-5. GW-EFX-3C — Egress provenance granularity and replay strictness
-6. GW-EFX-3D — Routing config location, schema, and validation
+1. ~~ActionEffect v1 payload shape~~ — DECIDED (`intent-payload-shape.md`)
+2. ~~`intent_id` correlation semantics~~ — DECIDED (`intent-id-semantics.md`)
+3. ~~Handler-vs-egress precedence~~ — RESOLVED inline (`ConflictingCoverage`)
+4. ~~GW-EFX-3A replay effect-path split~~ — IMPLEMENTED
+5. ~~`mirror_writes[].from_field` validation~~ — IMPLEMENTED
+6. ~~Coverage validation evolution~~ — IMPLEMENTED
 
-**2 inline forks (decided within parent row):**
+**Remaining (5 decision records):**
 
-7. Artifact-preserving policy on dispatch failure (inside GW-EFX-3B)
-8. Handler-vs-egress precedence when both claim same kind (inside
-   GW-EFX-3F)
+7. GW-EFX-3H — Egress acknowledgment and result semantics
+8. GW-EFX-3I — Crash consistency and delivery guarantees
+9. GW-EFX-3C — Egress provenance granularity and replay strictness
+10. GW-EFX-3D — Routing config location, schema, and validation
+11. GW-EFX-3J — Egress failure and partial-apply semantics
 
-**4 code/design items (no decision needed):**
+**Remaining (1 inline fork):**
 
-9. GW-EFX-3A — Replay effect-path split
-10. `mirror_writes[].from_field` registration validation
-11. GW-EFX-3E — Egress run-phase timing (downstream of ack model)
-12. GW-EFX-3J — Egress failure taxonomy (downstream of ack + crash)
+12. Artifact-preserving policy on dispatch failure (inside GW-EFX-3B)
+
+**Remaining (1 design/code item):**
+
+13. GW-EFX-3E — Egress run-phase timing (downstream of ack model)
 
 ## Work Sequence
 
@@ -65,11 +70,11 @@ Within a phase, rows can be worked in parallel unless noted.
 
 ---
 
-### Phase 1 — Foundations
+### Phase 1 — Foundations — COMPLETE
 
-Nothing in Phase 2 or 3 can start until Phase 1 is done.
+All three items closed. Phase 2 is now open.
 
-#### 1a. GW-EFX-3A — Replay effect-path split
+#### 1a. GW-EFX-3A — Replay effect-path split — CLOSED
 
 - **Type:** Code. Decision already made.
 - **What:** `HostedRunner::execute_step()` is shared by `step()` and
@@ -77,74 +82,90 @@ Nothing in Phase 2 or 3 can start until Phase 1 is done.
   Gate the path so external effects are never dispatched during replay.
 - **Output:** Modified `runner.rs` with live-vs-replay mode parameter.
   Test proving external handler is skipped during `replay_step()`.
-- **Depends on:** Nothing. Can start immediately.
-- **Blocks:** Everything in Phase 2 and 3.
+- **Closed:** `StepMode` enum added. `step()` passes `Live`,
+  `replay_step()` passes `Replay`. `execute_step()` accepts mode.
+  Test `replay_step_threads_replay_mode_into_execute_step` passes.
+  All workspace tests pass.
 
-#### 1b. GW-EFX-3G (remaining) — Data model, intent_id, from_field
+#### 1b. GW-EFX-3G (remaining) — Data model, intent_id, from_field — CLOSED
 
-Three items. Two need decision records. One is pure code.
+All three sub-items closed. 22 files changed, +745 lines. Audited line-by-line.
 
-**1b-i. ActionEffect v1 payload shape — DECISION RECORD**
+**1b-i. ActionEffect v1 payload shape — CLOSED**
 
-- **The fork:** Current `ActionEffect` is `kind: String` +
-  `writes: Vec<EffectWrite>`. External intents need a payload. Two
-  real options:
-  - **Typed fields:** Each intent field has a name, type, and source
-    (`from_input` / `from_param`). Payload is a declared, validatable
-    structure. Registration-time guarantees. Less flexible.
-  - **Arbitrary JSON:** Payload is `serde_json::Value`. Flexible.
-    No registration-time type checking on intent payloads. Validation
-    shifts to runtime or egress.
-- **Why it matters:** Typed fields let the manifest validator reject
-  bad intents before any code runs. Arbitrary JSON defers errors to
-  runtime. Affects every downstream consumer of intent records.
-- **Output:** Decision record → data model change in
-  `ergo_runtime::common`.
-- **Depends on:** Nothing.
+- **Decision:** Typed fields. Intent payloads are `Vec<IntentField>`
+  with `name: String` + `value: Value`. Manifest-declared, validated
+  at registration. JSON projection at egress boundary only.
+  Compatibility check at startup against adapter JSON Schema.
+- **Record:** `docs/ledger/decisions/intent-payload-shape.md`
+- **Closed:** Decision landed. Typed fields chosen over arbitrary JSON
+  for registration-time guarantees, replay determinism, and pattern
+  consistency with `effects.writes`. Codex refinement adopted: JSON
+  projection at egress boundary for interop.
 
-**1b-ii. `intent_id` correlation semantics — DECISION RECORD**
+**1b-ii. `intent_id` correlation semantics — CLOSED**
 
-- **The fork:** `intent_id` must correlate the mirror write and the
-  external intent. But replay compares effect payloads byte-for-byte
-  via hash. A non-deterministic ID (e.g. random UUID) changes on
-  every run and will break strict replay unless excluded from the
-  hash or generated deterministically. Real options:
-  - **Deterministic derivation** from inputs (which inputs? hash
-    scheme?). Replay-safe. But what guarantees uniqueness across
-    steps?
-  - **Excluded from hash.** Use UUID freely, but weaken replay
-    integrity — the ID is no longer verified.
-  - **Per-step counter.** Deterministic within a run. But not
-    globally unique across runs.
-- **Why it matters:** Gets the replay contract wrong and strict
-  replay breaks for every capture that includes external intents.
-- **Output:** Decision record → field on ActionEffect and capture
-  records.
-- **Depends on:** Nothing.
+- **Decision:** Deterministic derivation via SHA-256 of length-prefixed
+  inputs: `eid1` version tag + `graph_id` + `event_id` +
+  `node_runtime_id` + `intent_kind` + `intent_ordinal`. Produces
+  `"eid1:sha256:{hex}"`. Follows Ergo's existing provenance/hash
+  idiom. Replay-safe. Unique per intent occurrence.
+- **Record:** `docs/ledger/decisions/intent-id-semantics.md`
+- **Closed:** Deterministic derivation chosen. Random UUID rejected
+  (breaks replay). Per-step counter rejected (fragile, not globally
+  unique). Requires plumbing `event_id` and `graph_id` to the runtime
+  intent emission site.
 
-**1b-iii. `mirror_writes[].from_field` validation — CODE**
+**1b-iii. `mirror_writes[].from_field` validation — CLOSED**
 
 - **What:** Every `from_field` in `mirror_writes` must reference a
   declared intent field in the same `intents` entry. Registration-time
   check in the action manifest validator.
-- **Output:** Validation code. Test. PHASE_INVARIANTS.md row.
-- **Depends on:** 1b-i (needs the payload shape to know what fields
-  exist).
+- **Closed:** ACT-32 (`MirrorWriteFromFieldNotFound`) and ACT-33
+  (`MirrorWriteTypeMismatch`) added to `action/registry.rs`. Validation
+  scoped to same intent’s fields via `field_types` HashMap. 9 tests
+  covering all intent validation scenarios. All workspace tests pass.
+  PHASE_INVARIANTS.md row still needed (tracked separately).
 
-#### 1c. GW-EFX-3F (remaining) — Coverage validation evolution
+#### 1c. GW-EFX-3F (remaining) — Coverage validation evolution — CLOSED
 
 - **Type:** Mostly code, with one inline fork.
 - **What:** `ensure_handler_coverage()` only knows registered
   in-process handlers. It needs to accept egress-claimed effect kinds
   as covered. Plus: startup invariant that no run begins if an
   emittable intent kind lacks egress coverage.
-- **Inline fork:** What happens if both a local handler AND an egress
-  channel claim the same effect kind? Options: error at startup, local
-  handler wins, egress wins. Must be decided during implementation.
-- **Output:** Modified `coverage.rs`. Startup validation in host run
-  path. Tests.
-- **Depends on:** 1b (needs intent kind vocabulary).
-- **Blocks:** 2a (plumbing must pass coverage at startup).
+- **Inline fork resolved:** Both handler and egress claim same kind →
+  error at startup (`ConflictingCoverage`). Exactly one owner per kind.
+- **Closed:** `ensure_handler_coverage` widened with
+  `egress_claimed_kinds` parameter. `ConflictingCoverage` error variant
+  added. Runner passes `&HashSet::new()` (no egress config yet).
+  4 new tests + 3 existing tests updated. All workspace tests pass.
+
+---
+
+### Deferred Validations (Phase 2-dependent)
+
+These items were flagged during the Phase 1 audit but cannot be
+closed until Phase 2 work provides the necessary infrastructure.
+
+**CHECK-15: End-to-end intent_id determinism test**
+
+- **Source:** Phase 1 audit, CHECK-15 (FLAG)
+- **What:** `derive_intent_id()` is unit-tested for determinism, but
+  the full derivation path — from host step through runtime emission
+  to capture and replay comparison — does not yet exist. The
+  derivation inputs (`graph_id`, `event_id`, `node_runtime_id`,
+  `intent_kind`, `intent_ordinal`) are individually proven
+  deterministic, but their composition through the emission path is
+  not yet exercised by an integration test.
+- **Why deferred:** Intent emission wiring (plumbing `event_id` and
+  `graph_id` to the runtime emit path) is Phase 2 work. The test
+  cannot be written until that plumbing exists.
+- **Closure condition:** An integration test exists that captures a
+  run with at least one emitted intent, replays it, and verifies
+  `compare_decisions()` passes — proving `intent_id` is identical
+  across capture and replay.
+- **Becomes closable after:** 2a (dispatch plumbing) lands.
 
 ---
 
@@ -298,22 +319,23 @@ block and is not blocked by any row above.
 
 ## Summary
 
-| Phase | Row | Type | Can start |
+| Phase | Row | Type | Status |
 | --- | --- | --- | --- |
-| 1 | 3A — replay split | Code | Now |
-| 1 | 3G — payload shape | Decision record | Now |
-| 1 | 3G — intent_id | Decision record | Now |
-| 1 | 3G — from_field validation | Code (after payload shape) | After 1b-i |
-| 1 | 3F — coverage | Code + inline fork | After 1b |
-| 2 | 3B — dispatch plumbing | Code + inline fork | After Phase 1 |
-| 2 | 3H — ack model | Decision record | After Phase 1 |
-| 2 | 3D — routing config | Decision record | After 1b |
-| 2 | 3E — timing | Downstream design | After 2b |
-| 2 | 3I — crash consistency | Decision record | After 2b, 2d |
-| 3 | 3J — failure taxonomy | Decision record | After 2b, 2d, 2e |
-| 3 | 3C — egress provenance | Decision record | After 2c, 2d |
+| 1 | 3A — replay split | Code | CLOSED |
+| 1 | 3G — payload shape | Decision record | CLOSED |
+| 1 | 3G — intent_id | Decision record | CLOSED |
+| 1 | 3G — from_field validation | Code | CLOSED |
+| 1 | 3F — coverage | Code + inline fork | CLOSED |
+| 2 | 3B — dispatch plumbing | Code + inline fork | Ready (Phase 1 done) |
+| 2 | 3H — ack model | Decision record | Ready (Phase 1 done) |
+| 2 | 3D — routing config | Decision record | Ready (Phase 1 done) |
+| 2 | 3E — timing | Downstream design | Waiting on 2b |
+| 2 | 3I — crash consistency | Decision record | Waiting on 2b, 2d |
+| 3 | 3J — failure taxonomy | Decision record | Waiting on 2b, 2d, 2e |
+| 3 | 3C — egress provenance | Decision record | Waiting on 2c, 2d |
 
-**7 decision records.** **2 inline forks.** **3 code/design items.**
+**Phase 1: COMPLETE** (2 decisions landed, 1 inline fork resolved, 3 code items done).
+**Remaining: 5 decision records. 1 inline fork. 1 design/code item.**
 GW-EFX-2 is independent.
 
 ## Rules
