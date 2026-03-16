@@ -35,6 +35,17 @@ pub struct CapturedActionEffect {
     pub effect_hash: String,
 }
 
+/// A captured durable-accept acknowledgment for a dispatched intent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CapturedIntentAck {
+    pub intent_id: String,
+    pub channel: String,
+    pub status: String,
+    pub acceptance: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress_ref: Option<String>,
+}
+
 /// SUP-7: DecisionLog is write-only. No read/query surface is ever exposed.
 pub trait DecisionLog {
     fn log(&self, entry: DecisionLogEntry);
@@ -116,6 +127,10 @@ pub struct EpisodeInvocationRecord {
     pub termination: Option<RunTermination>,
     pub retry_count: usize,
     pub effects: Vec<CapturedActionEffect>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub intent_acks: Vec<CapturedIntentAck>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interruption: Option<String>,
 }
 
 impl From<&DecisionLogEntry> for EpisodeInvocationRecord {
@@ -129,6 +144,8 @@ impl From<&DecisionLogEntry> for EpisodeInvocationRecord {
             termination: entry.termination.clone(),
             retry_count: entry.retry_count,
             effects: vec![],
+            intent_acks: vec![],
+            interruption: None,
         }
     }
 }

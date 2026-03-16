@@ -1,11 +1,11 @@
-#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error_format::{render_cli_error, CliErrorInfo};
 use crate::output;
 use ergo_host::{
-    run_graph_from_paths, DriverConfig, InterruptionReason, RunGraphFromPathsRequest, RunOutcome,
+    parse_egress_config_toml, run_graph_from_paths, DriverConfig, EgressConfig, InterruptionReason,
+    RunGraphFromPathsRequest, RunOutcome,
 };
 
 #[derive(Debug, Clone)]
@@ -26,6 +26,7 @@ pub enum GraphRunCompletion {
 
 pub fn run_graph_command(graph_path: &Path, args: &[String]) -> Result<GraphRunSummary, String> {
     let opts = parse_run_options(args)?;
+    let egress_config = load_egress_config(opts.egress_config_path.as_deref())?;
     let capture_output = opts
         .capture_output
         .clone()
@@ -35,6 +36,7 @@ pub fn run_graph_command(graph_path: &Path, args: &[String]) -> Result<GraphRunS
         cluster_paths: opts.cluster_paths,
         driver: opts.driver,
         adapter_path: opts.adapter_path,
+        egress_config,
         capture_output,
         pretty_capture: opts.pretty_capture,
     })
@@ -90,6 +92,7 @@ fn sanitize_filename_component(input: &str) -> String {
 #[derive(Debug)]
 struct RunGraphOptions {
     adapter_path: Option<PathBuf>,
+    egress_config_path: Option<PathBuf>,
     driver: DriverConfig,
     capture_output: Option<PathBuf>,
     pretty_capture: bool,
@@ -98,6 +101,7 @@ struct RunGraphOptions {
 
 fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
     let mut adapter_path = None;
+    let mut egress_config_path = None;
     let mut fixture_path: Option<PathBuf> = None;
     let mut driver_command: Vec<String> = Vec::new();
     let mut capture_output = None;
@@ -119,6 +123,20 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
                     )
                 })?;
                 adapter_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--egress-config" => {
+                let value = args.get(i + 1).ok_or_else(|| {
+                    render_cli_error(
+                        &CliErrorInfo::new(
+                            "cli.missing_option_value",
+                            format!("{} requires a path", args[i]),
+                        )
+                        .with_where(format!("arg '{}'", args[i]))
+                        .with_fix("provide --egress-config <egress.toml>"),
+                    )
+                })?;
+                egress_config_path = Some(PathBuf::from(value));
                 i += 2;
             }
             "-f" | "--fixture" => {
@@ -209,7 +227,7 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
                 return Err(render_cli_error(
                     &CliErrorInfo::new("cli.invalid_option", format!("unknown run option '{other}'"))
                         .with_where(format!("arg '{other}'"))
-                        .with_fix("use -a|--adapter, -f|--fixture, --driver-cmd, --driver-arg, -o|--capture|--capture-output, -p|--pretty-capture, --cluster-path, or --search-path"),
+                        .with_fix("use -a|--adapter, --egress-config, -f|--fixture, --driver-cmd, --driver-arg, -o|--capture|--capture-output, -p|--pretty-capture, --cluster-path, or --search-path"),
                 ))
             }
         }
@@ -244,11 +262,37 @@ fn parse_run_options(args: &[String]) -> Result<RunGraphOptions, String> {
 
     Ok(RunGraphOptions {
         adapter_path,
+        egress_config_path,
         driver,
         capture_output,
         pretty_capture,
         cluster_paths,
     })
+}
+
+fn load_egress_config(path: Option<&Path>) -> Result<Option<EgressConfig>, String> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+
+    let raw = fs::read_to_string(path).map_err(|err| {
+        render_cli_error(
+            &CliErrorInfo::new(
+                "cli.egress_config_read_failed",
+                format!("failed to read egress config '{}': {err}", path.display()),
+            )
+            .with_where("run egress config")
+            .with_fix("provide a readable --egress-config <path>"),
+        )
+    })?;
+    let config = parse_egress_config_toml(&raw).map_err(|err| {
+        render_cli_error(
+            &CliErrorInfo::new("cli.egress_config_parse_failed", err)
+                .with_where(format!("egress config '{}'", path.display()))
+                .with_fix("fix the TOML schema for egress channels/routes"),
+        )
+    })?;
+    Ok(Some(config))
 }
 
 #[cfg(test)]
@@ -300,6 +344,8 @@ mod tests {
             "fixture.jsonl".to_string(),
             "-a".to_string(),
             "adapter.yaml".to_string(),
+            "--egress-config".to_string(),
+            "egress.toml".to_string(),
             "-o".to_string(),
             "capture-short.json".to_string(),
             "-p".to_string(),
@@ -313,6 +359,10 @@ mod tests {
         assert_eq!(
             opts.adapter_path.as_deref(),
             Some(Path::new("adapter.yaml"))
+        );
+        assert_eq!(
+            opts.egress_config_path.as_deref(),
+            Some(Path::new("egress.toml"))
         );
         assert_eq!(
             opts.capture_output.as_deref(),
@@ -372,7 +422,7 @@ mod tests {
         assert!(
             err.contains("code: cli.invalid_option")
                 && err.contains("where: arg '--bogus'")
-                && err.contains("fix: use -a|--adapter, -f|--fixture, --driver-cmd"),
+                && err.contains("fix: use -a|--adapter, --egress-config, -f|--fixture"),
             "unexpected error: {err}"
         );
     }

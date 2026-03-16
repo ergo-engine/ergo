@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::action::{ActionOutcome, ActionValue};
 use crate::cluster::{PrimitiveKind, ValueType};
-use crate::common::{ActionEffect, EffectWrite};
+use crate::common::{derive_intent_id, ActionEffect, EffectWrite, IntentField, IntentRecord};
 use crate::trigger::{TriggerEvent, TriggerValue};
 
 use super::types::{
@@ -14,6 +14,16 @@ pub fn execute(
     graph: &ValidatedGraph,
     registries: &Registries,
     ctx: &ExecutionContext,
+) -> Result<ExecutionReport, ExecError> {
+    execute_with_metadata(graph, registries, ctx, "graph", "event")
+}
+
+pub fn execute_with_metadata(
+    graph: &ValidatedGraph,
+    registries: &Registries,
+    ctx: &ExecutionContext,
+    graph_id: &str,
+    event_id: &str,
 ) -> Result<ExecutionReport, ExecError> {
     let mut node_outputs: HashMap<String, HashMap<String, RuntimeValue>> = HashMap::new();
     let mut effects: Vec<ActionEffect> = Vec::new();
@@ -39,7 +49,7 @@ pub fn execute(
                     produce_skipped_outputs(node)
                 } else {
                     let (action_outputs, action_effects) =
-                        execute_action(node, inputs, registries)?;
+                        execute_action(node, inputs, registries, graph_id, event_id)?;
                     effects.extend(action_effects);
                     action_outputs
                 }
@@ -298,6 +308,8 @@ fn execute_action(
     node: &ValidatedNode,
     inputs: HashMap<String, RuntimeValue>,
     registries: &Registries,
+    graph_id: &str,
+    event_id: &str,
 ) -> Result<(HashMap<String, RuntimeValue>, Vec<ActionEffect>), ExecError> {
     let primitive =
         registries
@@ -327,44 +339,131 @@ fn execute_action(
 
     let outputs = primitive.execute(&mapped_inputs, &mapped_parameters);
 
-    // Build effects from manifest write declarations
+    // Build effects from manifest write declarations and v1 intent declarations.
     let manifest = primitive.manifest();
     let mut effects = Vec::new();
-    if !manifest.effects.writes.is_empty() {
-        let mut writes = Vec::new();
-        for spec in &manifest.effects.writes {
-            // Resolve $key via Decision 2 infrastructure
-            let resolved_name = crate::common::resolve_manifest_name(&spec.name, &node.parameters)
-                .map_err(|_| ExecError::ParameterTypeConversionFailed {
-                    node: node.runtime_id.clone(),
-                    parameter: spec.name.clone(),
-                })?;
-
-            // Read the write value from the action input snapshot
-            let input_val =
-                inputs
-                    .get(&spec.from_input)
-                    .ok_or_else(|| ExecError::MissingOutput {
-                        node: node.runtime_id.clone(),
-                        output: spec.from_input.clone(),
-                    })?;
-
-            let value = map_runtime_value_to_common(input_val).ok_or_else(|| {
-                ExecError::TypeConversionFailed {
-                    node: node.runtime_id.clone(),
-                    port: spec.from_input.clone(),
-                }
+    let mut writes = Vec::new();
+    for spec in &manifest.effects.writes {
+        // Resolve $key via Decision 2 infrastructure
+        let resolved_name = crate::common::resolve_manifest_name(&spec.name, &node.parameters)
+            .map_err(|_| ExecError::ParameterTypeConversionFailed {
+                node: node.runtime_id.clone(),
+                parameter: spec.name.clone(),
             })?;
 
-            writes.push(EffectWrite {
-                key: resolved_name,
+        // Read the write value from the action input snapshot
+        let input_val = inputs
+            .get(&spec.from_input)
+            .ok_or_else(|| ExecError::MissingOutput {
+                node: node.runtime_id.clone(),
+                output: spec.from_input.clone(),
+            })?;
+
+        let value = map_runtime_value_to_common(input_val).ok_or_else(|| {
+            ExecError::TypeConversionFailed {
+                node: node.runtime_id.clone(),
+                port: spec.from_input.clone(),
+            }
+        })?;
+
+        writes.push(EffectWrite {
+            key: resolved_name,
+            value,
+        });
+    }
+
+    let mut intents = Vec::new();
+    for (intent_ordinal, intent_spec) in manifest.effects.intents.iter().enumerate() {
+        let mut fields = Vec::new();
+        let mut field_values_by_name = HashMap::new();
+
+        for field_spec in &intent_spec.fields {
+            let value = match (
+                field_spec.from_input.as_ref(),
+                field_spec.from_param.as_ref(),
+            ) {
+                (Some(from_input), None) => {
+                    let input_value =
+                        mapped_inputs
+                            .get(from_input)
+                            .ok_or_else(|| ExecError::MissingOutput {
+                                node: node.runtime_id.clone(),
+                                output: from_input.clone(),
+                            })?;
+                    map_action_value_to_common(input_value).ok_or_else(|| {
+                        ExecError::TypeConversionFailed {
+                            node: node.runtime_id.clone(),
+                            port: from_input.clone(),
+                        }
+                    })?
+                }
+                (None, Some(from_param)) => {
+                    let parameter_value = mapped_parameters.get(from_param).ok_or_else(|| {
+                        ExecError::ParameterTypeConversionFailed {
+                            node: node.runtime_id.clone(),
+                            parameter: from_param.clone(),
+                        }
+                    })?;
+                    map_action_parameter_value_to_common(parameter_value).ok_or_else(|| {
+                        ExecError::ParameterTypeConversionFailed {
+                            node: node.runtime_id.clone(),
+                            parameter: from_param.clone(),
+                        }
+                    })?
+                }
+                _ => {
+                    return Err(ExecError::ParameterTypeConversionFailed {
+                        node: node.runtime_id.clone(),
+                        parameter: field_spec.name.clone(),
+                    });
+                }
+            };
+
+            field_values_by_name.insert(field_spec.name.clone(), value.clone());
+            fields.push(IntentField {
+                name: field_spec.name.clone(),
                 value,
             });
         }
+
+        for mirror_write in &intent_spec.mirror_writes {
+            let resolved_name =
+                crate::common::resolve_manifest_name(&mirror_write.name, &node.parameters)
+                    .map_err(|_| ExecError::ParameterTypeConversionFailed {
+                        node: node.runtime_id.clone(),
+                        parameter: mirror_write.name.clone(),
+                    })?;
+            let mirrored_value = field_values_by_name
+                .get(&mirror_write.from_field)
+                .ok_or_else(|| ExecError::MissingOutput {
+                    node: node.runtime_id.clone(),
+                    output: mirror_write.from_field.clone(),
+                })?
+                .clone();
+            writes.push(EffectWrite {
+                key: resolved_name,
+                value: mirrored_value,
+            });
+        }
+
+        intents.push(IntentRecord {
+            kind: intent_spec.name.clone(),
+            intent_id: derive_intent_id(
+                graph_id,
+                event_id,
+                &node.runtime_id,
+                &intent_spec.name,
+                intent_ordinal,
+            ),
+            fields,
+        });
+    }
+
+    if !writes.is_empty() || !intents.is_empty() {
         effects.push(ActionEffect {
             kind: "set_context".to_string(),
             writes,
-            intents: vec![],
+            intents,
         });
     }
 
@@ -527,6 +626,27 @@ fn map_runtime_value_to_common(v: &RuntimeValue) -> Option<crate::common::Value>
         RuntimeValue::String(s) => Some(crate::common::Value::String(s.clone())),
         RuntimeValue::Series(s) => Some(crate::common::Value::Series(s.clone())),
         RuntimeValue::Event(_) => None,
+    }
+}
+
+fn map_action_value_to_common(v: &ActionValue) -> Option<crate::common::Value> {
+    match v {
+        ActionValue::Number(n) => Some(crate::common::Value::Number(*n)),
+        ActionValue::Series(s) => Some(crate::common::Value::Series(s.clone())),
+        ActionValue::Bool(b) => Some(crate::common::Value::Bool(*b)),
+        ActionValue::String(s) => Some(crate::common::Value::String(s.clone())),
+        ActionValue::Event(_) => None,
+    }
+}
+
+fn map_action_parameter_value_to_common(
+    v: &crate::action::ParameterValue,
+) -> Option<crate::common::Value> {
+    match v {
+        crate::action::ParameterValue::Number(n) => Some(crate::common::Value::Number(*n)),
+        crate::action::ParameterValue::Bool(b) => Some(crate::common::Value::Bool(*b)),
+        crate::action::ParameterValue::String(s) => Some(crate::common::Value::String(s.clone())),
+        crate::action::ParameterValue::Int(_) | crate::action::ParameterValue::Enum(_) => None,
     }
 }
 

@@ -3,7 +3,7 @@ use ergo_adapter::composition::{
     validate_source_adapter_composition, ContextRequirement, SourceRequires,
 };
 use ergo_adapter::provides::{AdapterProvides, ContextKeyProvision};
-use ergo_runtime::action::{ActionEffects, ActionWriteSpec};
+use ergo_runtime::action::{ActionEffects, ActionWriteSpec, IntentSpec};
 use ergo_runtime::cluster::ParameterValue;
 use ergo_runtime::common::{ErrorInfo, ValueType};
 use std::collections::{HashMap, HashSet};
@@ -195,6 +195,22 @@ fn comp_14_missing_set_context_rejected() {
 
     let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
     assert_comp(&err, "COMP-14", Some("$.effects.writes"));
+}
+
+#[test]
+fn comp_17_missing_intent_effect_rejected() {
+    let adapter = make_adapter_provides_with_effects(vec![], vec![]);
+    let effects = ActionEffects {
+        writes: vec![],
+        intents: vec![IntentSpec {
+            name: "place_order".to_string(),
+            fields: vec![],
+            mirror_writes: vec![],
+        }],
+    };
+
+    let err = validate_action_adapter_composition(&effects, &adapter, &no_params()).unwrap_err();
+    assert_comp(&err, "COMP-17", Some("$.effects.intents[0].name"));
 }
 
 // --- $key resolution tests for source composition ---

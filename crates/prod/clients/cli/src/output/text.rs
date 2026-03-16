@@ -11,7 +11,7 @@ pub fn usage() -> String {
         "Ergo CLI (v1)",
         "",
         "Core runtime",
-        "  ergo run <graph.yaml> (-f|--fixture <events.jsonl> | --driver-cmd <program> [--driver-arg <arg> ...]) [-a|--adapter <adapter.yaml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path <path> ...]",
+        "  ergo run <graph.yaml> (-f|--fixture <events.jsonl> | --driver-cmd <program> [--driver-arg <arg> ...]) [-a|--adapter <adapter.yaml>] [--egress-config <egress.toml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path <path> ...]",
         "  ergo replay <capture.json> -g|--graph <graph.yaml> [-a|--adapter <adapter.yaml>] [--cluster-path <path> ...]",
         "",
         "Fixture operability",
@@ -41,7 +41,7 @@ pub fn help_topic(topic: &str, fixture_usage: &str) -> Option<String> {
         "run" => Some(
             [
                 "usage:",
-                "  ergo run <graph.yaml> (-f|--fixture <events.jsonl> | --driver-cmd <program> [--driver-arg <arg> ...]) [-a|--adapter <adapter.yaml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path <path> ...]",
+                "  ergo run <graph.yaml> (-f|--fixture <events.jsonl> | --driver-cmd <program> [--driver-arg <arg> ...]) [-a|--adapter <adapter.yaml>] [--egress-config <egress.toml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path <path> ...]",
             ]
             .join("\n"),
         ),

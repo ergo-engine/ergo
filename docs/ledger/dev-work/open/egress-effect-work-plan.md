@@ -35,6 +35,10 @@ These decisions constrain everything below. Read them first.
 | v1 external effect intent model | `decisions/v1-external-effect-intent-model.md` | Option A (first-class intents). Two-correlated-projections. Manifest `effects.intents`. Mirror writes. Dispatch ordering. Egress handshake as classification. Startup coverage guarantee. |
 | Intent payload shape | `decisions/intent-payload-shape.md` | Typed fields (`Vec<IntentField>`). JSON projection at egress boundary only. Registration-time validation. |
 | Intent ID semantics | `decisions/intent-id-semantics.md` | Deterministic SHA-256 derivation (`eid1:sha256:hex`). Length-prefixed inputs. Replay-safe. |
+| Egress ack model | `decisions/egress-ack-model.md` | Durable-accept. Host waits for durably-queued ack, not completion. Completion returns via ingress. |
+| Egress routing config | `decisions/egress-routing-config.md` | Hybrid: host run request canonical, file surfaces compile into it. BTreeMap route table. TOML for v0. |
+| Egress timing/lifecycle | `decisions/egress-timing-lifecycle.md` | Start before first event, per-step blocking dispatch+ack, capture before egress stop. |
+| Crash consistency | `decisions/crash-consistency.md` | At-most-once host dispatch, egress-owned post-ack, recording gap, v2 exactness path. |
 
 ## Classification Summary
 
@@ -47,21 +51,21 @@ These decisions constrain everything below. Read them first.
 5. ~~`mirror_writes[].from_field` validation~~ — IMPLEMENTED
 6. ~~Coverage validation evolution~~ — IMPLEMENTED
 
-**Remaining (5 decision records):**
+**Phase 2 items closed so far:**
 
-7. GW-EFX-3H — Egress acknowledgment and result semantics
-8. GW-EFX-3I — Crash consistency and delivery guarantees
-9. GW-EFX-3C — Egress provenance granularity and replay strictness
-10. GW-EFX-3D — Routing config location, schema, and validation
-11. GW-EFX-3J — Egress failure and partial-apply semantics
+7. ~~GW-EFX-3H ack model~~ — DECIDED (`egress-ack-model.md`)
+8. ~~GW-EFX-3D routing config~~ — DECIDED (`egress-routing-config.md`)
+9. ~~GW-EFX-3E timing/lifecycle~~ — DECIDED (`egress-timing-lifecycle.md`)
+10. ~~GW-EFX-3I crash consistency~~ — DECIDED (`crash-consistency.md`)
 
-**Remaining (1 inline fork):**
+**Remaining (2 decision records):**
 
-12. Artifact-preserving policy on dispatch failure (inside GW-EFX-3B)
+11. GW-EFX-3C — Egress provenance granularity and replay strictness
+12. GW-EFX-3J — Egress failure and partial-apply semantics
 
-**Remaining (1 design/code item):**
+**Phase 2 inline fork resolved:**
 
-13. GW-EFX-3E — Egress run-phase timing (downstream of ack model)
+12. ~~Artifact-preserving policy~~ — RESOLVED as Option C in 2a
 
 ## Work Sequence
 
@@ -173,85 +177,74 @@ closed until Phase 2 work provides the necessary infrastructure.
 
 These define how egress works from the user's perspective.
 
-#### 2a. GW-EFX-3B — Dispatch plumbing
+#### 2a. GW-EFX-3B — Dispatch plumbing — CLOSED
 
 - **Type:** Code, with one inline fork.
 - **What:** Host applies mirror writes via `SetContextHandler`, then
   forwards external intent records to egress process. Mirror failure
   blocks dispatch. Dispatch failure produces interrupted outcome.
-- **Inline fork:** Artifact-preserving policy on dispatch failure. If
-  egress dispatch fails after mirror writes succeed, does the host
-  write a partial capture artifact, a full artifact, or no artifact?
-  The v1 intent model decision explicitly leaves this open. Must be
-  decided during implementation.
-- **Output:** Modified `runner.rs` and `usecases.rs`. Integration test
-  with mock egress process.
-- **Depends on:** 1a, 1b, 1c.
+- **Inline fork resolved:** Option C — failed dispatch step retained
+  in capture with explicit interruption marker. Partial acks preserved.
+- **Closed:** Full egress pipeline implemented. 21 files, +1826 lines.
+  EgressConfig types + TOML parsing, startup validation, process
+  lifecycle (ready/dispatch/ack/end/shutdown), per-step blocking in
+  runner.rs gated by StepMode::Live, capture enrichment with
+  CapturedIntentAck and interruption markers, CLI --egress-config flag.
+  Runtime intent emission wired in execute.rs (execute_with_metadata).
+  Audited: 23 checks, COMPLIANT. cargo test --workspace green.
 
-#### 2b. GW-EFX-3H — Egress acknowledgment and result semantics — DECISION RECORD
+#### 2b. GW-EFX-3H — Egress acknowledgment and result semantics — CLOSED
 
-- **The fork:** What does the host wait for from the egress process?
-  - **(a) Accepted intent** — egress received the record. Host moves
-    on. Fast. But "received" ≠ "done."
-  - **(b) Completed work** — egress did the external action and
-    confirmed. Slow. But host knows the outcome before next step.
-  - **(c) Async confirmation** — host fires and forgets. Egress
-    result returns later as an ingress event keyed by `intent_id`.
-    Decoupled. But capture artifact can't record outcome inline.
-- **Why it matters:** Shapes user expectations, timeout behavior,
-  capture semantics, and what "delivered" means for crash consistency.
-- **Output:** Decision record in `docs/ledger/decisions/`.
-- **Depends on:** Easier to decide after 1b (intent shape helps
-  reason about what's acknowledged). Not strictly blocked.
+- **Decision:** Durable-accept. Host waits for egress to confirm
+  intent is durably accepted (survives process crash), not completed.
+  Completion truth returns later via ingress event keyed by
+  `intent_id`. Ack payload: `type`, `intent_id`, `status`,
+  `acceptance`, optional `egress_ref`. Timeout → dispatch failure →
+  interrupted run. Replay skips egress entirely.
+- **Record:** `docs/ledger/decisions/egress-ack-model.md`
+- **Closed:** Four options evaluated. Received (a) rejected (false
+  durability promise). Completed (b) rejected (unbounded latency,
+  non-deterministic replay). Fire-and-forget (c) rejected (silent
+  loss). Durable-accept (d) chosen — bounded latency, contracted
+  durability, clean replay semantics.
 
-#### 2c. GW-EFX-3D — Routing configuration — DECISION RECORD
+#### 2c. GW-EFX-3D — Routing configuration — CLOSED
 
-- **The fork:** Where does the user declare "effect kind `place_order`
-  routes to egress channel `broker.py`"? Real options:
-  - **`ergo.toml`** — project-level config. Discoverable. But doesn't
-    exist yet (feat/ergo-init is backburner).
-  - **Standalone config file** — `egress.toml` or similar, passed via
-    `--egress-config`. Works without ergo-init.
-  - **Host run request** — programmatic, in the `RunGraphFromPathsRequest`
-    struct. Works for SDK users. Not ergonomic for CLI.
-  - **Adapter manifest section** — would extend the adapter contract.
-    Rejected by doctrine (adapter is declarative vocabulary, not
-    prod routing).
-- **Also open:** Schema shape, validation rules, relationship to
-  adapter's `accepts.effects`.
-- **Why it matters:** This is what the user touches. Bad choice here
-  means bad UX.
-- **Output:** Decision record. Route-table schema.
-- **Depends on:** 1b (route table references intent kinds).
+- **Decision:** Hybrid. Host run request as canonical internal model
+  (`EgressConfig` with `BTreeMap` channels + routes). File surfaces
+  (standalone TOML via `--egress-config`, future `ergo.toml`) compile
+  into it. Adapter manifest rejected. Validation: route channel must
+  exist, routed kind must be adapter-accepted, non-emittable route =
+  warning not error. Routed kinds feed into `ensure_handler_coverage`.
+- **Record:** `docs/ledger/decisions/egress-routing-config.md`
+- **Closed:** Four options evaluated. Hybrid chosen for SDK + CLI
+  coverage. `BTreeMap` for deterministic provenance hashing.
 
-#### 2d. GW-EFX-3E — Egress run-phase timing
+#### 2d. GW-EFX-3E — Egress run-phase timing — CLOSED
 
-- **Type:** Downstream design. Answer follows from ack model.
-- **What:** When does the egress process start? Does it outlive the
-  run? Does the host wait for drain before writing capture?
-- **Possible small fork:** Start-at-run-start vs lazy start on first
-  intent. Unlikely to block anything but worth noting.
-- **Output:** Lifecycle definition. Constrains 2a implementation.
-- **Depends on:** 2b (ack model affects drain semantics).
+- **Decision:** Start at run start (before first ingress event).
+  Per-step blocking: mirror writes → dispatch intents → wait for
+  durable-accept acks → next step. End-of-run: assert zero pending
+  acks, write capture, then stop egress with bounded shutdown. Lazy
+  start rejected (mid-run failure). No-drain rejected (contradicts
+  per-step blocking invariant).
+- **Record:** `docs/ledger/decisions/egress-timing-lifecycle.md`
+- **Closed:** Per-step blocking chosen for causal clarity, localized
+  timeout, and capture completeness.
 
-#### 2e. GW-EFX-3I — Crash consistency — DECISION RECORD
+#### 2e. GW-EFX-3I — Crash consistency — CLOSED
 
-- **The fork:** If the host crashes around dispatch, what's the
-  delivery model?
-  - **Best-effort** — intent may or may not arrive. Simple. Unreliable.
-  - **At-most-once** — intent arrives zero or one times. No dupes.
-    But may lose intents.
-  - **At-least-once with dedup** — intent arrives at least once.
-    Egress must handle duplicates. More complex. More reliable.
-  - **Egress-owned idempotency** — host doesn't care. Egress is
-    responsible for dedup using `intent_id`. Cleanest separation.
-    But pushes complexity to user code.
-- **Why it matters:** This is where duplicate real-world effects
-  appear. A user who places the same order twice because of a crash
-  window will not forgive the system.
-- **Output:** Decision record in `docs/ledger/decisions/`.
-- **Depends on:** 2b (ack model determines what "delivered" means),
-  2d (timing determines the crash window).
+- **Decision:** At-most-once host dispatch. No retry, no WAL, no
+  two-phase commit in v0. Egress owns post-ack delivery. Crash before
+  ack = unknown delivery status. Crash before capture write = recording
+  gap (delivery happened, evidence lost). Recovery via deterministic
+  intent_id reconciliation. v2 exactness path documented (WAL, recovery
+  scanner, idempotent egress, incremental checkpointing).
+- **Record:** `docs/ledger/decisions/crash-consistency.md`
+- **Closed:** Three crash categories analyzed. Codex corrected:
+  capture-loss is run-wide (not per-step), durable-accept is contract
+  assertion (not host-verifiable). Mirror-write divergence on crash
+  documented as acceptable with operational mitigation.
 
 ---
 
@@ -326,16 +319,16 @@ block and is not blocked by any row above.
 | 1 | 3G — intent_id | Decision record | CLOSED |
 | 1 | 3G — from_field validation | Code | CLOSED |
 | 1 | 3F — coverage | Code + inline fork | CLOSED |
-| 2 | 3B — dispatch plumbing | Code + inline fork | Ready (Phase 1 done) |
-| 2 | 3H — ack model | Decision record | Ready (Phase 1 done) |
-| 2 | 3D — routing config | Decision record | Ready (Phase 1 done) |
-| 2 | 3E — timing | Downstream design | Waiting on 2b |
-| 2 | 3I — crash consistency | Decision record | Waiting on 2b, 2d |
-| 3 | 3J — failure taxonomy | Decision record | Waiting on 2b, 2d, 2e |
-| 3 | 3C — egress provenance | Decision record | Waiting on 2c, 2d |
+| 2 | 3B — dispatch plumbing | Code + inline fork | CLOSED |
+| 2 | 3H — ack model | Decision record | CLOSED |
+| 2 | 3D — routing config | Decision record | CLOSED |
+| 2 | 3E — timing | Downstream design | CLOSED |
+| 2 | 3I — crash consistency | Decision record | CLOSED |
+| 3 | 3J — failure taxonomy | Decision record | Ready (2e done) |
+| 3 | 3C — egress provenance | Decision record | Ready (2c+2d done) |
 
 **Phase 1: COMPLETE** (2 decisions landed, 1 inline fork resolved, 3 code items done).
-**Remaining: 5 decision records. 1 inline fork. 1 design/code item.**
+**Remaining: 2 decision records. 0 inline forks. 0 design/code items.**
 GW-EFX-2 is independent.
 
 ## Rules

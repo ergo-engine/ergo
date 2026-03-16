@@ -1,5 +1,7 @@
 use ergo_adapter::host::{EffectApplyError, HandlerCoverageError};
 
+use crate::egress::{EgressProcessError, EgressValidationError};
+
 #[derive(Debug)]
 pub enum HostedStepError {
     DuplicateEventId { event_id: String },
@@ -13,6 +15,9 @@ pub enum HostedStepError {
     MissingDecisionEntry,
     EffectApply(EffectApplyError),
     HandlerCoverage(HandlerCoverageError),
+    EgressValidation(String),
+    EgressLifecycle(String),
+    EgressDispatchFailure { detail: String },
     EffectsWithoutAdapter,
 }
 
@@ -42,6 +47,13 @@ impl std::fmt::Display for HostedStepError {
             }
             Self::EffectApply(err) => write!(f, "effect application failed: {err}"),
             Self::HandlerCoverage(err) => write!(f, "handler coverage failed: {err}"),
+            Self::EgressValidation(detail) => {
+                write!(f, "egress configuration validation failed: {detail}")
+            }
+            Self::EgressLifecycle(detail) => write!(f, "egress lifecycle failure: {detail}"),
+            Self::EgressDispatchFailure { detail } => {
+                write!(f, "egress dispatch failure: {detail}")
+            }
             Self::EffectsWithoutAdapter => write!(f, "effects emitted in adapter-independent mode"),
         }
     }
@@ -58,5 +70,17 @@ impl From<EffectApplyError> for HostedStepError {
 impl From<HandlerCoverageError> for HostedStepError {
     fn from(value: HandlerCoverageError) -> Self {
         Self::HandlerCoverage(value)
+    }
+}
+
+impl From<EgressValidationError> for HostedStepError {
+    fn from(value: EgressValidationError) -> Self {
+        Self::EgressValidation(value.to_string())
+    }
+}
+
+impl From<EgressProcessError> for HostedStepError {
+    fn from(value: EgressProcessError) -> Self {
+        Self::EgressLifecycle(value.to_string())
     }
 }

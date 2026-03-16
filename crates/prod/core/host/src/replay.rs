@@ -772,6 +772,7 @@ mod tests {
             runtime,
             RUNTIME_PROVENANCE.to_string(),
             Some(adapter),
+            None,
         )
         .expect("hosted runner must initialize")
     }

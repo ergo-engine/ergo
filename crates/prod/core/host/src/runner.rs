@@ -16,7 +16,11 @@ use ergo_supervisor::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::capture_enrichment::{enrich_bundle_with_effects, AppliedEffectsByDecision};
+use crate::capture_enrichment::{
+    enrich_bundle_with_host_artifacts, AppliedEffectsByDecision, AppliedIntentAcksByDecision,
+    StepInterruptionsByDecision,
+};
+use crate::egress::{validate_egress_config, EgressConfig, EgressRuntime, EgressValidationWarning};
 use crate::error::HostedStepError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +92,9 @@ pub struct HostedRunner {
     adapter: Option<AdapterMode>,
     handlers: BTreeMap<String, Arc<dyn EffectHandler>>,
     applied_effects: AppliedEffectsByDecision,
+    applied_intent_acks: AppliedIntentAcksByDecision,
+    interruptions: StepInterruptionsByDecision,
+    egress: Option<EgressRuntime>,
     #[cfg(test)]
     last_step_mode: Option<StepMode>,
 }
@@ -99,19 +106,35 @@ impl HostedRunner {
         runtime: RuntimeHandle,
         runtime_provenance: String,
         adapter: Option<HostedAdapterConfig>,
+        egress_config: Option<EgressConfig>,
     ) -> Result<Self, HostedStepError> {
         let graph_emittable_effect_kinds = runtime.graph_emittable_effect_kinds();
         let mut handlers: BTreeMap<String, Arc<dyn EffectHandler>> = BTreeMap::new();
         handlers.insert("set_context".to_string(), Arc::new(SetContextHandler));
 
+        let egress = egress_config.map(EgressRuntime::new);
         if let Some(config) = &adapter {
             let handler_kinds: BTreeSet<String> = handlers.keys().cloned().collect();
-            ensure_handler_coverage(
-                &config.provides,
-                &graph_emittable_effect_kinds,
-                &handler_kinds,
-                &HashSet::new(),
-            )?;
+            if let Some(egress_runtime) = &egress {
+                let warnings = validate_egress_config(
+                    egress_runtime.config(),
+                    &config.provides,
+                    &graph_emittable_effect_kinds,
+                    &handler_kinds,
+                )?;
+                log_egress_warnings(&warnings);
+            } else {
+                ensure_handler_coverage(
+                    &config.provides,
+                    &graph_emittable_effect_kinds,
+                    &handler_kinds,
+                    &HashSet::new(),
+                )?;
+            }
+        } else if egress.is_some() {
+            return Err(HostedStepError::EgressValidation(
+                "egress configuration requires adapter-bound mode".to_string(),
+            ));
         }
 
         let runtime = BufferingRuntimeInvoker::new(runtime);
@@ -145,6 +168,9 @@ impl HostedRunner {
             adapter,
             handlers,
             applied_effects: AppliedEffectsByDecision::default(),
+            applied_intent_acks: AppliedIntentAcksByDecision::default(),
+            interruptions: StepInterruptionsByDecision::default(),
+            egress,
             #[cfg(test)]
             last_step_mode: None,
         })
@@ -167,7 +193,9 @@ impl HostedRunner {
         external_event: ExternalEvent,
         mode: StepMode,
     ) -> Result<HostedStepOutcome, HostedStepError> {
-        let _ = mode;
+        if mode == StepMode::Live {
+            self.start_egress_channels()?;
+        }
         #[cfg(test)]
         {
             self.last_step_mode = Some(mode);
@@ -209,6 +237,7 @@ impl HostedRunner {
 
         let drained_effects = self.runtime.drain_pending_effects();
         let mut applied_writes = Vec::new();
+        let mut intent_acks = Vec::new();
 
         if entry.decision == Decision::Invoke {
             let expected_calls = (entry.retry_count as u64).saturating_add(1);
@@ -243,6 +272,49 @@ impl HostedRunner {
                 self.applied_effects
                     .record(decision_index, drained_effects.clone());
             }
+
+            if mode == StepMode::Live {
+                let intents: Vec<ergo_runtime::common::IntentRecord> = drained_effects
+                    .iter()
+                    .flat_map(|effect| effect.intents.clone())
+                    .collect();
+                if !intents.is_empty() {
+                    for intent in &intents {
+                        let Some(egress) = self.egress.as_mut() else {
+                            self.interruptions.record(
+                                decision_index,
+                                "egress dispatch failed: no egress runtime configured".to_string(),
+                            );
+                            return Err(HostedStepError::EgressDispatchFailure {
+                                detail: "intent dispatch required but no egress runtime configured"
+                                    .to_string(),
+                            });
+                        };
+
+                        match egress.dispatch_intent(intent) {
+                            Ok(ack) => intent_acks.push(ack),
+                            Err(err) => {
+                                if !intent_acks.is_empty() {
+                                    self.applied_intent_acks
+                                        .record(decision_index, intent_acks.clone());
+                                }
+                                self.interruptions.record(
+                                    decision_index,
+                                    format!("egress dispatch failed: {err}"),
+                                );
+                                return Err(HostedStepError::EgressDispatchFailure {
+                                    detail: err.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !intent_acks.is_empty() {
+                self.applied_intent_acks
+                    .record(decision_index, intent_acks.clone());
+            }
         } else {
             if run_calls != 0 {
                 return Err(HostedStepError::LifecycleViolation {
@@ -269,10 +341,44 @@ impl HostedRunner {
         })
     }
 
+    pub fn start_egress_channels(&mut self) -> Result<(), HostedStepError> {
+        let Some(egress) = self.egress.as_mut() else {
+            return Ok(());
+        };
+        egress.start_channels()?;
+        Ok(())
+    }
+
+    pub fn ensure_no_pending_egress_acks(&self) -> Result<(), HostedStepError> {
+        let Some(egress) = self.egress.as_ref() else {
+            return Ok(());
+        };
+        egress.assert_no_pending_acks()?;
+        Ok(())
+    }
+
+    pub fn stop_egress_channels(&mut self) -> Result<(), HostedStepError> {
+        let Some(egress) = self.egress.as_mut() else {
+            return Ok(());
+        };
+        egress.shutdown_channels()?;
+        Ok(())
+    }
+
     pub fn into_capture_bundle(self) -> CaptureBundle {
+        self.into_capture_bundle_and_egress().0
+    }
+
+    pub fn into_capture_bundle_and_egress(mut self) -> (CaptureBundle, Option<EgressRuntime>) {
         let mut bundle = self.session.into_bundle();
-        enrich_bundle_with_effects(&mut bundle, self.applied_effects.effects());
-        bundle
+        enrich_bundle_with_host_artifacts(
+            &mut bundle,
+            self.applied_effects.effects(),
+            self.applied_intent_acks.intent_acks(),
+            self.interruptions.interruptions(),
+        );
+        let egress = self.egress.take();
+        (bundle, egress)
     }
 
     pub fn context_snapshot(&self) -> &BTreeMap<String, serde_json::Value> {
@@ -364,6 +470,12 @@ fn allowed_schema_keys(
     Ok(keys)
 }
 
+fn log_egress_warnings(warnings: &[EgressValidationWarning]) {
+    for warning in warnings {
+        eprintln!("warning: {warning}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,8 +486,11 @@ mod tests {
         OutputPortSpec, OutputRef, ParameterValue,
     };
     use ergo_supervisor::Constraints;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::{BTreeMap, HashMap, HashSet};
     use std::sync::Arc;
+    use std::time::Duration;
+
+    use crate::egress::{EgressChannelConfig, EgressConfig, EgressRoute};
 
     fn build_context_set_bool_graph() -> ExpandedGraph {
         let mut nodes = HashMap::new();
@@ -881,6 +996,7 @@ mod tests {
             runtime,
             "runtime:test".to_string(),
             Some(adapter),
+            None,
         )
         .expect("hosted runner should initialize");
 
@@ -927,6 +1043,7 @@ mod tests {
             runtime,
             "runtime:test".to_string(),
             Some(adapter),
+            None,
         )
         .expect("hosted runner should initialize");
 
@@ -955,6 +1072,7 @@ mod tests {
             Constraints::default(),
             runtime,
             "runtime:test".to_string(),
+            None,
             None,
         )
         .expect("hosted runner should initialize in adapter-independent mode");
@@ -987,6 +1105,7 @@ mod tests {
             runtime,
             "runtime:test".to_string(),
             Some(adapter),
+            None,
         )
         .expect("hosted runner should initialize");
 
@@ -1024,6 +1143,7 @@ mod tests {
             runtime,
             "runtime:test".to_string(),
             None,
+            None,
         )
         .expect("hosted runner should initialize");
 
@@ -1034,6 +1154,60 @@ mod tests {
             .expect("replay_step should execute");
 
         assert_eq!(runner.last_step_mode(), Some(StepMode::Replay));
+    }
+
+    #[test]
+    fn replay_mode_does_not_start_egress_channels() {
+        let provides = adapter_provides_with_effects(&["place_order"]);
+        let runtime = runtime_for_graph(build_number_source_graph(), provides.clone());
+        let adapter = adapter_config(provides);
+        let egress_config = EgressConfig {
+            default_ack_timeout: Duration::from_millis(50),
+            channels: BTreeMap::from([(
+                "broker".to_string(),
+                EgressChannelConfig::Process {
+                    command: vec!["/definitely/missing-egress-binary".to_string()],
+                },
+            )]),
+            routes: BTreeMap::from([(
+                "place_order".to_string(),
+                EgressRoute {
+                    channel: "broker".to_string(),
+                    ack_timeout: None,
+                },
+            )]),
+        };
+
+        let mut runner = HostedRunner::new(
+            GraphId::new("g"),
+            Constraints::default(),
+            runtime,
+            "runtime:test".to_string(),
+            Some(adapter),
+            Some(egress_config),
+        )
+        .expect("runner initialization should validate egress config");
+
+        runner
+            .replay_step(ExternalEvent::mechanical(
+                EventId::new("replay_skip_egress"),
+                ExternalEventKind::Command,
+            ))
+            .expect("replay mode must not spawn egress");
+
+        let live_err = runner
+            .step(HostedEvent {
+                event_id: "live_startup".to_string(),
+                kind: ExternalEventKind::Command,
+                at: EventTime::default(),
+                semantic_kind: Some("price_bar".to_string()),
+                payload: Some(serde_json::json!({"price": 1.0})),
+            })
+            .expect_err("live mode should attempt egress startup and fail");
+        assert!(
+            matches!(live_err, HostedStepError::EgressLifecycle(_)),
+            "expected egress lifecycle error, got {live_err:?}"
+        );
     }
 
     #[test]
@@ -1048,6 +1222,7 @@ mod tests {
             runtime,
             "runtime:test".to_string(),
             Some(adapter),
+            None,
         )
         .expect("hosted runner should initialize");
 
@@ -1108,6 +1283,7 @@ mod tests {
             runtime,
             "runtime:test".to_string(),
             Some(adapter),
+            None,
         )
         .expect("hosted runner should initialize");
 
@@ -1155,6 +1331,7 @@ mod tests {
             runtime_ok,
             "runtime:test".to_string(),
             Some(adapter_ok),
+            None,
         );
         assert!(ok.is_ok());
     }
@@ -1174,6 +1351,7 @@ mod tests {
             runtime,
             "runtime:test".to_string(),
             Some(adapter),
+            None,
         )
         .expect("hosted runner should initialize");
 
@@ -1224,6 +1402,7 @@ mod tests {
             runtime,
             "runtime:test".to_string(),
             None,
+            None,
         )
         .expect("hosted runner should initialize");
 
@@ -1261,6 +1440,7 @@ mod tests {
             Constraints::default(),
             runtime,
             "runtime:test".to_string(),
+            None,
             None,
         )
         .expect("hosted runner should initialize");

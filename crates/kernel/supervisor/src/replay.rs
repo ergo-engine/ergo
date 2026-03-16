@@ -309,6 +309,8 @@ mod tests {
             termination: Some(ergo_adapter::RunTermination::Completed),
             retry_count: 0,
             effects,
+            intent_acks: vec![],
+            interruption: None,
         }
     }
 

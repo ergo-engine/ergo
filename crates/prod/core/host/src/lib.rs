@@ -1,5 +1,6 @@
 mod capture_enrichment;
 mod demo_fixture_usecase;
+mod egress;
 mod error;
 mod gen_docs_usecase;
 mod graph_dot_usecase;
@@ -12,6 +13,10 @@ mod runner;
 mod usecases;
 
 pub use demo_fixture_usecase::{run_demo_fixture_from_path, RunDemoFixtureRequest};
+pub use egress::{
+    parse_egress_config_toml, EgressChannelConfig, EgressConfig, EgressProcessError, EgressRoute,
+    EgressRuntime, EgressValidationError, EgressValidationWarning,
+};
 pub use error::HostedStepError;
 pub use gen_docs_usecase::gen_docs_command;
 pub use graph_dot_usecase::{graph_to_dot_from_paths, GraphToDotFromPathsRequest};

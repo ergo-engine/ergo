@@ -38,6 +38,10 @@ pub enum CompositionError {
         index: usize,
     },
     MissingSetContextEffect,
+    MissingIntentEffect {
+        kind: String,
+        index: usize,
+    },
     ManifestNameResolutionFailed {
         binding: String,
         index: usize,
@@ -55,6 +59,7 @@ impl ErrorInfo for CompositionError {
             Self::WriteTargetNotWritable { .. } => "COMP-12",
             Self::WriteTypeMismatch { .. } => "COMP-13",
             Self::MissingSetContextEffect => "COMP-14",
+            Self::MissingIntentEffect { .. } => "COMP-17",
             Self::ManifestNameResolutionFailed { .. } => "COMP-16",
         }
     }
@@ -72,6 +77,7 @@ impl ErrorInfo for CompositionError {
             Self::WriteTargetNotWritable { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-12",
             Self::WriteTypeMismatch { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-13",
             Self::MissingSetContextEffect => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-14",
+            Self::MissingIntentEffect { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-17",
             Self::ManifestNameResolutionFailed { .. } => "CANONICAL/PHASE_INVARIANTS.md#COMP-16",
         }
     }
@@ -108,6 +114,10 @@ impl ErrorInfo for CompositionError {
             Self::MissingSetContextEffect => {
                 Cow::Borrowed("Adapter does not accept set_context effect required for writes")
             }
+            Self::MissingIntentEffect { kind, .. } => Cow::Owned(format!(
+                "Adapter does not accept intent effect kind '{}' required by action manifest",
+                kind
+            )),
             Self::ManifestNameResolutionFailed { binding, .. } => Cow::Owned(format!(
                 "Failed to resolve parameter-bound manifest name '{}'",
                 binding
@@ -136,6 +146,9 @@ impl ErrorInfo for CompositionError {
                 Some(Cow::Owned(format!("$.effects.writes[{}].type", index)))
             }
             Self::MissingSetContextEffect => Some(Cow::Borrowed("$.effects.writes")),
+            Self::MissingIntentEffect { index, .. } => {
+                Some(Cow::Owned(format!("$.effects.intents[{}].name", index)))
+            }
             Self::ManifestNameResolutionFailed { index, context, .. } => {
                 Some(Cow::Owned(format!("$.{context}[{index}].name")))
             }
@@ -170,6 +183,10 @@ impl ErrorInfo for CompositionError {
             Self::MissingSetContextEffect => Some(Cow::Borrowed(
                 "Add 'set_context' to adapter accepts.effects",
             )),
+            Self::MissingIntentEffect { kind, .. } => Some(Cow::Owned(format!(
+                "Add '{}' to adapter accepts.effects",
+                kind
+            ))),
             Self::ManifestNameResolutionFailed { binding, .. } => Some(Cow::Owned(format!(
                 "Ensure parameter referenced by '{}' exists and is a String type",
                 binding
@@ -270,7 +287,7 @@ pub fn validate_action_adapter_composition(
     adapter: &AdapterProvides,
     parameters: &HashMap<String, ergo_runtime::cluster::ParameterValue>,
 ) -> Result<(), CompositionError> {
-    if effects.writes.is_empty() {
+    if effects.writes.is_empty() && effects.intents.is_empty() {
         return Ok(());
     }
 
@@ -323,8 +340,17 @@ pub fn validate_action_adapter_composition(
         }
     }
 
-    if !adapter.effects.contains("set_context") {
+    if !effects.writes.is_empty() && !adapter.effects.contains("set_context") {
         return Err(CompositionError::MissingSetContextEffect);
+    }
+
+    for (index, intent) in effects.intents.iter().enumerate() {
+        if !adapter.effects.contains(&intent.name) {
+            return Err(CompositionError::MissingIntentEffect {
+                kind: intent.name.clone(),
+                index,
+            });
+        }
     }
 
     Ok(())

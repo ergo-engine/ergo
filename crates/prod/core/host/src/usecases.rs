@@ -29,8 +29,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::{
-    decision_counts, replay_bundle_strict, HostedAdapterConfig, HostedEvent, HostedReplayError,
-    HostedRunner,
+    decision_counts, replay_bundle_strict, EgressConfig, HostedAdapterConfig, HostedEvent,
+    HostedReplayError, HostedRunner,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -88,7 +88,9 @@ pub fn scan_adapter_dependencies(
                             node.implementation.impl_id
                         )
                     })?;
-                if !action.manifest().effects.writes.is_empty() {
+                if !action.manifest().effects.writes.is_empty()
+                    || !action.manifest().effects.intents.is_empty()
+                {
                     summary.write_nodes.push(runtime_id.clone());
                 }
             }
@@ -281,6 +283,7 @@ pub struct RunGraphFromPathsRequest {
     pub cluster_paths: Vec<PathBuf>,
     pub driver: DriverConfig,
     pub adapter_path: Option<PathBuf>,
+    pub egress_config: Option<EgressConfig>,
     pub capture_output: Option<PathBuf>,
     pub pretty_capture: bool,
 }
@@ -600,6 +603,7 @@ fn run_graph_from_paths_internal(
         cluster_paths,
         driver,
         adapter_path,
+        egress_config,
         capture_output,
         pretty_capture,
     } = request;
@@ -632,6 +636,7 @@ fn run_graph_from_paths_internal(
         runtime,
         runtime_provenance,
         adapter_setup.adapter_config,
+        egress_config,
     )
     .map_err(|err| {
         HostRunError::StepFailed(format!("failed to initialize canonical host runner: {err}"))
@@ -725,6 +730,7 @@ fn replay_graph_from_paths_internal(
         runtime,
         runtime_provenance.clone(),
         adapter_setup.adapter_config,
+        None,
     )
     .map_err(|err| {
         host_replay_setup_error(format!(
@@ -756,12 +762,16 @@ fn run_graph_with_policy(
         pretty_capture,
         adapter_bound,
         dependency_summary,
-        runner,
+        mut runner,
     } = request;
 
     if !adapter_bound && dependency_summary.requires_adapter {
         return Err(HostRunError::AdapterRequired(dependency_summary));
     }
+
+    runner
+        .start_egress_channels()
+        .map_err(|err| HostRunError::DriverIo(format!("start egress channels: {err}")))?;
 
     let execution = match driver {
         DriverConfig::Fixture { path } => run_fixture_driver(path, adapter_bound, runner)?,
@@ -868,11 +878,25 @@ fn run_fixture_driver(
                     }
                 };
 
-                runner
-                    .step(hosted_event)
-                    .map_err(|err| HostRunError::StepFailed(format!("host step failed: {err}")))?;
-                let index = current_episode.expect("episode index set");
-                episodes[index].1 += 1;
+                match runner.step(hosted_event) {
+                    Ok(_) => {
+                        let index = current_episode.expect("episode index set");
+                        episodes[index].1 += 1;
+                    }
+                    Err(crate::HostedStepError::EgressDispatchFailure { .. }) => {
+                        let index = current_episode.expect("episode index set");
+                        episodes[index].1 += 1;
+                        return Ok(DriverExecution {
+                            runner,
+                            event_count: event_counter,
+                            episode_event_counts: episodes,
+                            terminal: DriverTerminal::Interrupted(InterruptionReason::DriverIo),
+                        });
+                    }
+                    Err(err) => {
+                        return Err(HostRunError::StepFailed(format!("host step failed: {err}")));
+                    }
+                }
             }
         }
     }
@@ -1118,18 +1142,33 @@ fn run_process_driver(
                     terminal: DriverTerminal::Interrupted(InterruptionReason::ProtocolViolation),
                 });
             }
-            ProcessDriverMessage::Event { event } => {
-                runner.step(event).map_err(|err| {
-                    let _detail = abort_process_child(&mut child, stderr_handle.take());
-                    HostRunError::StepFailed(format!("host step failed: {err}"))
-                })?;
-
-                event_counter += 1;
-                if episodes.is_empty() {
-                    episodes.push(("E1".to_string(), 0));
+            ProcessDriverMessage::Event { event } => match runner.step(event) {
+                Ok(_) => {
+                    event_counter += 1;
+                    if episodes.is_empty() {
+                        episodes.push(("E1".to_string(), 0));
+                    }
+                    episodes[0].1 += 1;
                 }
-                episodes[0].1 += 1;
-            }
+                Err(crate::HostedStepError::EgressDispatchFailure { .. }) => {
+                    event_counter += 1;
+                    if episodes.is_empty() {
+                        episodes.push(("E1".to_string(), 0));
+                    }
+                    episodes[0].1 += 1;
+                    let _detail = abort_process_child(&mut child, stderr_handle.take());
+                    return Ok(DriverExecution {
+                        runner,
+                        event_count: event_counter,
+                        episode_event_counts: episodes,
+                        terminal: DriverTerminal::Interrupted(InterruptionReason::DriverIo),
+                    });
+                }
+                Err(err) => {
+                    let _detail = abort_process_child(&mut child, stderr_handle.take());
+                    return Err(HostRunError::StepFailed(format!("host step failed: {err}")));
+                }
+            },
             ProcessDriverMessage::End => {
                 if event_counter == 0 {
                     let _detail = abort_process_child(&mut child, stderr_handle.take());
@@ -1396,7 +1435,11 @@ fn finalize_run_summary(
         )));
     }
 
-    let bundle = runner.into_capture_bundle();
+    runner
+        .ensure_no_pending_egress_acks()
+        .map_err(|err| HostRunError::StepFailed(format!("egress pending-ack invariant: {err}")))?;
+
+    let (bundle, mut egress_runtime) = runner.into_capture_bundle_and_egress();
     let capture_path = capture_output.unwrap_or_else(|| {
         let stem = graph_path
             .file_stem()
@@ -1411,6 +1454,12 @@ fn finalize_run_summary(
     };
     write_capture_bundle(&capture_path, &bundle, style)
         .map_err(|err| HostRunError::Io(format!("write capture bundle: {err}")))?;
+
+    if let Some(runtime) = egress_runtime.as_mut() {
+        runtime
+            .shutdown_channels()
+            .map_err(|err| HostRunError::DriverIo(format!("stop egress channels: {err}")))?;
+    }
 
     let invoked = bundle
         .decisions
@@ -1664,6 +1713,7 @@ outputs:
             cluster_paths: Vec::new(),
             driver: DriverConfig::Fixture { path: fixture },
             adapter_path: None,
+            egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,
         }))?;
@@ -1717,6 +1767,7 @@ outputs:
                 cluster_paths: Vec::new(),
                 driver: DriverConfig::Fixture { path: fixture },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },
@@ -1776,6 +1827,7 @@ outputs:
                 cluster_paths: Vec::new(),
                 driver: DriverConfig::Fixture { path: fixture },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },
@@ -1830,6 +1882,7 @@ outputs:
                 cluster_paths: Vec::new(),
                 driver: DriverConfig::Fixture { path: fixture },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },
@@ -1898,6 +1951,7 @@ outputs:
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
             adapter_path: None,
+            egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,
         })?;
@@ -1960,6 +2014,7 @@ outputs:
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
             adapter_path: None,
+            egress_config: None,
             capture_output: Some(temp_dir.join("capture.json")),
             pretty_capture: false,
         })
@@ -2011,6 +2066,7 @@ outputs:
                     command: vec!["/bin/sh".to_string(), driver.display().to_string()],
                 },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(temp_dir.join("capture.json")),
                 pretty_capture: false,
             },
@@ -2070,6 +2126,7 @@ outputs:
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
             adapter_path: None,
+            egress_config: None,
             capture_output: Some(temp_dir.join("capture.json")),
             pretty_capture: false,
         })
@@ -2127,6 +2184,7 @@ outputs:
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
             adapter_path: None,
+            egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,
         })?;
@@ -2201,6 +2259,7 @@ outputs:
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
             adapter_path: None,
+            egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,
         })?;
@@ -2279,6 +2338,7 @@ outputs:
                     command: vec!["/bin/sh".to_string(), driver.display().to_string()],
                 },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },
@@ -2346,6 +2406,7 @@ outputs:
                     command: vec!["/bin/sh".to_string(), driver.display().to_string()],
                 },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },
@@ -2408,6 +2469,7 @@ outputs:
                     command: vec!["/bin/sh".to_string(), driver.display().to_string()],
                 },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },
@@ -2476,6 +2538,7 @@ outputs:
                     command: vec!["/bin/sh".to_string(), driver.display().to_string()],
                 },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },
@@ -2545,6 +2608,7 @@ outputs:
                     command: vec!["/bin/sh".to_string(), driver.display().to_string()],
                 },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },
