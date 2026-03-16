@@ -1,17 +1,33 @@
 ---
 Authority: STABLE
 Version: v1
-Last Updated: 2026-03-15
+Last Updated: 2026-03-16
+Last Amended: 2026-03-16
+Scope: Declarative adapter contract for context, events, and accepted effects
 ---
+
+> **Amended 2026-03-16** by Codex (Implementation Assistant)
+> Clarified the stable adapter contract after the ingress/egress split:
+> adapters declare accepted effect vocabulary and payload schemas, but
+> do not own routing policy or concrete external I/O realization.
 
 # Adapter Manifest — v1
 
 An adapter is the bridge between the runtime and the external world.
 It defines what context data is available to the graph, what external events
-can trigger execution, and what effects the runtime can request at the
-adapter boundary.
+can trigger execution, and what effect kinds the runtime may request
+against the adapter's declared acceptance surface.
 
 This is the authoritative contract.
+
+Adapters define:
+
+- what context the graph may observe
+- what semantic events may enter execution
+- what effect kinds and payload schemas the graph may request
+
+Adapters do **not** define routing policy, launch processes, or perform
+real external I/O themselves.
 
 ---
 
@@ -22,7 +38,7 @@ An Adapter Primitive is the external interface layer that:
 - populates ExecutionContext for graph evaluation
 - emits ExternalEvents that trigger episodes
 - declares which effects requested by Actions are accepted at the
-  boundary
+  contract boundary
 - captures replay-relevant data
 
 An adapter answers three questions:
@@ -117,6 +133,10 @@ Rules:
 - `accepts.effects` declares accepted effect vocabulary only. It does
   not, by itself, choose whether an accepted effect is realized by a
   host-internal handler or by a prod boundary channel
+- During Action ↔ adapter composition, every declared
+  `effects.intents[].name` must be accepted here and its typed field set
+  must be structurally compatible with the corresponding
+  `accepts.effects[].payload_schema`
 
 ---
 

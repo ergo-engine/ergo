@@ -18,7 +18,7 @@ use ergo_supervisor::{
     NO_ADAPTER_PROVENANCE,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -28,9 +28,10 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::egress::compute_egress_provenance;
 use crate::{
-    decision_counts, replay_bundle_strict, HostedAdapterConfig, HostedEvent, HostedReplayError,
-    HostedRunner,
+    decision_counts, replay_bundle_strict, EgressConfig, EgressDispatchFailure,
+    HostedAdapterConfig, HostedEvent, HostedReplayError, HostedRunner,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -88,7 +89,9 @@ pub fn scan_adapter_dependencies(
                             node.implementation.impl_id
                         )
                     })?;
-                if !action.manifest().effects.writes.is_empty() {
+                if !action.manifest().effects.writes.is_empty()
+                    || !action.manifest().effects.intents.is_empty()
+                {
                     summary.write_nodes.push(runtime_id.clone());
                 }
             }
@@ -212,6 +215,7 @@ impl std::error::Error for HostRunError {}
 pub enum HostReplayError {
     Hosted(HostedReplayError),
     GraphIdMismatch { expected: String, got: String },
+    ExternalKindsNotRepresentable { missing: Vec<String> },
     Setup(String),
 }
 
@@ -223,6 +227,11 @@ impl std::fmt::Display for HostReplayError {
                 f,
                 "graph_id mismatch (expected '{}', got '{}')",
                 expected, got
+            ),
+            Self::ExternalKindsNotRepresentable { missing } => write!(
+                f,
+                "capture includes external effect kinds not representable by replay graph ownership surface: [{}]",
+                missing.join(", ")
             ),
             Self::Setup(message) => write!(f, "{message}"),
         }
@@ -243,26 +252,44 @@ pub enum DriverConfig {
     Process { command: Vec<String> },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InterruptionReason {
     DriverTerminated,
     ProtocolViolation,
     DriverIo,
+    EgressAckTimeout { channel: String, intent_id: String },
+    EgressProtocolViolation { channel: String },
+    EgressIo { channel: String },
 }
 
 impl InterruptionReason {
-    pub fn as_str(self) -> &'static str {
+    pub fn code(&self) -> &'static str {
         match self {
             Self::DriverTerminated => "driver_terminated",
             Self::ProtocolViolation => "protocol_violation",
             Self::DriverIo => "driver_io",
+            Self::EgressAckTimeout { .. } => "egress_ack_timeout",
+            Self::EgressProtocolViolation { .. } => "egress_protocol_violation",
+            Self::EgressIo { .. } => "egress_io",
         }
     }
 }
 
 impl std::fmt::Display for InterruptionReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
+        write!(f, "{}", self.code())
+    }
+}
+
+fn interruption_from_egress_dispatch_failure(failure: EgressDispatchFailure) -> InterruptionReason {
+    match failure {
+        EgressDispatchFailure::AckTimeout { channel, intent_id } => {
+            InterruptionReason::EgressAckTimeout { channel, intent_id }
+        }
+        EgressDispatchFailure::ProtocolViolation { channel, .. } => {
+            InterruptionReason::EgressProtocolViolation { channel }
+        }
+        EgressDispatchFailure::Io { channel, .. } => InterruptionReason::EgressIo { channel },
     }
 }
 
@@ -281,6 +308,7 @@ pub struct RunGraphFromPathsRequest {
     pub cluster_paths: Vec<PathBuf>,
     pub driver: DriverConfig,
     pub adapter_path: Option<PathBuf>,
+    pub egress_config: Option<EgressConfig>,
     pub capture_output: Option<PathBuf>,
     pub pretty_capture: bool,
 }
@@ -569,6 +597,31 @@ fn host_replay_setup_error(message: impl Into<String>) -> HostReplayError {
     HostReplayError::Setup(message.into())
 }
 
+fn captured_external_effect_kinds(bundle: &CaptureBundle) -> HashSet<String> {
+    bundle
+        .decisions
+        .iter()
+        .flat_map(|decision| decision.effects.iter())
+        .filter_map(|effect| {
+            let kind = effect.effect.kind.as_str();
+            (kind != "set_context").then(|| kind.to_string())
+        })
+        .collect()
+}
+
+fn replay_owned_external_kinds(
+    runtime: &RuntimeHandle,
+    adapter_provides: &AdapterProvides,
+    handler_kinds: &BTreeSet<String>,
+) -> HashSet<String> {
+    runtime
+        .graph_emittable_effect_kinds()
+        .into_iter()
+        .filter(|kind| adapter_provides.effects.contains(kind))
+        .filter(|kind| !handler_kinds.contains(kind))
+        .collect()
+}
+
 /// Canonical run API for clients. Host owns graph loading, expansion, adapter composition, and runner setup.
 // Allow non-Send/Sync in Arc: CoreRegistries and CorePrimitiveCatalog contain non-Send/Sync types.
 #[allow(clippy::arc_with_non_send_sync)]
@@ -600,6 +653,7 @@ fn run_graph_from_paths_internal(
         cluster_paths,
         driver,
         adapter_path,
+        egress_config,
         capture_output,
         pretty_capture,
     } = request;
@@ -626,12 +680,16 @@ fn run_graph_from_paths_internal(
         Arc::new(registries),
         adapter_setup.adapter_provides,
     );
+    let egress_provenance = egress_config.as_ref().map(compute_egress_provenance);
     let runner = HostedRunner::new(
         GraphId::new(graph_id),
         Constraints::default(),
         runtime,
         runtime_provenance,
         adapter_setup.adapter_config,
+        egress_config,
+        egress_provenance,
+        None,
     )
     .map_err(|err| {
         HostRunError::StepFailed(format!("failed to initialize canonical host runner: {err}"))
@@ -717,14 +775,29 @@ fn replay_graph_from_paths_internal(
         Arc::new(expanded),
         Arc::new(catalog),
         Arc::new(registries),
-        adapter_setup.adapter_provides,
+        adapter_setup.adapter_provides.clone(),
     );
+    let handler_kinds = BTreeSet::from(["set_context".to_string()]);
+    let replay_external_kinds =
+        replay_owned_external_kinds(&runtime, &adapter_setup.adapter_provides, &handler_kinds);
+    let captured_external_kinds = captured_external_effect_kinds(&bundle);
+    let mut missing: Vec<String> = captured_external_kinds
+        .difference(&replay_external_kinds)
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        missing.sort();
+        return Err(HostReplayError::ExternalKindsNotRepresentable { missing });
+    }
     let runner = HostedRunner::new(
         GraphId::new(bundle.graph_id.as_str().to_string()),
         bundle.config.clone(),
         runtime,
         runtime_provenance.clone(),
         adapter_setup.adapter_config,
+        None,
+        None,
+        Some(replay_external_kinds),
     )
     .map_err(|err| {
         host_replay_setup_error(format!(
@@ -756,12 +829,16 @@ fn run_graph_with_policy(
         pretty_capture,
         adapter_bound,
         dependency_summary,
-        runner,
+        mut runner,
     } = request;
 
     if !adapter_bound && dependency_summary.requires_adapter {
         return Err(HostRunError::AdapterRequired(dependency_summary));
     }
+
+    runner
+        .start_egress_channels()
+        .map_err(|err| HostRunError::DriverIo(format!("start egress channels: {err}")))?;
 
     let execution = match driver {
         DriverConfig::Fixture { path } => run_fixture_driver(path, adapter_bound, runner)?,
@@ -868,11 +945,27 @@ fn run_fixture_driver(
                     }
                 };
 
-                runner
-                    .step(hosted_event)
-                    .map_err(|err| HostRunError::StepFailed(format!("host step failed: {err}")))?;
-                let index = current_episode.expect("episode index set");
-                episodes[index].1 += 1;
+                match runner.step(hosted_event) {
+                    Ok(_) => {
+                        let index = current_episode.expect("episode index set");
+                        episodes[index].1 += 1;
+                    }
+                    Err(crate::HostedStepError::EgressDispatchFailure(failure)) => {
+                        let index = current_episode.expect("episode index set");
+                        episodes[index].1 += 1;
+                        return Ok(DriverExecution {
+                            runner,
+                            event_count: event_counter,
+                            episode_event_counts: episodes,
+                            terminal: DriverTerminal::Interrupted(
+                                interruption_from_egress_dispatch_failure(failure),
+                            ),
+                        });
+                    }
+                    Err(err) => {
+                        return Err(HostRunError::StepFailed(format!("host step failed: {err}")));
+                    }
+                }
             }
         }
     }
@@ -1118,18 +1211,35 @@ fn run_process_driver(
                     terminal: DriverTerminal::Interrupted(InterruptionReason::ProtocolViolation),
                 });
             }
-            ProcessDriverMessage::Event { event } => {
-                runner.step(event).map_err(|err| {
-                    let _detail = abort_process_child(&mut child, stderr_handle.take());
-                    HostRunError::StepFailed(format!("host step failed: {err}"))
-                })?;
-
-                event_counter += 1;
-                if episodes.is_empty() {
-                    episodes.push(("E1".to_string(), 0));
+            ProcessDriverMessage::Event { event } => match runner.step(event) {
+                Ok(_) => {
+                    event_counter += 1;
+                    if episodes.is_empty() {
+                        episodes.push(("E1".to_string(), 0));
+                    }
+                    episodes[0].1 += 1;
                 }
-                episodes[0].1 += 1;
-            }
+                Err(crate::HostedStepError::EgressDispatchFailure(failure)) => {
+                    event_counter += 1;
+                    if episodes.is_empty() {
+                        episodes.push(("E1".to_string(), 0));
+                    }
+                    episodes[0].1 += 1;
+                    let _detail = abort_process_child(&mut child, stderr_handle.take());
+                    return Ok(DriverExecution {
+                        runner,
+                        event_count: event_counter,
+                        episode_event_counts: episodes,
+                        terminal: DriverTerminal::Interrupted(
+                            interruption_from_egress_dispatch_failure(failure),
+                        ),
+                    });
+                }
+                Err(err) => {
+                    let _detail = abort_process_child(&mut child, stderr_handle.take());
+                    return Err(HostRunError::StepFailed(format!("host step failed: {err}")));
+                }
+            },
             ProcessDriverMessage::End => {
                 if event_counter == 0 {
                     let _detail = abort_process_child(&mut child, stderr_handle.take());
@@ -1375,7 +1485,7 @@ fn finalize_run_summary(
     graph_path: &Path,
     capture_output: Option<PathBuf>,
     pretty_capture: bool,
-    runner: HostedRunner,
+    mut runner: HostedRunner,
     event_count: usize,
     episode_event_counts: Vec<(String, usize)>,
 ) -> Result<RunSummary, HostRunError> {
@@ -1395,6 +1505,16 @@ fn finalize_run_summary(
             label
         )));
     }
+
+    runner
+        .ensure_no_pending_egress_acks()
+        .map_err(|err| HostRunError::StepFailed(format!("egress pending-ack invariant: {err}")))?;
+
+    // Freeze egress lifecycle before capture finalization so late channel activity
+    // cannot alter dispatch truth after artifact write.
+    runner
+        .stop_egress_channels()
+        .map_err(|err| HostRunError::DriverIo(format!("stop egress channels: {err}")))?;
 
     let bundle = runner.into_capture_bundle();
     let capture_path = capture_output.unwrap_or_else(|| {
@@ -1485,7 +1605,14 @@ pub fn run_fixture(request: RunFixtureRequest) -> Result<RunFixtureResult, HostR
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::egress::{EgressChannelConfig, EgressRoute};
     use ergo_adapter::ExternalEventKind;
+    use ergo_runtime::action::{
+        ActionEffects, ActionKind, ActionOutcome, ActionPrimitive, ActionPrimitiveManifest,
+        ActionValue, ActionValueType, Cardinality as ActionCardinality,
+        ExecutionSpec as ActionExecutionSpec, InputSpec as ActionInputSpec, IntentFieldSpec,
+        IntentSpec, OutputSpec as ActionOutputSpec, StateSpec as ActionStateSpec,
+    };
     use ergo_runtime::catalog::CatalogBuilder;
     use ergo_runtime::common::{Value, ValueType};
     use ergo_runtime::runtime::ExecutionContext;
@@ -1495,7 +1622,7 @@ mod tests {
         SourceRequires, StateSpec as SourceStateSpec,
     };
     use serde_json::json;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
@@ -1504,6 +1631,10 @@ mod tests {
     struct InjectedNumberSource {
         manifest: SourcePrimitiveManifest,
         output: f64,
+    }
+
+    struct InjectedIntentAction {
+        manifest: ActionPrimitiveManifest,
     }
 
     impl InjectedNumberSource {
@@ -1548,9 +1679,77 @@ mod tests {
         }
     }
 
+    impl InjectedIntentAction {
+        fn new() -> Self {
+            Self {
+                manifest: ActionPrimitiveManifest {
+                    id: "injected_intent_action".to_string(),
+                    version: "0.1.0".to_string(),
+                    kind: ActionKind::Action,
+                    inputs: vec![
+                        ActionInputSpec {
+                            name: "event".to_string(),
+                            value_type: ActionValueType::Event,
+                            required: true,
+                            cardinality: ActionCardinality::Single,
+                        },
+                        ActionInputSpec {
+                            name: "qty".to_string(),
+                            value_type: ActionValueType::Number,
+                            required: true,
+                            cardinality: ActionCardinality::Single,
+                        },
+                    ],
+                    outputs: vec![ActionOutputSpec {
+                        name: "outcome".to_string(),
+                        value_type: ActionValueType::Event,
+                    }],
+                    parameters: vec![],
+                    effects: ActionEffects {
+                        writes: vec![],
+                        intents: vec![IntentSpec {
+                            name: "place_order".to_string(),
+                            fields: vec![IntentFieldSpec {
+                                name: "qty".to_string(),
+                                value_type: ValueType::Number,
+                                from_input: Some("qty".to_string()),
+                                from_param: None,
+                            }],
+                            mirror_writes: vec![],
+                        }],
+                    },
+                    execution: ActionExecutionSpec {
+                        deterministic: true,
+                        retryable: false,
+                    },
+                    state: ActionStateSpec { allowed: false },
+                    side_effects: true,
+                },
+            }
+        }
+    }
+
+    impl ActionPrimitive for InjectedIntentAction {
+        fn manifest(&self) -> &ActionPrimitiveManifest {
+            &self.manifest
+        }
+
+        fn execute(
+            &self,
+            _inputs: &HashMap<String, ActionValue>,
+            _parameters: &HashMap<String, ergo_runtime::action::ParameterValue>,
+        ) -> HashMap<String, ActionValue> {
+            HashMap::from([(
+                "outcome".to_string(),
+                ActionValue::Event(ActionOutcome::Completed),
+            )])
+        }
+    }
+
     fn build_injected_runtime_surfaces(output: f64) -> RuntimeSurfaces {
         let mut builder = CatalogBuilder::new();
         builder.add_source(Box::new(InjectedNumberSource::new(output)));
+        builder.add_action(Box::new(InjectedIntentAction::new()));
         let (registries, catalog) = builder
             .build()
             .expect("injected runtime surfaces should build");
@@ -1565,6 +1764,238 @@ mod tests {
         let path = base.join(name);
         fs::write(&path, contents)?;
         Ok(path)
+    }
+
+    fn write_intent_graph(
+        base: &Path,
+        name: &str,
+        graph_id: &str,
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        write_temp_file(
+            base,
+            name,
+            &format!(
+                r#"
+kind: cluster
+id: {graph_id}
+version: "0.1.0"
+nodes:
+  gate:
+    impl: const_bool@0.1.0
+    params:
+      value: true
+  emit:
+    impl: emit_if_true@0.1.0
+  qty:
+    impl: injected_number_source@0.1.0
+  place:
+    impl: injected_intent_action@0.1.0
+edges:
+  - "gate.value -> emit.input"
+  - "emit.event -> place.event"
+  - "qty.value -> place.qty"
+outputs:
+  outcome: place.outcome
+"#
+            ),
+        )
+    }
+
+    fn write_intent_adapter_manifest(
+        base: &Path,
+        name: &str,
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        write_temp_file(
+            base,
+            name,
+            r#"
+kind: adapter
+id: replay_intent_adapter
+version: 1.0.0
+runtime_compatibility: 0.1.0
+context_keys:
+  - name: last_qty
+    type: Number
+    required: false
+    writable: true
+event_kinds:
+  - name: price_bar
+    payload_schema:
+      type: object
+      properties:
+        price: { type: number }
+      additionalProperties: false
+accepts:
+  effects:
+    - name: set_context
+      payload_schema:
+        type: object
+        additionalProperties: false
+    - name: place_order
+      payload_schema:
+        type: object
+        properties:
+          qty: { type: number }
+        required: [qty]
+        additionalProperties: false
+capture:
+  format_version: "1"
+  fields:
+    - event.price_bar
+    - meta.adapter_id
+    - meta.adapter_version
+    - meta.timestamp
+"#,
+        )
+    }
+
+    fn write_egress_ack_script(
+        base: &Path,
+        name: &str,
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        write_temp_file(
+            base,
+            name,
+            r#"#!/bin/sh
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"intent"'*)
+      intent_id=$(printf '%s' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
+      printf '{"type":"intent_ack","intent_id":"%s","status":"accepted","acceptance":"durable","egress_ref":"broker-ref-1"}\n' "$intent_id"
+      ;;
+    *'"type":"end"'*)
+      exit 0
+      ;;
+  esac
+done
+"#,
+        )
+    }
+
+    fn write_egress_protocol_script(
+        base: &Path,
+        name: &str,
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        write_temp_file(
+            base,
+            name,
+            r#"#!/bin/sh
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"intent"'*)
+      printf '%s\n' '{"type":"intent_ack","intent_id":"wrong","status":"accepted","acceptance":"durable"}'
+      ;;
+    *'"type":"end"'*)
+      exit 0
+      ;;
+  esac
+done
+"#,
+        )
+    }
+
+    fn write_egress_io_script(
+        base: &Path,
+        name: &str,
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        write_temp_file(
+            base,
+            name,
+            r#"#!/bin/sh
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"intent"'*)
+      exit 1
+      ;;
+    *'"type":"end"'*)
+      exit 0
+      ;;
+  esac
+done
+"#,
+        )
+    }
+
+    fn write_egress_hanging_shutdown_script(
+        base: &Path,
+        name: &str,
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        write_temp_file(
+            base,
+            name,
+            r#"#!/bin/sh
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"intent"'*)
+      intent_id=$(printf '%s' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
+      printf '{"type":"intent_ack","intent_id":"%s","status":"accepted","acceptance":"durable"}\n' "$intent_id"
+      ;;
+    *'"type":"end"'*)
+      sleep 7
+      exit 0
+      ;;
+  esac
+done
+"#,
+        )
+    }
+
+    fn write_egress_ack_once_then_timeout_script(
+        base: &Path,
+        name: &str,
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        write_temp_file(
+            base,
+            name,
+            r#"#!/bin/sh
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
+acked=0
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"intent"'*)
+      if [ "$acked" = "0" ]; then
+        intent_id=$(printf '%s' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
+        printf '{"type":"intent_ack","intent_id":"%s","status":"accepted","acceptance":"durable"}\n' "$intent_id"
+        acked=1
+      fi
+      ;;
+    *'"type":"end"'*)
+      exit 0
+      ;;
+  esac
+done
+"#,
+        )
+    }
+
+    fn make_intent_egress_config(script_path: &Path) -> EgressConfig {
+        make_intent_egress_config_with_timeout(script_path, Duration::from_millis(250))
+    }
+
+    fn make_intent_egress_config_with_timeout(
+        script_path: &Path,
+        timeout: Duration,
+    ) -> EgressConfig {
+        EgressConfig {
+            default_ack_timeout: timeout,
+            channels: BTreeMap::from([(
+                "broker".to_string(),
+                EgressChannelConfig::Process {
+                    command: vec!["/bin/sh".to_string(), script_path.display().to_string()],
+                },
+            )]),
+            routes: BTreeMap::from([(
+                "place_order".to_string(),
+                EgressRoute {
+                    channel: "broker".to_string(),
+                    ack_timeout: None,
+                },
+            )]),
+        }
     }
 
     fn write_process_driver_script(
@@ -1664,6 +2095,7 @@ outputs:
             cluster_paths: Vec::new(),
             driver: DriverConfig::Fixture { path: fixture },
             adapter_path: None,
+            egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,
         }))?;
@@ -1717,6 +2149,7 @@ outputs:
                 cluster_paths: Vec::new(),
                 driver: DriverConfig::Fixture { path: fixture },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },
@@ -1776,6 +2209,7 @@ outputs:
                 cluster_paths: Vec::new(),
                 driver: DriverConfig::Fixture { path: fixture },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },
@@ -1830,6 +2264,7 @@ outputs:
                 cluster_paths: Vec::new(),
                 driver: DriverConfig::Fixture { path: fixture },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },
@@ -1848,6 +2283,842 @@ outputs:
 
         assert_eq!(replay.graph_id.as_str(), "host_injected_replay");
         assert_eq!(replay.events, 1);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn live_run_with_external_intent_graph_requires_egress_config(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-live-intent-without-egress-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_intent_live_no_egress")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let fixture = write_temp_file(
+            &temp_dir,
+            "fixture.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\",\"semantic_kind\":\"price_bar\",\"payload\":{\"price\":100.0}}}\n",
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let outcome = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Fixture { path: fixture },
+                adapter_path: Some(adapter),
+                egress_config: None,
+                capture_output: Some(capture),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(42.0),
+        );
+
+        match outcome {
+            Err(HostRunError::StepFailed(detail)) => {
+                assert!(
+                    detail.contains("handler coverage failed"),
+                    "unexpected setup error: {detail}"
+                );
+            }
+            other => panic!("expected step-failed setup error, got {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn replay_from_paths_handles_external_effect_capture_without_live_egress(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-replay-intent-no-egress-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_intent_replay")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let egress_script = write_egress_ack_script(&temp_dir, "egress.sh")?;
+        let driver = write_process_driver_script(
+            &temp_dir,
+            "driver.sh",
+            &[
+                serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+                serde_json::to_string(&json!({
+                    "type":"event",
+                    "event": HostedEvent {
+                        event_id: "evt1".to_string(),
+                        kind: ExternalEventKind::Command,
+                        at: EventTime::default(),
+                        semantic_kind: Some("price_bar".to_string()),
+                        payload: Some(json!({"price": 101.5}))
+                    }
+                }))?,
+                serde_json::to_string(&json!({"type":"end"}))?,
+            ],
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let outcome = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph.clone(),
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Process {
+                    command: vec!["/bin/sh".to_string(), driver.display().to_string()],
+                },
+                adapter_path: Some(adapter.clone()),
+                egress_config: Some(make_intent_egress_config(&egress_script)),
+                capture_output: Some(capture.clone()),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(42.0),
+        )?;
+        let summary = match outcome {
+            RunOutcome::Completed(summary) => summary,
+            RunOutcome::Interrupted(interrupted) => {
+                return Err(format!(
+                    "expected completed run, got interrupted({})",
+                    interrupted.reason
+                )
+                .into())
+            }
+        };
+        assert!(summary.capture_path.exists());
+
+        let bundle_data = fs::read_to_string(&capture)?;
+        let bundle: CaptureBundle = serde_json::from_str(&bundle_data)?;
+        let decision = bundle.decisions.first().expect("capture decision");
+        let external_effect = decision
+            .effects
+            .iter()
+            .find(|effect| effect.effect.kind != "set_context")
+            .expect("capture should contain external effect");
+        assert!(
+            external_effect.effect.writes.is_empty(),
+            "external effect writes must be empty"
+        );
+        assert!(
+            !external_effect.effect.intents.is_empty(),
+            "external effect must carry intents"
+        );
+        let durable_ack = decision
+            .intent_acks
+            .iter()
+            .find(|ack| ack.status == "accepted" && ack.acceptance == "durable")
+            .expect("capture should include durable-accept ack");
+        assert_eq!(durable_ack.channel, "broker");
+
+        let replay = replay_graph_from_paths_with_surfaces(
+            ReplayGraphFromPathsRequest {
+                capture_path: capture,
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: Some(adapter),
+            },
+            build_injected_runtime_surfaces(42.0),
+        )?;
+        assert_eq!(replay.events, 1);
+
+        // CHECK-15 closure: prove exact deterministic intent_id parity across capture/replay.
+        let prepared = prepare_graph_runtime(
+            &temp_dir.join("graph.yaml"),
+            &Vec::new(),
+            Some(build_injected_runtime_surfaces(42.0)),
+        )
+        .map_err(|err| format!("prepare replay runtime: {err}"))?;
+        let adapter_setup = prepare_adapter_setup(Some(&temp_dir.join("adapter.yaml")), &prepared)
+            .map_err(|err| format!("prepare replay adapter: {err}"))?;
+        let runtime = RuntimeHandle::new(
+            Arc::new(prepared.expanded),
+            Arc::new(prepared.catalog),
+            Arc::new(prepared.registries),
+            adapter_setup.adapter_provides.clone(),
+        );
+        let handler_kinds = BTreeSet::from(["set_context".to_string()]);
+        let replay_external_kinds =
+            replay_owned_external_kinds(&runtime, &adapter_setup.adapter_provides, &handler_kinds);
+        let replay_runner = HostedRunner::new(
+            GraphId::new(bundle.graph_id.as_str().to_string()),
+            bundle.config.clone(),
+            runtime,
+            prepared.runtime_provenance.clone(),
+            adapter_setup.adapter_config,
+            None,
+            None,
+            Some(replay_external_kinds),
+        )
+        .map_err(|err| format!("initialize replay runner: {err}"))?;
+        let replayed_bundle = replay_bundle_strict(
+            &bundle,
+            replay_runner,
+            StrictReplayExpectations {
+                expected_adapter_provenance: &adapter_setup.expected_adapter_provenance,
+                expected_runtime_provenance: &prepared.runtime_provenance,
+            },
+        )
+        .map_err(|err| format!("strict replay failed: {err}"))?;
+        let captured_intent_id = bundle
+            .decisions
+            .iter()
+            .flat_map(|decision| decision.effects.iter())
+            .find(|effect| effect.effect.kind != "set_context")
+            .and_then(|effect| effect.effect.intents.first())
+            .map(|intent| intent.intent_id.clone())
+            .expect("captured external intent_id");
+        let replayed_intent_id = replayed_bundle
+            .decisions
+            .iter()
+            .flat_map(|decision| decision.effects.iter())
+            .find(|effect| effect.effect.kind != "set_context")
+            .and_then(|effect| effect.effect.intents.first())
+            .map(|intent| intent.intent_id.clone())
+            .expect("replayed external intent_id");
+        assert_eq!(captured_intent_id, replayed_intent_id);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn egress_timeout_maps_to_typed_interruption_and_preserves_partial_acks(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-egress-timeout-interruption-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_intent_timeout")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let egress_script = write_egress_ack_once_then_timeout_script(&temp_dir, "egress.sh")?;
+        let driver = write_process_driver_script(
+            &temp_dir,
+            "driver.sh",
+            &[
+                serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+                serde_json::to_string(&json!({
+                    "type":"event",
+                    "event": HostedEvent {
+                        event_id: "evt1".to_string(),
+                        kind: ExternalEventKind::Command,
+                        at: EventTime::default(),
+                        semantic_kind: Some("price_bar".to_string()),
+                        payload: Some(json!({"price": 101.5}))
+                    }
+                }))?,
+                serde_json::to_string(&json!({
+                    "type":"event",
+                    "event": HostedEvent {
+                        event_id: "evt2".to_string(),
+                        kind: ExternalEventKind::Command,
+                        at: EventTime::default(),
+                        semantic_kind: Some("price_bar".to_string()),
+                        payload: Some(json!({"price": 101.6}))
+                    }
+                }))?,
+                serde_json::to_string(&json!({"type":"end"}))?,
+            ],
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let outcome = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Process {
+                    command: vec!["/bin/sh".to_string(), driver.display().to_string()],
+                },
+                adapter_path: Some(adapter),
+                egress_config: Some(make_intent_egress_config_with_timeout(
+                    &egress_script,
+                    Duration::from_millis(80),
+                )),
+                capture_output: Some(capture),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(42.0),
+        )?;
+
+        let interrupted = match outcome {
+            RunOutcome::Interrupted(interrupted) => interrupted,
+            RunOutcome::Completed(_) => {
+                return Err("expected interrupted run for timeout case".into());
+            }
+        };
+
+        match interrupted.reason {
+            InterruptionReason::EgressAckTimeout { channel, intent_id } => {
+                assert_eq!(channel, "broker");
+                assert!(intent_id.starts_with("eid1:sha256:"));
+            }
+            other => return Err(format!("expected EgressAckTimeout, got {other:?}").into()),
+        }
+
+        let bundle: CaptureBundle =
+            serde_json::from_str(&fs::read_to_string(&interrupted.summary.capture_path)?)?;
+        let ack_count: usize = bundle
+            .decisions
+            .iter()
+            .map(|decision| decision.intent_acks.len())
+            .sum();
+        assert!(
+            ack_count >= 1,
+            "expected at least one preserved durable ack, got {ack_count}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn capture_egress_provenance_is_none_when_no_egress_config(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-no-egress-provenance-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_no_egress_prov
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 1.0
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+        let fixture = write_temp_file(
+            &temp_dir,
+            "fixture.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let outcome = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Fixture { path: fixture },
+                adapter_path: None,
+                egress_config: None,
+                capture_output: Some(capture.clone()),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(42.0),
+        )?;
+        match outcome {
+            RunOutcome::Completed(_) => {}
+            RunOutcome::Interrupted(interrupted) => {
+                return Err(format!(
+                    "expected completed run, got interrupted({})",
+                    interrupted.reason
+                )
+                .into())
+            }
+        }
+
+        let bundle_data = fs::read_to_string(&capture)?;
+        let bundle: CaptureBundle = serde_json::from_str(&bundle_data)?;
+        assert!(
+            bundle.egress_provenance.is_none(),
+            "capture without egress config must keep egress_provenance unset"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn capture_egress_provenance_is_present_even_when_no_intents_emitted(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-egress-provenance-no-intents-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_egress_no_intents
+version: "0.1.0"
+nodes:
+  ev:
+    impl: emit_if_event_and_true@0.1.0
+  disabled:
+    impl: const_bool@0.1.0
+    params:
+      value: false
+  qty:
+    impl: const_number@0.1.0
+    params:
+      value: 1.0
+  place:
+    impl: context_set_number@0.1.0
+    params:
+      key: "last_qty"
+edges:
+  - "ev.event -> place.event"
+  - "disabled.value -> ev.condition"
+  - "qty.value -> place.value"
+outputs:
+  outcome: place.outcome
+"#,
+        )?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let egress_script = write_egress_ack_script(&temp_dir, "egress.sh")?;
+        let driver = write_process_driver_script(
+            &temp_dir,
+            "driver.sh",
+            &[
+                serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+                serde_json::to_string(&json!({
+                    "type":"event",
+                    "event": HostedEvent {
+                        event_id: "evt1".to_string(),
+                        kind: ExternalEventKind::Command,
+                        at: EventTime::default(),
+                        semantic_kind: Some("price_bar".to_string()),
+                        payload: Some(json!({"price": 101.5}))
+                    }
+                }))?,
+                serde_json::to_string(&json!({"type":"end"}))?,
+            ],
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let outcome = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Process {
+                    command: vec!["/bin/sh".to_string(), driver.display().to_string()],
+                },
+                adapter_path: Some(adapter),
+                egress_config: Some(make_intent_egress_config(&egress_script)),
+                capture_output: Some(capture.clone()),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(42.0),
+        )?;
+        match outcome {
+            RunOutcome::Completed(_) => {}
+            RunOutcome::Interrupted(interrupted) => {
+                return Err(format!(
+                    "expected completed run, got interrupted({})",
+                    interrupted.reason
+                )
+                .into())
+            }
+        }
+
+        let bundle_data = fs::read_to_string(&capture)?;
+        let bundle: CaptureBundle = serde_json::from_str(&bundle_data)?;
+        assert!(
+            bundle.egress_provenance.is_some(),
+            "capture with egress config must persist egress_provenance even when no intents fire"
+        );
+        assert_eq!(
+            bundle.decisions.len(),
+            1,
+            "sanity check: the run should process one event but emit no intents"
+        );
+        assert!(
+            bundle.decisions[0]
+                .effects
+                .iter()
+                .all(|effect| effect.effect.kind != "place_order"),
+            "disabled trigger should prevent external intent emission"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn egress_protocol_violation_maps_to_typed_interruption_reason(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-egress-protocol-interruption-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_intent_protocol")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let egress_script = write_egress_protocol_script(&temp_dir, "egress.sh")?;
+        let driver = write_process_driver_script(
+            &temp_dir,
+            "driver.sh",
+            &[
+                serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+                serde_json::to_string(&json!({
+                    "type":"event",
+                    "event": HostedEvent {
+                        event_id: "evt1".to_string(),
+                        kind: ExternalEventKind::Command,
+                        at: EventTime::default(),
+                        semantic_kind: Some("price_bar".to_string()),
+                        payload: Some(json!({"price": 101.5}))
+                    }
+                }))?,
+                serde_json::to_string(&json!({"type":"end"}))?,
+            ],
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let outcome = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Process {
+                    command: vec!["/bin/sh".to_string(), driver.display().to_string()],
+                },
+                adapter_path: Some(adapter),
+                egress_config: Some(make_intent_egress_config_with_timeout(
+                    &egress_script,
+                    Duration::from_millis(100),
+                )),
+                capture_output: Some(capture),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(42.0),
+        )?;
+
+        let interrupted = match outcome {
+            RunOutcome::Interrupted(interrupted) => interrupted,
+            RunOutcome::Completed(_) => {
+                return Err("expected interrupted run for protocol case".into());
+            }
+        };
+        match interrupted.reason {
+            InterruptionReason::EgressProtocolViolation { channel } => {
+                assert_eq!(channel, "broker");
+            }
+            other => return Err(format!("expected EgressProtocolViolation, got {other:?}").into()),
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn egress_io_maps_to_typed_interruption_reason() -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-egress-io-interruption-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_intent_io")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let egress_script = write_egress_io_script(&temp_dir, "egress.sh")?;
+        let driver = write_process_driver_script(
+            &temp_dir,
+            "driver.sh",
+            &[
+                serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+                serde_json::to_string(&json!({
+                    "type":"event",
+                    "event": HostedEvent {
+                        event_id: "evt1".to_string(),
+                        kind: ExternalEventKind::Command,
+                        at: EventTime::default(),
+                        semantic_kind: Some("price_bar".to_string()),
+                        payload: Some(json!({"price": 101.5}))
+                    }
+                }))?,
+                serde_json::to_string(&json!({"type":"end"}))?,
+            ],
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let outcome = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Process {
+                    command: vec!["/bin/sh".to_string(), driver.display().to_string()],
+                },
+                adapter_path: Some(adapter),
+                egress_config: Some(make_intent_egress_config_with_timeout(
+                    &egress_script,
+                    Duration::from_millis(100),
+                )),
+                capture_output: Some(capture),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(42.0),
+        )?;
+
+        let interrupted = match outcome {
+            RunOutcome::Interrupted(interrupted) => interrupted,
+            RunOutcome::Completed(_) => {
+                return Err("expected interrupted run for io case".into());
+            }
+        };
+        match interrupted.reason {
+            InterruptionReason::EgressIo { channel } => assert_eq!(channel, "broker"),
+            other => return Err(format!("expected EgressIo, got {other:?}").into()),
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn egress_startup_failure_surfaces_host_run_error() -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-egress-startup-hostrunerror-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_intent_startup_fail")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let driver = write_process_driver_script(
+            &temp_dir,
+            "driver.sh",
+            &[
+                serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+                serde_json::to_string(&json!({
+                    "type":"event",
+                    "event": HostedEvent {
+                        event_id: "evt1".to_string(),
+                        kind: ExternalEventKind::Command,
+                        at: EventTime::default(),
+                        semantic_kind: Some("price_bar".to_string()),
+                        payload: Some(json!({"price": 101.5}))
+                    }
+                }))?,
+                serde_json::to_string(&json!({"type":"end"}))?,
+            ],
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let config = EgressConfig {
+            default_ack_timeout: Duration::from_millis(50),
+            channels: BTreeMap::from([(
+                "broker".to_string(),
+                EgressChannelConfig::Process {
+                    command: vec!["/definitely/missing-egress-binary".to_string()],
+                },
+            )]),
+            routes: BTreeMap::from([(
+                "place_order".to_string(),
+                EgressRoute {
+                    channel: "broker".to_string(),
+                    ack_timeout: None,
+                },
+            )]),
+        };
+
+        let err = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Process {
+                    command: vec!["/bin/sh".to_string(), driver.display().to_string()],
+                },
+                adapter_path: Some(adapter),
+                egress_config: Some(config),
+                capture_output: Some(capture),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(42.0),
+        )
+        .expect_err("startup failure should surface as host run error");
+
+        assert!(
+            matches!(err, HostRunError::DriverIo(_)),
+            "expected HostRunError::DriverIo, got {err:?}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn egress_shutdown_failure_surfaces_host_run_error() -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-egress-shutdown-hostrunerror-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_intent_shutdown_fail")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let egress_script = write_egress_hanging_shutdown_script(&temp_dir, "egress.sh")?;
+        let driver = write_process_driver_script(
+            &temp_dir,
+            "driver.sh",
+            &[
+                serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+                serde_json::to_string(&json!({
+                    "type":"event",
+                    "event": HostedEvent {
+                        event_id: "evt1".to_string(),
+                        kind: ExternalEventKind::Command,
+                        at: EventTime::default(),
+                        semantic_kind: Some("price_bar".to_string()),
+                        payload: Some(json!({"price": 101.5}))
+                    }
+                }))?,
+                serde_json::to_string(&json!({"type":"end"}))?,
+            ],
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let err = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Process {
+                    command: vec!["/bin/sh".to_string(), driver.display().to_string()],
+                },
+                adapter_path: Some(adapter),
+                egress_config: Some(make_intent_egress_config_with_timeout(
+                    &egress_script,
+                    Duration::from_millis(100),
+                )),
+                capture_output: Some(capture),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(42.0),
+        )
+        .expect_err("shutdown timeout should surface as host run error");
+
+        assert!(
+            matches!(err, HostRunError::DriverIo(_)),
+            "expected HostRunError::DriverIo, got {err:?}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn replay_from_paths_fails_when_capture_external_kind_is_not_representable(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-replay-intent-kind-mismatch-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph =
+            write_intent_graph(&temp_dir, "graph.yaml", "host_intent_replay_kind_mismatch")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let egress_script = write_egress_ack_script(&temp_dir, "egress.sh")?;
+        let driver = write_process_driver_script(
+            &temp_dir,
+            "driver.sh",
+            &[
+                serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+                serde_json::to_string(&json!({
+                    "type":"event",
+                    "event": HostedEvent {
+                        event_id: "evt1".to_string(),
+                        kind: ExternalEventKind::Command,
+                        at: EventTime::default(),
+                        semantic_kind: Some("price_bar".to_string()),
+                        payload: Some(json!({"price": 101.5}))
+                    }
+                }))?,
+                serde_json::to_string(&json!({"type":"end"}))?,
+            ],
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let _ = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph.clone(),
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Process {
+                    command: vec!["/bin/sh".to_string(), driver.display().to_string()],
+                },
+                adapter_path: Some(adapter.clone()),
+                egress_config: Some(make_intent_egress_config(&egress_script)),
+                capture_output: Some(capture.clone()),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(42.0),
+        )?;
+
+        let mut bundle: CaptureBundle = serde_json::from_str(&fs::read_to_string(&capture)?)?;
+        let effect = bundle
+            .decisions
+            .first_mut()
+            .and_then(|decision| {
+                decision
+                    .effects
+                    .iter_mut()
+                    .find(|effect| effect.effect.kind == "place_order")
+            })
+            .expect("captured external place_order effect");
+        effect.effect.kind = "cancel_order".to_string();
+        if let Some(intent) = effect.effect.intents.first_mut() {
+            intent.kind = "cancel_order".to_string();
+        }
+        fs::write(&capture, serde_json::to_string_pretty(&bundle)?)?;
+
+        let err = replay_graph_from_paths_with_surfaces(
+            ReplayGraphFromPathsRequest {
+                capture_path: capture,
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: Some(adapter),
+            },
+            build_injected_runtime_surfaces(42.0),
+        )
+        .expect_err("replay setup must fail for unrepresentable external effect kinds");
+
+        match err {
+            HostReplayError::ExternalKindsNotRepresentable { missing } => {
+                assert!(
+                    missing.iter().any(|kind| kind == "cancel_order"),
+                    "expected cancel_order in missing kinds, got {missing:?}"
+                );
+            }
+            other => panic!("expected ExternalKindsNotRepresentable, got {other:?}"),
+        }
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
@@ -1898,6 +3169,7 @@ outputs:
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
             adapter_path: None,
+            egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,
         })?;
@@ -1960,6 +3232,7 @@ outputs:
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
             adapter_path: None,
+            egress_config: None,
             capture_output: Some(temp_dir.join("capture.json")),
             pretty_capture: false,
         })
@@ -2011,6 +3284,7 @@ outputs:
                     command: vec!["/bin/sh".to_string(), driver.display().to_string()],
                 },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(temp_dir.join("capture.json")),
                 pretty_capture: false,
             },
@@ -2070,6 +3344,7 @@ outputs:
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
             adapter_path: None,
+            egress_config: None,
             capture_output: Some(temp_dir.join("capture.json")),
             pretty_capture: false,
         })
@@ -2127,6 +3402,7 @@ outputs:
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
             adapter_path: None,
+            egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,
         })?;
@@ -2201,6 +3477,7 @@ outputs:
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
             adapter_path: None,
+            egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,
         })?;
@@ -2279,6 +3556,7 @@ outputs:
                     command: vec!["/bin/sh".to_string(), driver.display().to_string()],
                 },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },
@@ -2346,6 +3624,7 @@ outputs:
                     command: vec!["/bin/sh".to_string(), driver.display().to_string()],
                 },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },
@@ -2408,6 +3687,7 @@ outputs:
                     command: vec!["/bin/sh".to_string(), driver.display().to_string()],
                 },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },
@@ -2476,6 +3756,7 @@ outputs:
                     command: vec!["/bin/sh".to_string(), driver.display().to_string()],
                 },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },
@@ -2545,6 +3826,7 @@ outputs:
                     command: vec!["/bin/sh".to_string(), driver.display().to_string()],
                 },
                 adapter_path: None,
+                egress_config: None,
                 capture_output: Some(capture.clone()),
                 pretty_capture: false,
             },

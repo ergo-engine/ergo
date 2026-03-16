@@ -40,6 +40,7 @@ pub fn context_set_number_manifest() -> ActionPrimitiveManifest {
                 value_type: ValueType::Number,
                 from_input: "value".to_string(),
             }],
+            intents: vec![],
         },
         execution: ExecutionSpec {
             deterministic: true,

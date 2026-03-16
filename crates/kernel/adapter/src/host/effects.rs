@@ -204,6 +204,7 @@ mod tests {
                     value,
                 })
                 .collect(),
+            intents: vec![],
         }
     }
 

@@ -27,8 +27,8 @@ These two parts stay separate on purpose. `adapter.yaml` remains purely
 semantic. Ingress-channel configuration and launch or wiring are host
 concerns.
 
-This guide covers ingress only. Egress-channel configuration,
-lifecycle, and protocol remain separate follow-on work.
+This guide covers ingress only. For the outbound side of the same
+system, see [Egress Channel Guide](egress-channel-guide.md).
 
 ## What An Ingress Channel Is Allowed To Do
 
@@ -134,7 +134,8 @@ rest:
 2. validate semantic payload and bind it through the adapter binder when
    an adapter is configured
 3. execute the graph step
-4. drain and apply effects through registered handlers
+4. drain and dispatch effects through registered handlers
+   (handler-owned kinds) and egress channels (egress-owned kinds)
 5. enrich the capture artifact
 6. keep replay capture-driven and separate from live ingress
 

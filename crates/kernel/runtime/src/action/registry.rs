@@ -142,23 +142,138 @@ impl ActionRegistry {
                             from_input: write.from_input.clone(),
                         });
                     }
-                    Some(inp) => {
-                        let compatible = matches!(
-                            (&write.value_type, &inp.value_type),
-                            (ValueType::Number, super::ActionValueType::Number)
-                                | (ValueType::Series, super::ActionValueType::Series)
-                                | (ValueType::Bool, super::ActionValueType::Bool)
-                                | (ValueType::String, super::ActionValueType::String)
-                        );
-                        if !compatible {
-                            return Err(ActionValidationError::WriteFromInputTypeMismatch {
-                                write_name: write.name.clone(),
-                                from_input: write.from_input.clone(),
-                                expected: write.value_type.clone(),
-                                found: inp.value_type.clone(),
-                            });
+                    Some(inp)
+                        if !value_type_matches_action_input(&write.value_type, &inp.value_type) =>
+                    {
+                        return Err(ActionValidationError::WriteFromInputTypeMismatch {
+                            write_name: write.name.clone(),
+                            from_input: write.from_input.clone(),
+                            expected: write.value_type.clone(),
+                            found: inp.value_type.clone(),
+                        });
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+
+        let mut seen_intents: HashMap<&str, usize> = HashMap::new();
+        for (intent_index, intent) in manifest.effects.intents.iter().enumerate() {
+            if let Some(&first_index) = seen_intents.get(intent.name.as_str()) {
+                return Err(ActionValidationError::DuplicateIntentName {
+                    name: intent.name.clone(),
+                    first_index,
+                    second_index: intent_index,
+                });
+            }
+            seen_intents.insert(&intent.name, intent_index);
+
+            let mut seen_fields: HashMap<&str, usize> = HashMap::new();
+            let mut field_types: HashMap<&str, ValueType> = HashMap::new();
+
+            for (field_index, field) in intent.fields.iter().enumerate() {
+                if let Some(&first_index) = seen_fields.get(field.name.as_str()) {
+                    return Err(ActionValidationError::DuplicateIntentFieldName {
+                        intent_name: intent.name.clone(),
+                        field_name: field.name.clone(),
+                        first_index,
+                        second_index: field_index,
+                    });
+                }
+                seen_fields.insert(&field.name, field_index);
+                field_types.insert(&field.name, field.value_type.clone());
+
+                match (field.from_input.as_ref(), field.from_param.as_ref()) {
+                    (Some(_), Some(_)) => {
+                        return Err(ActionValidationError::IntentFieldMultipleSources {
+                            intent_name: intent.name.clone(),
+                            field_name: field.name.clone(),
+                        });
+                    }
+                    (None, None) => {
+                        return Err(ActionValidationError::IntentFieldMissingSource {
+                            intent_name: intent.name.clone(),
+                            field_name: field.name.clone(),
+                        });
+                    }
+                    (Some(from_input), None) => {
+                        let input = manifest.inputs.iter().find(|i| i.name == *from_input);
+                        match input {
+                            None => {
+                                return Err(ActionValidationError::IntentFieldFromInputNotFound {
+                                    intent_name: intent.name.clone(),
+                                    field_name: field.name.clone(),
+                                    from_input: from_input.clone(),
+                                });
+                            }
+                            Some(inp)
+                                if !value_type_matches_action_input(
+                                    &field.value_type,
+                                    &inp.value_type,
+                                ) =>
+                            {
+                                return Err(
+                                    ActionValidationError::IntentFieldFromInputTypeMismatch {
+                                        intent_name: intent.name.clone(),
+                                        field_name: field.name.clone(),
+                                        from_input: from_input.clone(),
+                                        expected: field.value_type.clone(),
+                                        found: inp.value_type.clone(),
+                                    },
+                                );
+                            }
+                            Some(_) => {}
                         }
                     }
+                    (None, Some(from_param)) => {
+                        let parameter = manifest.parameters.iter().find(|p| p.name == *from_param);
+                        match parameter {
+                            None => {
+                                return Err(ActionValidationError::IntentFieldFromParamNotFound {
+                                    intent_name: intent.name.clone(),
+                                    field_name: field.name.clone(),
+                                    from_param: from_param.clone(),
+                                });
+                            }
+                            Some(param)
+                                if !value_type_matches_parameter(
+                                    &field.value_type,
+                                    &param.value_type,
+                                ) =>
+                            {
+                                return Err(
+                                    ActionValidationError::IntentFieldFromParamTypeMismatch {
+                                        intent_name: intent.name.clone(),
+                                        field_name: field.name.clone(),
+                                        from_param: from_param.clone(),
+                                        expected: field.value_type.clone(),
+                                        found: param.value_type.clone(),
+                                    },
+                                );
+                            }
+                            Some(_) => {}
+                        }
+                    }
+                }
+            }
+
+            for mirror in &intent.mirror_writes {
+                let Some(field_type) = field_types.get(mirror.from_field.as_str()) else {
+                    return Err(ActionValidationError::MirrorWriteFromFieldNotFound {
+                        intent_name: intent.name.clone(),
+                        write_name: mirror.name.clone(),
+                        from_field: mirror.from_field.clone(),
+                    });
+                };
+
+                if mirror.value_type != *field_type {
+                    return Err(ActionValidationError::MirrorWriteTypeMismatch {
+                        intent_name: intent.name.clone(),
+                        write_name: mirror.name.clone(),
+                        from_field: mirror.from_field.clone(),
+                        expected: mirror.value_type.clone(),
+                        found: field_type.clone(),
+                    });
                 }
             }
         }
@@ -247,6 +362,25 @@ fn is_valid_id(id: &str) -> bool {
     chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
+fn value_type_matches_action_input(expected: &ValueType, found: &ActionValueType) -> bool {
+    matches!(
+        (expected, found),
+        (ValueType::Number, ActionValueType::Number)
+            | (ValueType::Series, ActionValueType::Series)
+            | (ValueType::Bool, ActionValueType::Bool)
+            | (ValueType::String, ActionValueType::String)
+    )
+}
+
+fn value_type_matches_parameter(expected: &ValueType, found: &ParameterType) -> bool {
+    matches!(
+        (expected, found),
+        (ValueType::Number, ParameterType::Number)
+            | (ValueType::Bool, ParameterType::Bool)
+            | (ValueType::String, ParameterType::String)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,7 +421,10 @@ mod tests {
                 required: false,
                 bounds: None,
             }],
-            effects: ActionEffects { writes: vec![] },
+            effects: ActionEffects {
+                writes: vec![],
+                intents: vec![],
+            },
             execution: ExecutionSpec {
                 deterministic: true,
                 retryable: false,

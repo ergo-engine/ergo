@@ -40,6 +40,7 @@ pub fn context_set_series_manifest() -> ActionPrimitiveManifest {
                 value_type: ValueType::Series,
                 from_input: "value".to_string(),
             }],
+            intents: vec![],
         },
         execution: ExecutionSpec {
             deterministic: true,

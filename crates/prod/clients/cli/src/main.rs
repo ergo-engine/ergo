@@ -374,6 +374,7 @@ outputs:
                 key: "drifted".to_string(),
                 value: ergo_runtime::common::Value::Number(42.0),
             }],
+            intents: vec![],
         };
         bundle.decisions[0]
             .effects
@@ -676,6 +677,7 @@ outputs:
                 key: "price".to_string(),
                 value: Value::Number(42.0),
             }],
+            intents: vec![],
         };
         let actual_effect = ActionEffect {
             kind: "set_context".to_string(),
@@ -683,6 +685,7 @@ outputs:
                 key: "volume".to_string(),
                 value: Value::Number(99.0),
             }],
+            intents: vec![],
         };
         let err = format_replay_error(&ReplayError::EffectMismatch {
             event_id: EventId::new("e1"),
@@ -695,6 +698,7 @@ outputs:
                         key: "price".to_string(),
                         value: Value::Number(42.0),
                     }],
+                    intents: vec![],
                 }),
             }),
             actual: Some(CapturedActionEffect {
@@ -705,6 +709,7 @@ outputs:
                         key: "volume".to_string(),
                         value: Value::Number(99.0),
                     }],
+                    intents: vec![],
                 }),
             }),
             detail: "content mismatch".to_string(),

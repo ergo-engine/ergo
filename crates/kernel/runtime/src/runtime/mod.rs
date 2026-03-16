@@ -2,7 +2,7 @@ pub mod execute;
 pub mod types;
 pub mod validate;
 
-pub use execute::execute;
+pub use execute::{execute, execute_with_metadata};
 pub use types::*;
 pub use validate::validate;
 

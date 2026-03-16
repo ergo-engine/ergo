@@ -7,8 +7,8 @@ use ergo_runtime::catalog::{CorePrimitiveCatalog, CoreRegistries};
 use ergo_runtime::cluster::{ExpandedGraph, PrimitiveCatalog, PrimitiveKind};
 use ergo_runtime::common::Value;
 use ergo_runtime::runtime::{
-    execute, validate as runtime_validate, ExecError, ExecutionContext as RuntimeExecutionContext,
-    Registries,
+    execute_with_metadata, validate as runtime_validate, ExecError,
+    ExecutionContext as RuntimeExecutionContext, Registries,
 };
 use serde::{Deserialize, Serialize};
 
@@ -449,7 +449,13 @@ impl RuntimeHandle {
         };
 
         // Call runtime::execute, surface effects through the boundary
-        match execute(&validated, &registries, ctx.inner()) {
+        match execute_with_metadata(
+            &validated,
+            &registries,
+            ctx.inner(),
+            graph_id.as_str(),
+            event_id.as_str(),
+        ) {
             Ok(report) => RunResult {
                 termination: RunTermination::Completed,
                 effects: report.effects,
@@ -491,9 +497,19 @@ impl RuntimeHandle {
                 continue;
             };
 
-            // Current runtime action surface emits `set_context` for write specs.
-            if !action.manifest().effects.writes.is_empty() {
+            let emits_set_context = !action.manifest().effects.writes.is_empty()
+                || action
+                    .manifest()
+                    .effects
+                    .intents
+                    .iter()
+                    .any(|intent| !intent.mirror_writes.is_empty());
+            if emits_set_context {
                 kinds.insert("set_context".to_string());
+            }
+
+            for intent in &action.manifest().effects.intents {
+                kinds.insert(intent.name.clone());
             }
         }
 
@@ -863,6 +879,7 @@ mod tests {
                 context: HashMap::new(),
                 events: HashSet::new(),
                 effects: HashSet::new(),
+                effect_schemas: HashMap::new(),
                 event_schemas: HashMap::new(),
                 capture_format_version: String::new(),
                 adapter_fingerprint: String::new(),
@@ -914,6 +931,7 @@ mod tests {
                 context: HashMap::new(),
                 events: HashSet::new(),
                 effects: HashSet::new(),
+                effect_schemas: HashMap::new(),
                 event_schemas: HashMap::new(),
                 capture_format_version: "999".to_string(),
                 adapter_fingerprint: "adapter:test@1.0.0;sha256:test".to_string(),

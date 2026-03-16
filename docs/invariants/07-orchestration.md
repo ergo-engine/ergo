@@ -22,7 +22,8 @@
 | SUP-6 | Episode atomicity is invocation-scoped | supervisor.md §3 | — | — | — | — |
 | SUP-7 | DecisionLog is write-only | supervisor.md §3 | ✓ | — | — | ✓ |
 | SUP-TICK-1 | Pump events use deferred-retry scheduling (legacy `Tick` alias accepted) | — | — | — | — | ✓ |
-| RTHANDLE-ID-1 | RuntimeHandle discards graph_id and event_id | — | ✓ | — | — | ✓ |
+| RTHANDLE-META-1 | RuntimeHandle forwards graph_id and event_id to metadata-aware runtime execution | — | ✓ | — | — | — |
+| RTHANDLE-ID-1 | FaultRuntimeHandle keys injected outcomes on EventId only | — | ✓ | — | — | ✓ |
 | RTHANDLE-ERRKIND-1 | Pre-execution failures map to ValidationFailed, not RuntimeError or SemanticError | supervisor.md §2.4 | — | — | ✓ | ✓ |
 
 ### Notes
@@ -34,7 +35,8 @@
 - **SUP-5:** `ErrKind` enum contains only mechanical variants; no domain-flavored errors.
 - **SUP-7:** `DecisionLog` trait has only `fn log()`; `records()` is on concrete impl, not trait.
 - **SUP-TICK-1:** Pump events have special deferred-retry behavior distinct from Command events; legacy `Tick` capture values deserialize to `Pump` via serde alias. Test: `replay_harness.rs` uses Command (not Pump) to avoid interference.
-- **RTHANDLE-ID-1:** `RuntimeHandle::run()` explicitly discards `graph_id` and `event_id` parameters in `adapter::RuntimeHandle::run` / `impl RuntimeInvoker for RuntimeHandle`; only `ctx.inner()` is passed to the underlying runtime. This ensures replay determinism — fault injection keys on EventId only (REP-3).
+- **RTHANDLE-META-1:** `RuntimeHandle::run()` calls `execute_with_metadata(...)` and forwards `graph_id` / `event_id` into metadata-aware runtime execution. This is required for deterministic `intent_id` derivation when Actions declare external intents.
+- **RTHANDLE-ID-1:** `FaultRuntimeHandle` still discards `graph_id` and keys injected outcomes on `EventId` only. The metadata-less runtime path rejects intent-emitting graphs, so the fault harness retains EventId-only determinism without becoming a live intent-ID source.
 - **RTHANDLE-ERRKIND-1:** CLOSED (2026-02-06). `RuntimeHandle::run()` maps pre-execution failures to `ErrKind::ValidationFailed`, not `RuntimeError` or `SemanticError`.
   - **Prior bug (runtime_validate path):** `runtime_validate()` errors mapped to `ErrKind::RuntimeError`. Since `should_retry()` treats `RuntimeError` as retryable, this caused **pathological retries** of structurally invalid graphs — a graph that fails validation will fail identically on every retry.
   - **Prior bug (validate_composition path):** `validate_composition()` errors mapped to `ErrKind::SemanticError`. Non-retryable (correct behavior), but **wrong category** — `SemanticError` is for runtime deterministic failures (DivisionByZero, NonFiniteOutput per B.2), not validation-time COMP-* checks.
@@ -47,10 +49,10 @@
 | ID | Invariant | Spec | Type | Assertion | Validation | Test |
 |----|-----------|:----:|:----:|:---------:|:----------:|:----:|
 | HST-1 | Effect application locus is host boundary, not DecisionLog readback | supervisor.md §3, adapter.md | — | — | ✓ | ✓ |
-| HST-2 | `set_context` validates declared key, writable, and type | adapter.md #COMP-11..14 | — | — | ✓ | ✓ |
+| HST-2 | `set_context` validates declared key, writable, and type | action.md #COMP-11..14 | — | — | ✓ | ✓ |
 | HST-3 | Non-invoke decisions apply no effects | supervisor.md §3 | — | — | ✓ | ✓ |
 | HST-4 | Retry path cannot duplicate committed effects | supervisor.md §3 | — | — | ✓ | ✓ |
-| HST-5 | Load fails when graph-emittable accepted effect lacks handler | adapter.md #COMP-13/14 | — | — | ✓ | ✓ |
+| HST-5 | Run setup fails when graph-emittable accepted effect lacks host ownership (handler or egress route) | action.md #COMP-14/#COMP-17..19, adapter.md #2.4 | — | — | ✓ | ✓ |
 | HST-6 | Merge precedence is deterministic (`incoming > store`) | execution.md §3 | — | — | ✓ | ✓ |
 | HST-7 | Buffer lifecycle is replace-only, drain-once, commit-non-empty, no rollback | supervisor.md §2.3 | — | — | ✓ | ✓ |
 | HST-8 | Canonical host loop enforces one `on_event` lifecycle per step cycle | supervisor.md §2.2 | — | — | ✓ | ✓ |
@@ -76,10 +78,11 @@ Clients (CLI, SDK) call the **client entrypoint** APIs. They do not own loader c
 
 Notes:
 
-- HST-1/HST-7: canonical mode drains buffered effects from host runtime wrapper after `on_event`, then applies in-order through handlers.
+- HST-1/HST-7: canonical mode drains buffered effects from host runtime wrapper after `on_event`, then applies handler-owned kinds through host handlers and dispatches egress-owned kinds through configured egress channels.
 - Canonical run ingress is host-owned. Clients translate flags/arguments into host request types; they do not own ingress-channel launch or replay semantics.
 - Canonical run interruption is host-owned. `Interrupted(...)` is only truthful when host can finalize a trustworthy capture artifact; replay remains capture-driven and accepts no `DriverConfig`.
 - Process-driver startup and termination grace windows are host operational policy. They bound how long host waits to observe protocol truth, but they do not change what counts as `Completed` versus `Interrupted`.
+- Metadata-less runtime execution rejects intent-emitting graphs. Canonical host paths therefore use metadata-aware execution whenever Actions declare external intents.
 - **HST-4:** Enforced by `BufferingRuntimeInvoker` replace semantics: each `run()` call replaces the pending effect buffer, so retried runs cannot accumulate effects from prior attempts.
 - Host capture enrichment associates applied effects by decision order (`decisions[i]`), not by `event_id`, so duplicate fixture/event IDs cannot overwrite prior decision effects.
 - HST-9: duplicate `event_id` rejection is enforced at `HostedRunner`, so non-CLI host callers cannot bypass identity guarantees. Host replay execution flows through `HostedRunner::replay_step(...)` which performs strict preflight, event rehydration with hash checks, and effect-integrity comparison against host-enriched capture decisions.

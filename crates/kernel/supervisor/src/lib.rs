@@ -12,7 +12,7 @@ use ergo_runtime::common::ActionEffect;
 use serde::{Deserialize, Serialize};
 
 /// Capture bundle format version. This repo treats captures as ephemeral artifacts.
-pub(crate) const CAPTURE_FORMAT_VERSION: &str = "v2";
+pub(crate) const CAPTURE_FORMAT_VERSION: &str = "v3";
 pub const NO_ADAPTER_PROVENANCE: &str = "none";
 
 mod capture;
@@ -33,6 +33,17 @@ pub use capture::{write_capture_bundle, CaptureJsonStyle, CapturingDecisionLog, 
 pub struct CapturedActionEffect {
     pub effect: ActionEffect,
     pub effect_hash: String,
+}
+
+/// A captured durable-accept acknowledgment for a dispatched intent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CapturedIntentAck {
+    pub intent_id: String,
+    pub channel: String,
+    pub status: String,
+    pub acceptance: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress_ref: Option<String>,
 }
 
 /// SUP-7: DecisionLog is write-only. No read/query surface is ever exposed.
@@ -116,6 +127,10 @@ pub struct EpisodeInvocationRecord {
     pub termination: Option<RunTermination>,
     pub retry_count: usize,
     pub effects: Vec<CapturedActionEffect>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub intent_acks: Vec<CapturedIntentAck>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interruption: Option<String>,
 }
 
 impl From<&DecisionLogEntry> for EpisodeInvocationRecord {
@@ -129,6 +144,8 @@ impl From<&DecisionLogEntry> for EpisodeInvocationRecord {
             termination: entry.termination.clone(),
             retry_count: entry.retry_count,
             effects: vec![],
+            intent_acks: vec![],
+            interruption: None,
         }
     }
 }
@@ -143,6 +160,8 @@ pub struct CaptureBundle {
     pub decisions: Vec<EpisodeInvocationRecord>,
     pub adapter_provenance: String,
     pub runtime_provenance: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress_provenance: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

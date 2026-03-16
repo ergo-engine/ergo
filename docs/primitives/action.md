@@ -1,17 +1,32 @@
 ---
 Authority: STABLE
 Version: v1
-Last Updated: 2026-02-02
-Last Amended: 2026-02-02
+Last Updated: 2026-03-16
+Last Amended: 2026-03-16
+Scope: Declarative action contract for gating, writes, and external intents
 ---
 
 > **Amended 2026-02-02** by Codex (Implementation Assistant)
 > Phase 5 (Action Contract) completion: schema updates, rule table, enforcement mapping,
 > composition rules, and examples.
+>
+> **Amended 2026-03-16** by Codex (Implementation Assistant)
+> Added first-class external intent declarations, mirror writes, ACT-24 through
+> ACT-33 registration rules, and intent-aware composition rules. Aligned the
+> stable action contract with the v1 external effect intent model and current
+> adapter composition enforcement.
 
 # Action Primitive Manifest — v1
 
 This is the authoritative contract.
+
+Actions may now project intent in two directions:
+
+- host-internal projection through `effects.writes` and `mirror_writes`
+- external projection through `effects.intents`
+
+The graph still emits intent only. Host realizes host-internal
+projection locally and routes external projection to egress channels.
 
 ---
 
@@ -167,10 +182,57 @@ effects:
 
 Rules:
 
-- `effects` block must exist (may contain empty `writes`)
+- `effects` block must exist (it may contain empty `writes` and empty `intents`)
 - Write names must be unique
 - Write types must be Number, Series, Bool, or String
 - `from_input` is required and must name a declared scalar input (ACT-22/ACT-23)
+
+---
+
+### 2.9 Effects (Intent Declarations)
+
+```yaml
+effects:
+  intents:
+    - name: string
+      fields:
+        - name: string
+          type: number | series | bool | string
+          from_input: string   # Exactly one of from_input / from_param
+          from_param: string   # Exactly one of from_input / from_param
+      mirror_writes:
+        - name: string
+          type: number | series | bool | string
+          from_field: string
+```
+
+Rules:
+
+- `effects.intents` may be empty
+- Intent names must be unique (ACT-24)
+- Field names must be unique within each intent (ACT-25)
+- Each intent field must declare exactly one source: `from_input` or `from_param` (ACT-26/ACT-27)
+- `from_input` must reference a declared scalar input and match the declared field type (ACT-28/ACT-29)
+- `from_param` must reference a declared parameter and match the declared field type (ACT-30/ACT-31)
+- `mirror_writes` is optional; if present, each `from_field` must reference a declared field in the same intent and the value type must match (ACT-32/ACT-33)
+
+---
+
+### 2.10 Effect Projection Semantics
+
+`effects.writes` and `effects.intents` are additive. An Action may declare:
+
+- only `writes`
+- only `intents`
+- both `writes` and `intents`
+
+Canonical effect projection rules:
+
+- Top-level `effects.writes` project into the host-internal `set_context` effect kind
+- `mirror_writes` also project into the host-internal `set_context` effect kind
+- Each declared intent projects into a real external effect kind named by `intent.name`
+- When both projections exist, host-internal `set_context` projection precedes external intent projection
+- One Action may therefore emit both a host-internal `set_context` effect and one or more external intent effects during the same attempt
 
 ---
 
@@ -217,6 +279,16 @@ Rules:
 | ACT-21 | $key write references must be String type | `∀ write where name starts with "$": referenced param.type == String` |
 | ACT-22 | Write from_input references declared input | `∀ write: from_input ∈ inputs[].name` |
 | ACT-23 | Write from_input type compatible with write type | `∀ write: inputs[from_input].type is scalar AND matches write.value_type` |
+| ACT-24 | Intent names unique | `unique(effects.intents[].name)` |
+| ACT-25 | Intent field names unique within each intent | `∀ intent: unique(intent.fields[].name)` |
+| ACT-26 | Intent field declares a source | `∀ field: field.from_input != None OR field.from_param != None` |
+| ACT-27 | Intent field declares only one source | `∀ field: !(field.from_input != None AND field.from_param != None)` |
+| ACT-28 | Intent field from_input references declared input | `∀ field where from_input != None: from_input ∈ inputs[].name` |
+| ACT-29 | Intent field from_input type compatible with field type | `∀ field where from_input != None: inputs[from_input].type is scalar AND matches field.value_type` |
+| ACT-30 | Intent field from_param references declared parameter | `∀ field where from_param != None: from_param ∈ parameters[].name` |
+| ACT-31 | Intent field from_param type compatible with field type | `∀ field where from_param != None: parameters[from_param].type matches field.value_type` |
+| ACT-32 | Mirror write from_field references declared intent field | `∀ mirror_write: from_field ∈ intent.fields[].name` |
+| ACT-33 | Mirror write type matches referenced field type | `∀ mirror_write: mirror_write.value_type == intent.fields[from_field].value_type` |
 
 **Note on ACT-18:** Uniqueness is by id only; version is not considered. Two primitives with the same id but different versions are rejected.
 
@@ -251,6 +323,16 @@ Rules:
 | ACT-21 | Registration | `ActionValidationError::WriteKeyReferenceNotString` | `act_21_dollar_key_write_referencing_non_string_param_rejected` |
 | ACT-22 | Registration | `ActionValidationError::WriteFromInputNotFound` | `act_22_from_input_not_found_rejected` |
 | ACT-23 | Registration | `ActionValidationError::WriteFromInputTypeMismatch` | `act_23_from_input_event_type_rejected` |
+| ACT-24 | Registration | `ActionValidationError::DuplicateIntentName` | `intent_validation_duplicate_intent_names_rejected` |
+| ACT-25 | Registration | `ActionValidationError::DuplicateIntentFieldName` | `intent_validation_duplicate_field_names_rejected` |
+| ACT-26 | Registration | `ActionValidationError::IntentFieldMissingSource` | `intent_validation_neither_source_set_rejected` |
+| ACT-27 | Registration | `ActionValidationError::IntentFieldMultipleSources` | `intent_validation_both_sources_set_rejected` |
+| ACT-28 | Registration | `ActionValidationError::IntentFieldFromInputNotFound` | `—` |
+| ACT-29 | Registration | `ActionValidationError::IntentFieldFromInputTypeMismatch` | `—` |
+| ACT-30 | Registration | `ActionValidationError::IntentFieldFromParamNotFound` | `—` |
+| ACT-31 | Registration | `ActionValidationError::IntentFieldFromParamTypeMismatch` | `—` |
+| ACT-32 | Registration | `ActionValidationError::MirrorWriteFromFieldNotFound` | `intent_validation_from_field_missing_rejected` |
+| ACT-33 | Registration | `ActionValidationError::MirrorWriteTypeMismatch` | `intent_validation_from_field_type_mismatch_rejected` |
 
 **Registration enforcement location:** `crates/kernel/runtime/src/action/registry.rs`
 
@@ -269,14 +351,17 @@ Rules:
 | COMP-11 | Action writes target provided keys | `effects.writes.names ⊆ adapter.context_keys.names` |
 | COMP-12 | Action writes only writable keys | `∀n ∈ writes: adapter.key[n].writable == true` |
 | COMP-13 | Action write types match | `∀n ∈ writes: action.type[n] == adapter.key[n].type` |
-| COMP-14 | If action writes, adapter accepts set_context | `writes.len > 0 => accepts.effects contains "set_context"` |
-| COMP-15 | Writes captured (planned) | `writes.len > 0 => capture includes effect + keys` (deferred: REP-SCOPE) |
+| COMP-14 | If action writes or mirror writes, adapter accepts set_context | `(writes.len > 0 OR any(intent.mirror_writes.len > 0)) => accepts.effects contains "set_context"` |
+| COMP-15 | Writes captured (planned) | `(writes.len > 0 OR any(intent.mirror_writes.len > 0)) => capture includes effect + keys` (deferred: REP-SCOPE) |
+| COMP-17 | If action declares intents, adapter accepts each intent effect kind | `effects.intents.names ⊆ accepts.effects.names` |
+| COMP-18 | Declared intent kinds must have payload schemas in adapter acceptance surface | `∀ intent: accepts.effects[intent.name].payload_schema exists` |
+| COMP-19 | Intent fields are structurally compatible with adapter payload schema | `∀ intent: intent.fields structurally compatible with accepts.effects[intent.name].payload_schema` |
 
 **Composition enforcement:**
 
 - COMP-10 is enforced by wiring matrix validation (`runtime/validate.rs`).
 - COMP-9 refines Action input legality by destination input type (event gate vs scalar payload). Runtime validation implements this with destination-input-type-aware checks in `runtime/validate.rs` in addition to the coarse wiring matrix path.
-- COMP-11 through COMP-14 are enforced in `crates/kernel/adapter/src/composition.rs` when binding adapter ↔ graph.
+- COMP-11 through COMP-14 and COMP-17 through COMP-19 are enforced in `crates/kernel/adapter/src/composition.rs` when binding adapter ↔ graph.
 - COMP-15 is deferred until REP-SCOPE expands.
 
 ---
@@ -317,6 +402,7 @@ side_effects: true
 
 effects:
   writes: []
+  intents: []
 ```
 
 ### 7.2 Action With Writes
@@ -356,4 +442,65 @@ effects:
     - name: price
       type: number
       from_input: price
+  intents: []
+```
+
+### 7.3 Action With External Intent And Mirror Write
+
+```yaml
+kind: action
+id: submit_order
+version: 1.0.0
+
+inputs:
+  - name: event
+    type: event
+    required: true
+    cardinality: single
+  - name: symbol
+    type: string
+    required: true
+    cardinality: single
+  - name: qty
+    type: number
+    required: true
+    cardinality: single
+
+outputs:
+  - name: outcome
+    type: event
+
+parameters:
+  - name: side
+    type: enum
+    default: buy
+    required: false
+
+execution:
+  deterministic: true
+  retryable: false
+
+state:
+  allowed: false
+
+side_effects: true
+
+effects:
+  writes: []
+  intents:
+    - name: place_order
+      fields:
+        - name: symbol
+          type: string
+          from_input: symbol
+        - name: qty
+          type: number
+          from_input: qty
+        - name: side
+          type: string
+          from_param: side
+      mirror_writes:
+        - name: last_order_symbol
+          type: string
+          from_field: symbol
 ```

@@ -23,7 +23,7 @@ defines start gates, merge gates, and critical path only.
 | `feat/series-stdlib` | `docs/ledger/dev-work/closed/series-stdlib.md` | `feat/series-action-types` merged | SS-rows closed (including `GW-SS3-1` decision application for SS-3) | Series stdlib availability |
 | `feat/catalog-builder` | `docs/ledger/dev-work/closed/catalog-builder.md` | none | CB-rows closed | `feat/ergo-init` custom impl loading path |
 | `feat/adapter-runtime` | `docs/ledger/dev-work/closed/adapter-ingress-surface.md` | none | AR-rows closed | `feat/ergo-init` adapter ingress + host path |
-| `feat/ergo-init` | `docs/ledger/dev-work/open/ergo-init.md` | `feat/catalog-builder` + `feat/adapter-runtime` merged | EI-rows closed (**EI-8 requires `GW-EI8-1` decision application**) | Extension-surface completion gate |
+| `feat/ergo-init` | `docs/ledger/dev-work/open/ergo-init.md` | `feat/catalog-builder` + `feat/adapter-runtime` + `feat/egress-surface` merged | EI-rows closed (**EI-8 requires `GW-EI8-1` decision application**) | Extension-surface completion gate |
 <!-- markdownlint-restore -->
 
 ## Parallel Start Set
@@ -41,6 +41,7 @@ After S-0 decision:
 ```text
 catalog-builder ----\
 adapter-runtime -----> ergo-init
+egress-surface ------/
 ```
 
 ## Merge Rule

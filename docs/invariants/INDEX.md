@@ -1,15 +1,15 @@
 ---
 Authority: CANONICAL
-Version: v0.36
+Version: v0.37
 Owner: Claude (Structural Auditor)
-Last Updated: 2026-03-01
+Last Updated: 2026-03-16
 Scope: Phase boundaries, enforcement loci, gap tracking
 Change Rule: Operational log
 ---
 
 # Phase Invariants — v0
 
-**Tracked invariants:** 194
+**Tracked invariants:** 208
 
 This document defines the invariants that must hold at each phase boundary in the system. It is the authoritative reference for what is true, where that truth is enforced, and what happens if it is violated.
 
@@ -99,7 +99,7 @@ These tests are permanent. Failure indicates invariant regression.
 
 ---
 
-## Canonical Run / Replay Strictness (v2)
+## Canonical Run / Replay Strictness (v3)
 
 | ID | Invariant | Enforcement Locus | Status |
 |----|-----------|-------------------|--------|
@@ -110,9 +110,15 @@ These tests are permanent. Failure indicates invariant regression.
 
 Notes:
 
-- Adapter-dependent graph detection is based on required source context keys and action writes.
+- Adapter-dependent graph detection is based on required source context keys and action effects (writes and declared intents).
 - Adapter-independent canonical captures use explicit provenance sentinel `none`.
-- Capture bundles are strict v2 (`capture_version: "v2"`): `adapter_provenance`, `runtime_provenance`, and `decisions[].effects` are required, unknown fields are rejected, and legacy `adapter_version` bundles fail deserialization.
+- Capture bundles are strict v3 (`capture_version: "v3"`):
+  `adapter_provenance`, `runtime_provenance`, and `decisions[].effects`
+  are required, unknown fields are rejected, and legacy
+  `adapter_version` bundles fail deserialization.
+- v2 artifacts remain readable as JSON fixtures, but strict replay
+  comparability is version-scoped and not guaranteed across the v2→v3
+  semantic boundary.
 - Strict replay preflight enforces unique `events[].event_id` identities.
 - Repo policy: capture bundles and fixtures are ephemeral/regenerated artifacts; backward compatibility across bundle schema revisions is not guaranteed inside this repo.
 
@@ -136,8 +142,8 @@ Notes:
 | [11-source-registration.md](11-source-registration.md) | Source Registration | SRC-1–SRC-17 |
 | [12-compute-registration.md](12-compute-registration.md) | Compute Registration | CMP-1–CMP-20 |
 | [13-trigger-registration.md](13-trigger-registration.md) | Trigger Registration | TRG-1–TRG-14 |
-| [14-action-registration.md](14-action-registration.md) | Action Registration | ACT-1–ACT-23 |
-| [15-action-composition.md](15-action-composition.md) | Action Composition | COMP-9–COMP-15 |
+| [14-action-registration.md](14-action-registration.md) | Action Registration | ACT-1–ACT-33 |
+| [15-action-composition.md](15-action-composition.md) | Action Composition | COMP-9–COMP-15, COMP-17–COMP-19 |
 | [rule-registry.md](rule-registry.md) | Rule Registry | Generated rule index |
 
 ---

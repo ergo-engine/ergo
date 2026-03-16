@@ -1,15 +1,17 @@
 ---
 Authority: CANONICAL
-Version: v0
+Version: v1
 Last Updated: 2026-03-15
 Owner: Claude (Structural Auditor)
-Scope: Canonical terms - primitive, implementation, cluster
+Scope: Canonical terms for primitives, implementations, host, adapters, and boundary channels
 Change Rule: Operational log
 ---
 
-# Terminology — v0
+# Terminology — v1
 
-This document defines canonical terminology for the Primitive Library.
+This document defines canonical terminology for the current system
+design, including primitive roles, authored artifacts, host boundary
+terms, and prod channel terms.
 
 ---
 

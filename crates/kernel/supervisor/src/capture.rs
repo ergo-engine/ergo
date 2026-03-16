@@ -105,6 +105,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> CapturingSession<L, R> {
             decisions: Vec::new(),
             adapter_provenance,
             runtime_provenance,
+            egress_provenance: None,
         }));
 
         let capturing_log = CapturingDecisionLog::new(inner_log, Arc::clone(&bundle));
@@ -339,13 +340,14 @@ mod tests {
 
     fn sample_bundle() -> CaptureBundle {
         CaptureBundle {
-            capture_version: "v2".to_string(),
+            capture_version: crate::CAPTURE_FORMAT_VERSION.to_string(),
             graph_id: GraphId::new("capture_test"),
             config: Constraints::default(),
             events: Vec::new(),
             decisions: Vec::new(),
             adapter_provenance: crate::NO_ADAPTER_PROVENANCE.to_string(),
             runtime_provenance: "rpv1:sha256:test".to_string(),
+            egress_provenance: None,
         }
     }
 
@@ -485,16 +487,18 @@ mod tests {
                 key: "price".to_string(),
                 value: Value::Number(42.0),
             }],
+            intents: vec![],
         };
 
         let bundle = Arc::new(Mutex::new(CaptureBundle {
-            capture_version: "v2".to_string(),
+            capture_version: crate::CAPTURE_FORMAT_VERSION.to_string(),
             graph_id: GraphId::new("hash_test"),
             config: Constraints::default(),
             events: Vec::new(),
             decisions: Vec::new(),
             adapter_provenance: crate::NO_ADAPTER_PROVENANCE.to_string(),
             runtime_provenance: "rpv1:sha256:test".to_string(),
+            egress_provenance: None,
         }));
 
         let inner = crate::replay::MemoryDecisionLog::default();

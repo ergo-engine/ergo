@@ -1,0 +1,83 @@
+{
+  "capture_version": "v3",
+  "graph_id": "g-sample",
+  "config": {
+    "max_in_flight": null,
+    "max_per_window": null,
+    "rate_window": null,
+    "deadline": null,
+    "max_retries": 0
+  },
+  "events": [
+    {
+      "event_id": "sample-event",
+      "event_time": {
+        "secs": 0,
+        "nanos": 0
+      },
+      "kind": "Tick",
+      "payload": [],
+      "payload_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "decisions": [
+    {
+      "event_id": "sample-event",
+      "decision": "Invoke",
+      "schedule_at": null,
+      "episode_id": 0,
+      "deadline": null,
+      "termination": "Completed",
+      "retry_count": 0,
+      "effects": [
+        {
+          "effect": {
+            "kind": "set_context",
+            "writes": [
+              {
+                "key": "last_qty",
+                "value": {
+                  "Number": 42.0
+                }
+              }
+            ]
+          },
+          "effect_hash": "sample:set_context"
+        },
+        {
+          "effect": {
+            "kind": "place_order",
+            "writes": [],
+            "intents": [
+              {
+                "kind": "place_order",
+                "intent_id": "eid1:sha256:sample",
+                "fields": [
+                  {
+                    "name": "qty",
+                    "value": {
+                      "Number": 42.0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "effect_hash": "sample:place_order"
+        }
+      ],
+      "intent_acks": [
+        {
+          "intent_id": "eid1:sha256:sample",
+          "channel": "broker",
+          "status": "accepted",
+          "acceptance": "durable",
+          "egress_ref": "broker-ref-1"
+        }
+      ]
+    }
+  ],
+  "adapter_provenance": "none",
+  "runtime_provenance": "rpv1:sha256:test",
+  "egress_provenance": "epv1:sha256:sample"
+}

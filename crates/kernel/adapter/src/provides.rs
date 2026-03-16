@@ -10,6 +10,7 @@ pub struct AdapterProvides {
     pub context: HashMap<String, ContextKeyProvision>,
     pub events: HashSet<String>,
     pub effects: HashSet<String>,
+    pub effect_schemas: HashMap<String, serde_json::Value>,
     pub event_schemas: HashMap<String, serde_json::Value>,
     pub capture_format_version: String,
     pub adapter_fingerprint: String,
@@ -56,11 +57,22 @@ impl AdapterProvides {
             .as_ref()
             .map(|a| a.effects.iter().map(|e| e.name.clone()).collect())
             .unwrap_or_default();
+        let effect_schemas = manifest
+            .accepts
+            .as_ref()
+            .map(|a| {
+                a.effects
+                    .iter()
+                    .map(|effect| (effect.name.clone(), effect.payload_schema.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         Self {
             context,
             events,
             effects,
+            effect_schemas,
             event_schemas,
             capture_format_version: manifest.capture.format_version.clone(),
             adapter_fingerprint: provenance::fingerprint(manifest),

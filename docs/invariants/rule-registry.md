@@ -138,6 +138,16 @@ Primary spec: `STABLE/PRIMITIVE_MANIFESTS/action.md`
 | ACT-21 | Registration | enforced | $key write references must be String type | `∀ write where name starts with "$": referenced param.type == String` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-21` |
 | ACT-22 | Registration | enforced | Write from_input references declared input | `∀ write: from_input ∈ inputs[].name` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-22` |
 | ACT-23 | Registration | enforced | Write from_input type compatible with write type | `∀ write: inputs[from_input].type is scalar AND matches write.value_type` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-23` |
+| ACT-24 | Registration | enforced | Intent names unique | `unique(effects.intents[].name)` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-24` |
+| ACT-25 | Registration | enforced | Intent field names unique within each intent | `∀ intent: unique(intent.fields[].name)` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-25` |
+| ACT-26 | Registration | enforced | Intent field declares a source | `∀ field: field.from_input != None OR field.from_param != None` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-26` |
+| ACT-27 | Registration | enforced | Intent field declares only one source | `∀ field: !(field.from_input != None AND field.from_param != None)` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-27` |
+| ACT-28 | Registration | enforced | Intent field from_input references declared input | `∀ field where from_input != None: from_input ∈ inputs[].name` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-28` |
+| ACT-29 | Registration | enforced | Intent field from_input type compatible with field type | `∀ field where from_input != None: inputs[from_input].type is scalar AND matches field.value_type` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-29` |
+| ACT-30 | Registration | enforced | Intent field from_param references declared parameter | `∀ field where from_param != None: from_param ∈ parameters[].name` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-30` |
+| ACT-31 | Registration | enforced | Intent field from_param type compatible with field type | `∀ field where from_param != None: parameters[from_param].type matches field.value_type` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-31` |
+| ACT-32 | Registration | enforced | Mirror write from_field references declared intent field | `∀ mirror_write: from_field ∈ intent.fields[].name` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-32` |
+| ACT-33 | Registration | enforced | Mirror write type matches referenced field type | `∀ mirror_write: mirror_write.value_type == intent.fields[from_field].value_type` | `STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-33` |
 
 ## Composition (COMP-*)
 
@@ -158,9 +168,12 @@ Primary spec: `STABLE/PRIMITIVE_MANIFESTS (distributed)`
 | COMP-11 | Composition | enforced | Action writes target provided keys | `effects.writes.names ⊆ adapter.context_keys.names` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-11` |
 | COMP-12 | Composition | enforced | Action writes only writable keys | `∀n ∈ writes: adapter.key[n].writable == true` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-12` |
 | COMP-13 | Composition | enforced | Action write types match | `∀n ∈ writes: action.type[n] == adapter.key[n].type` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-13` |
-| COMP-14 | Composition | enforced | If action writes, adapter accepts set_context | `writes.len > 0 => accepts.effects contains "set_context"` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-14` |
+| COMP-14 | Composition | enforced | If action writes or mirror writes, adapter accepts set_context | `(writes.len > 0 OR any(intent.mirror_writes.len > 0)) => accepts.effects contains "set_context"` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-14` |
 | COMP-15 | Composition | deferred | Writes captured (planned) | `writes.len > 0 => ("effect.set_context" ∈ capture.fields AND ∀n: "context." + n ∈ capture.fields)` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-15` |
 | COMP-16 | Composition | enforced | Parameter-bound manifest names resolve | `$-prefixed names resolve to String parameter values` | `CANONICAL/PHASE_INVARIANTS.md#COMP-16` |
+| COMP-17 | Composition | enforced | If action declares intents, adapter accepts each intent effect kind | `effects.intents.names ⊆ accepts.effects.names` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-17` |
+| COMP-18 | Composition | enforced | Declared intent kinds must have payload schemas in adapter acceptance surface | `∀ intent: accepts.effects[intent.name].payload_schema exists` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-18` |
+| COMP-19 | Composition | enforced | Intent fields are structurally compatible with adapter payload schema | `∀ intent: intent.fields structurally compatible with accepts.effects[intent.name].payload_schema` | `STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-19` |
 
 ## Cluster (D./I./E./V.)
 
