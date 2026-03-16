@@ -3,6 +3,7 @@ Authority: STABLE
 Version: v1
 Last Updated: 2026-03-16
 Last Amended: 2026-03-16
+Scope: Declarative action contract for gating, writes, and external intents
 ---
 
 > **Amended 2026-02-02** by Codex (Implementation Assistant)
@@ -18,6 +19,14 @@ Last Amended: 2026-03-16
 # Action Primitive Manifest — v1
 
 This is the authoritative contract.
+
+Actions may now project intent in two directions:
+
+- host-internal projection through `effects.writes` and `mirror_writes`
+- external projection through `effects.intents`
+
+The graph still emits intent only. Host realizes host-internal
+projection locally and routes external projection to egress channels.
 
 ---
 

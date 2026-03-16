@@ -1,7 +1,7 @@
 ---
 Authority: FROZEN
 Version: v0
-Last Amended: 2026-03-15
+Last Amended: 2026-03-16
 Scope: Evaluation semantics, phase rules, determinism
 Verified Against Tag: v1.0.0-alpha.1
 Change Rule: v1 only

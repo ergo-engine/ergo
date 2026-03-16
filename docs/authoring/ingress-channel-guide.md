@@ -27,8 +27,8 @@ These two parts stay separate on purpose. `adapter.yaml` remains purely
 semantic. Ingress-channel configuration and launch or wiring are host
 concerns.
 
-This guide covers ingress only. Egress-channel configuration,
-lifecycle, and protocol remain separate follow-on work.
+This guide covers ingress only. For the outbound side of the same
+system, see [Egress Channel Guide](egress-channel-guide.md).
 
 ## What An Ingress Channel Is Allowed To Do
 

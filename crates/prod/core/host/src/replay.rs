@@ -777,6 +777,7 @@ mod tests {
             Some(adapter),
             None,
             None,
+            None,
         )
         .expect("hosted runner must initialize")
     }

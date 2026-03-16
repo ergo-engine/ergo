@@ -78,5 +78,6 @@
     }
   ],
   "adapter_provenance": "none",
-  "runtime_provenance": "rpv1:sha256:test"
+  "runtime_provenance": "rpv1:sha256:test",
+  "egress_provenance": "epv1:sha256:sample"
 }

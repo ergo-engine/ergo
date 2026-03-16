@@ -1,7 +1,6 @@
 use ergo_adapter::composition::{
     validate_action_adapter_composition, validate_capture_format,
-    validate_source_adapter_composition, ContextRequirement, SourceRequires,
-    CompositionError,
+    validate_source_adapter_composition, CompositionError, ContextRequirement, SourceRequires,
 };
 use ergo_adapter::provides::{AdapterProvides, ContextKeyProvision};
 use ergo_runtime::action::{

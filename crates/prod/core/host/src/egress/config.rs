@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha2::Digest;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EgressConfig {
@@ -27,6 +28,12 @@ pub enum EgressChannelConfig {
 
 pub fn parse_egress_config_toml(raw: &str) -> Result<EgressConfig, String> {
     toml::from_str(raw).map_err(|err| format!("parse egress config TOML: {err}"))
+}
+
+pub fn compute_egress_provenance(config: &EgressConfig) -> String {
+    let bytes = serde_json::to_vec(config).expect("EgressConfig must be serializable");
+    let digest = sha2::Sha256::digest(&bytes);
+    format!("epv1:sha256:{}", hex::encode(digest))
 }
 
 mod duration_serde {
@@ -123,6 +130,26 @@ fn format_duration(duration: Duration) -> String {
 mod tests {
     use super::*;
 
+    fn sample_config() -> EgressConfig {
+        parse_egress_config_toml(
+            r#"
+default_ack_timeout = "5s"
+
+[channels.broker]
+type = "process"
+command = ["python3", "broker.py"]
+
+[routes.place_order]
+channel = "broker"
+ack_timeout = "10s"
+
+[routes.cancel_order]
+channel = "broker"
+"#,
+        )
+        .expect("sample config should parse")
+    }
+
     #[test]
     fn parse_example_toml() -> Result<(), String> {
         let raw = r#"
@@ -176,6 +203,43 @@ command = ["python3", "broker.py"]
         assert!(
             err.contains("default_ack_timeout"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn provenance_is_deterministic_for_same_config() {
+        let config = sample_config();
+        assert_eq!(
+            compute_egress_provenance(&config),
+            compute_egress_provenance(&config)
+        );
+    }
+
+    #[test]
+    fn provenance_changes_when_timeout_changes() {
+        let mut config = sample_config();
+        let base = compute_egress_provenance(&config);
+        config.default_ack_timeout = Duration::from_secs(8);
+        let changed = compute_egress_provenance(&config);
+        assert_ne!(base, changed);
+    }
+
+    #[test]
+    fn provenance_changes_when_route_changes() {
+        let mut config = sample_config();
+        let base = compute_egress_provenance(&config);
+        config.routes.remove("cancel_order");
+        let changed = compute_egress_provenance(&config);
+        assert_ne!(base, changed);
+    }
+
+    #[test]
+    fn provenance_golden_regression() {
+        let config = sample_config();
+        let actual = compute_egress_provenance(&config);
+        assert_eq!(
+            actual, "epv1:sha256:8f2d35f5153bc1e0f3e2e0309762c599bd22d14dfa7837f6b96a44934ec79d6e",
+            "update this golden when config serialization intentionally changes"
         );
     }
 }

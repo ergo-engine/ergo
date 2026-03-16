@@ -3956,7 +3956,10 @@ fn metadata_aware_execute_emits_canonical_internal_then_external_effects() {
         .iter()
         .map(|write| (write.key.as_str(), &write.value))
         .collect();
-    assert_eq!(write_map.get("order_qty"), Some(&&crate::common::Value::Number(100.0)));
+    assert_eq!(
+        write_map.get("order_qty"),
+        Some(&&crate::common::Value::Number(100.0))
+    );
     assert_eq!(
         write_map.get("last_symbol"),
         Some(&&crate::common::Value::String("EURUSD".to_string()))

@@ -531,10 +531,7 @@ fn ensure_finite(
     Ok(())
 }
 
-fn first_intent_emitting_action(
-    graph: &ValidatedGraph,
-    registries: &Registries,
-) -> Option<String> {
+fn first_intent_emitting_action(graph: &ValidatedGraph, registries: &Registries) -> Option<String> {
     for node_id in &graph.topo_order {
         let Some(node) = graph.nodes.get(node_id) else {
             continue;

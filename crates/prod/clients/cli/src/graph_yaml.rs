@@ -18,7 +18,7 @@ pub struct GraphRunSummary {
     pub capture_path: PathBuf,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GraphRunCompletion {
     Completed,
     Interrupted { reason: InterruptionReason },

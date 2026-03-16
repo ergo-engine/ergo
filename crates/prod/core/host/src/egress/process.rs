@@ -318,8 +318,8 @@ impl EgressChannelHandle {
             });
         }
 
-        let observation = recv_observation(&self.stdout_rx, Some(timeout)).map_err(|failure| {
-            match failure {
+        let observation =
+            recv_observation(&self.stdout_rx, Some(timeout)).map_err(|failure| match failure {
                 RecvTimeoutError::Timeout => EgressProcessError::Timeout {
                     channel: self.channel_id.clone(),
                     intent_id: intent.intent_id.clone(),
@@ -329,8 +329,7 @@ impl EgressChannelHandle {
                     channel: self.channel_id.clone(),
                     detail: "stdout reader disconnected while waiting for ack".to_string(),
                 },
-            }
-        })?;
+            })?;
 
         let result = match observation {
             ChannelObservation::Line(line) => {
@@ -403,10 +402,20 @@ impl EgressChannelHandle {
             let _ = self.stdin.flush();
         }
 
-        wait_for_exit(&mut self.child, timeout).map_err(|err| EgressProcessError::Io {
-            channel: self.channel_id.clone(),
-            detail: format!("wait for graceful shutdown: {err}"),
-        })?;
+        let exited =
+            wait_for_exit(&mut self.child, timeout).map_err(|err| EgressProcessError::Io {
+                channel: self.channel_id.clone(),
+                detail: format!("wait for graceful shutdown: {err}"),
+            })?;
+        if exited.is_none() {
+            return Err(EgressProcessError::Io {
+                channel: self.channel_id.clone(),
+                detail: format!(
+                    "channel did not terminate within shutdown timeout ({}ms)",
+                    timeout.as_millis()
+                ),
+            });
+        }
         Ok(())
     }
 
@@ -418,27 +427,47 @@ impl EgressChannelHandle {
             });
         }
 
-        match self.stdout_rx.try_recv() {
-            Ok(ChannelObservation::Line(line)) => Err(EgressProcessError::PendingAcks {
-                channel: self.channel_id.clone(),
-                detail: format!(
-                    "unexpected buffered stdout frame after final dispatch: {}",
-                    line.trim_end_matches('\n')
-                ),
-            }),
-            Ok(ChannelObservation::Eof) => Err(EgressProcessError::PendingAcks {
-                channel: self.channel_id.clone(),
-                detail: "stdout reached EOF with no explicit shutdown".to_string(),
-            }),
-            Ok(ChannelObservation::ReadError(detail)) => Err(EgressProcessError::PendingAcks {
-                channel: self.channel_id.clone(),
-                detail: format!("stdout reader observed post-dispatch read error: {detail}"),
-            }),
-            Err(TryRecvError::Empty) => Ok(()),
-            Err(TryRecvError::Disconnected) => Err(EgressProcessError::PendingAcks {
-                channel: self.channel_id.clone(),
-                detail: "stdout reader disconnected unexpectedly".to_string(),
-            }),
+        // Probe briefly for straggler frames so the invariant catches late acks
+        // that arrive right after the last dispatch completes.
+        let deadline = std::time::Instant::now() + Duration::from_millis(20);
+        loop {
+            match self.stdout_rx.try_recv() {
+                Ok(ChannelObservation::Line(line)) => {
+                    return Err(EgressProcessError::PendingAcks {
+                        channel: self.channel_id.clone(),
+                        detail: format!(
+                            "unexpected buffered stdout frame after final dispatch: {}",
+                            line.trim_end_matches('\n')
+                        ),
+                    });
+                }
+                Ok(ChannelObservation::Eof) => {
+                    return Err(EgressProcessError::PendingAcks {
+                        channel: self.channel_id.clone(),
+                        detail: "stdout reached EOF with no explicit shutdown".to_string(),
+                    });
+                }
+                Ok(ChannelObservation::ReadError(detail)) => {
+                    return Err(EgressProcessError::PendingAcks {
+                        channel: self.channel_id.clone(),
+                        detail: format!(
+                            "stdout reader observed post-dispatch read error: {detail}"
+                        ),
+                    });
+                }
+                Err(TryRecvError::Disconnected) => {
+                    return Err(EgressProcessError::PendingAcks {
+                        channel: self.channel_id.clone(),
+                        detail: "stdout reader disconnected unexpectedly".to_string(),
+                    });
+                }
+                Err(TryRecvError::Empty) => {
+                    if std::time::Instant::now() >= deadline {
+                        return Ok(());
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
         }
     }
 

@@ -2,6 +2,40 @@ use ergo_adapter::host::{EffectApplyError, HandlerCoverageError};
 
 use crate::egress::{EgressProcessError, EgressValidationError};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EgressDispatchFailure {
+    AckTimeout { channel: String, intent_id: String },
+    ProtocolViolation { channel: String, detail: String },
+    Io { channel: String, detail: String },
+}
+
+impl EgressDispatchFailure {
+    pub fn channel(&self) -> &str {
+        match self {
+            Self::AckTimeout { channel, .. }
+            | Self::ProtocolViolation { channel, .. }
+            | Self::Io { channel, .. } => channel,
+        }
+    }
+}
+
+impl std::fmt::Display for EgressDispatchFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AckTimeout { channel, intent_id } => write!(
+                f,
+                "ack timeout on channel '{channel}' for intent '{intent_id}'"
+            ),
+            Self::ProtocolViolation { channel, detail } => {
+                write!(f, "protocol violation on channel '{channel}': {detail}")
+            }
+            Self::Io { channel, detail } => {
+                write!(f, "I/O failure on channel '{channel}': {detail}")
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum HostedStepError {
     DuplicateEventId { event_id: String },
@@ -17,7 +51,7 @@ pub enum HostedStepError {
     HandlerCoverage(HandlerCoverageError),
     EgressValidation(String),
     EgressLifecycle(String),
-    EgressDispatchFailure { detail: String },
+    EgressDispatchFailure(EgressDispatchFailure),
     EffectsWithoutAdapter,
 }
 
@@ -51,7 +85,7 @@ impl std::fmt::Display for HostedStepError {
                 write!(f, "egress configuration validation failed: {detail}")
             }
             Self::EgressLifecycle(detail) => write!(f, "egress lifecycle failure: {detail}"),
-            Self::EgressDispatchFailure { detail } => {
+            Self::EgressDispatchFailure(detail) => {
                 write!(f, "egress dispatch failure: {detail}")
             }
             Self::EffectsWithoutAdapter => write!(f, "effects emitted in adapter-independent mode"),

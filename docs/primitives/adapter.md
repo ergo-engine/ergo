@@ -2,7 +2,14 @@
 Authority: STABLE
 Version: v1
 Last Updated: 2026-03-16
+Last Amended: 2026-03-16
+Scope: Declarative adapter contract for context, events, and accepted effects
 ---
+
+> **Amended 2026-03-16** by Codex (Implementation Assistant)
+> Clarified the stable adapter contract after the ingress/egress split:
+> adapters declare accepted effect vocabulary and payload schemas, but
+> do not own routing policy or concrete external I/O realization.
 
 # Adapter Manifest — v1
 
@@ -12,6 +19,15 @@ can trigger execution, and what effect kinds the runtime may request
 against the adapter's declared acceptance surface.
 
 This is the authoritative contract.
+
+Adapters define:
+
+- what context the graph may observe
+- what semantic events may enter execution
+- what effect kinds and payload schemas the graph may request
+
+Adapters do **not** define routing policy, launch processes, or perform
+real external I/O themselves.
 
 ---
 

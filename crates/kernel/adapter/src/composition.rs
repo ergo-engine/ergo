@@ -89,7 +89,9 @@ impl ErrorInfo for CompositionError {
             Self::WriteTypeMismatch { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-13",
             Self::MissingSetContextEffect => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-14",
             Self::MissingIntentEffect { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-17",
-            Self::MissingIntentPayloadSchema { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-18",
+            Self::MissingIntentPayloadSchema { .. } => {
+                "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-18"
+            }
             Self::IntentPayloadSchemaIncompatible { .. } => {
                 "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-19"
             }
@@ -437,7 +439,11 @@ fn validate_intent_schema_compatibility(
         .and_then(|value| value.as_object())
         .ok_or_else(|| "payload_schema.properties must be present and be an object".to_string())?;
 
-    let field_names: HashSet<&str> = intent.fields.iter().map(|field| field.name.as_str()).collect();
+    let field_names: HashSet<&str> = intent
+        .fields
+        .iter()
+        .map(|field| field.name.as_str())
+        .collect();
 
     if let Some(required) = schema.get("required") {
         let required = required
@@ -490,7 +496,12 @@ fn validate_field_schema_compatibility(
             let actual = property
                 .get("type")
                 .and_then(|value| value.as_str())
-                .ok_or_else(|| format!("field '{}' schema must declare type '{}'", field_name, expected))?;
+                .ok_or_else(|| {
+                    format!(
+                        "field '{}' schema must declare type '{}'",
+                        field_name, expected
+                    )
+                })?;
             if actual != expected {
                 return Err(format!(
                     "field '{}' expected JSON type '{}', found '{}'",
@@ -502,7 +513,9 @@ fn validate_field_schema_compatibility(
             let actual = property
                 .get("type")
                 .and_then(|value| value.as_str())
-                .ok_or_else(|| format!("field '{}' schema must declare type 'array'", field_name))?;
+                .ok_or_else(|| {
+                    format!("field '{}' schema must declare type 'array'", field_name)
+                })?;
             if actual != "array" {
                 return Err(format!(
                     "field '{}' expected JSON type 'array', found '{}'",
@@ -512,7 +525,12 @@ fn validate_field_schema_compatibility(
             let items = property
                 .get("items")
                 .and_then(|value| value.as_object())
-                .ok_or_else(|| format!("field '{}' array schema must define object 'items'", field_name))?;
+                .ok_or_else(|| {
+                    format!(
+                        "field '{}' array schema must define object 'items'",
+                        field_name
+                    )
+                })?;
             if let Some(keyword) = unsupported_schema_keyword(items) {
                 return Err(format!(
                     "field '{}' array items use unsupported JSON Schema keyword '{}'",
@@ -522,7 +540,12 @@ fn validate_field_schema_compatibility(
             let item_type = items
                 .get("type")
                 .and_then(|value| value.as_str())
-                .ok_or_else(|| format!("field '{}' array items must declare type 'number'", field_name))?;
+                .ok_or_else(|| {
+                    format!(
+                        "field '{}' array items must declare type 'number'",
+                        field_name
+                    )
+                })?;
             if item_type != "number" {
                 return Err(format!(
                     "field '{}' array items expected type 'number', found '{}'",

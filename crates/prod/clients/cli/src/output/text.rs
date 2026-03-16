@@ -105,9 +105,21 @@ pub fn render_graph_run_summary(
 ) -> String {
     let status = match completion {
         GraphRunCompletion::Completed => "status=completed".to_string(),
-        GraphRunCompletion::Interrupted { reason } => {
-            format!("status=interrupted reason={}", reason.as_str())
-        }
+        GraphRunCompletion::Interrupted { reason } => match &reason {
+            ergo_host::InterruptionReason::EgressAckTimeout { channel, intent_id } => format!(
+                "status=interrupted reason={} channel={} intent_id={}",
+                reason.code(),
+                channel,
+                intent_id
+            ),
+            ergo_host::InterruptionReason::EgressProtocolViolation { channel }
+            | ergo_host::InterruptionReason::EgressIo { channel } => format!(
+                "status=interrupted reason={} channel={}",
+                reason.code(),
+                channel
+            ),
+            _ => format!("status=interrupted reason={}", reason.code()),
+        },
     };
     [
         format!(
@@ -132,4 +144,48 @@ pub fn render_replay_summary(
         "replay identity: match".to_string(),
     ]
     .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn interrupted_summary_renders_ack_timeout_context() {
+        let text = render_graph_run_summary(
+            GraphRunCompletion::Interrupted {
+                reason: ergo_host::InterruptionReason::EgressAckTimeout {
+                    channel: "broker".to_string(),
+                    intent_id: "eid1:sha256:abc".to_string(),
+                },
+            },
+            1,
+            1,
+            1,
+            0,
+            Path::new("target/capture.json"),
+        );
+        assert!(text.contains("reason=egress_ack_timeout"));
+        assert!(text.contains("channel=broker"));
+        assert!(text.contains("intent_id=eid1:sha256:abc"));
+    }
+
+    #[test]
+    fn interrupted_summary_renders_protocol_context() {
+        let text = render_graph_run_summary(
+            GraphRunCompletion::Interrupted {
+                reason: ergo_host::InterruptionReason::EgressProtocolViolation {
+                    channel: "broker".to_string(),
+                },
+            },
+            1,
+            1,
+            1,
+            0,
+            Path::new("target/capture.json"),
+        );
+        assert!(text.contains("reason=egress_protocol_violation"));
+        assert!(text.contains("channel=broker"));
+    }
 }

@@ -160,6 +160,8 @@ pub struct CaptureBundle {
     pub decisions: Vec<EpisodeInvocationRecord>,
     pub adapter_provenance: String,
     pub runtime_provenance: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress_provenance: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

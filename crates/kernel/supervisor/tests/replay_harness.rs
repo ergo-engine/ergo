@@ -47,6 +47,7 @@ fn baseline_bundle(events: Vec<ExternalEventRecord>, constraints: Constraints) -
         // Unit-test fixture value: this harness validates replay semantics, not runtime
         // provenance computation. End-to-end provenance computation is exercised in CLI/runtime tests.
         runtime_provenance: "rpv1:sha256:test".to_string(),
+        egress_provenance: None,
     }
 }
 

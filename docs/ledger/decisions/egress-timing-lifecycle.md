@@ -146,7 +146,6 @@ This is already enforced by the `StepMode` gate from Phase 1
 
 ## What This Decides
 
-- Egress starts before first ingress event, stops after capture write.
 - Egress starts before first ingress event; capture finalization occurs
   only after egress is quiesced/stopped.
 - Per-step blocking: dispatch + wait for all acks before next step.
@@ -174,7 +173,7 @@ This is already enforced by the `StepMode` gate from Phase 1
 
 - `runner.rs` — per-step dispatch + ack wait in `execute_step()`
   (live mode only, gated by `StepMode`)
-- Host run path — egress startup before first event, shutdown after
-  capture write
+- Host run path — egress startup before first event, quiesce/stop
+  before capture write
 - `usecases.rs` — egress lifecycle integration with `RunOutcome`
 - Capture artifact — ack records stored per-step alongside effects

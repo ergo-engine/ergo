@@ -3,7 +3,7 @@ Authority: CANONICAL
 Version: v1
 Last Updated: 2026-03-15
 Owner: Claude (Structural Auditor)
-Scope: Kernel/prod boundary and host intent
+Scope: Kernel/prod boundary, host ownership, and boundary channel roles
 Change Rule: Operational log
 ---
 
@@ -11,6 +11,14 @@ Change Rule: Operational log
 
 This document defines the operational boundary between `kernel/*` and `prod/*`.
 Its purpose is to prevent semantic bleed: kernel owns meaning, prod owns composition and product entrypoints.
+
+Current v1 shape in one sentence:
+
+- users author implementations, graphs, adapters, ingress channels, and
+  egress channels
+- adapters declare contract
+- host owns orchestration and post-episode dispatch
+- ingress and egress channels realize prod boundary I/O
 
 ---
 
@@ -119,6 +127,7 @@ If any answer is ambiguous, escalate before merge.
 
 ## 6. References
 
+- [Current Architecture](current-architecture.md)
 - [Kernel Closure and v1 Workstream Declaration](kernel.md)
 - [Orchestration Phase Invariants](../invariants/07-orchestration.md)
 - [Replay Phase Invariants](../invariants/08-replay.md)

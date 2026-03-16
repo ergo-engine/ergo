@@ -105,6 +105,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> CapturingSession<L, R> {
             decisions: Vec::new(),
             adapter_provenance,
             runtime_provenance,
+            egress_provenance: None,
         }));
 
         let capturing_log = CapturingDecisionLog::new(inner_log, Arc::clone(&bundle));
@@ -346,6 +347,7 @@ mod tests {
             decisions: Vec::new(),
             adapter_provenance: crate::NO_ADAPTER_PROVENANCE.to_string(),
             runtime_provenance: "rpv1:sha256:test".to_string(),
+            egress_provenance: None,
         }
     }
 
@@ -496,6 +498,7 @@ mod tests {
             decisions: Vec::new(),
             adapter_provenance: crate::NO_ADAPTER_PROVENANCE.to_string(),
             runtime_provenance: "rpv1:sha256:test".to_string(),
+            egress_provenance: None,
         }));
 
         let inner = crate::replay::MemoryDecisionLog::default();

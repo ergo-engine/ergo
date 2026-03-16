@@ -17,7 +17,7 @@ pub use egress::{
     parse_egress_config_toml, EgressChannelConfig, EgressConfig, EgressProcessError, EgressRoute,
     EgressRuntime, EgressValidationError, EgressValidationWarning,
 };
-pub use error::HostedStepError;
+pub use error::{EgressDispatchFailure, HostedStepError};
 pub use gen_docs_usecase::gen_docs_command;
 pub use graph_dot_usecase::{graph_to_dot_from_paths, GraphToDotFromPathsRequest};
 pub use manifest_usecases::{

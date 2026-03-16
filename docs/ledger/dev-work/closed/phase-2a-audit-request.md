@@ -3,7 +3,10 @@ Audit-Type: Implementation gate
 Scope: feat/egress-surface 2a (GW-EFX-3B) — Egress dispatch plumbing
 Requested-By: Claude (Structural Auditor) + Sebastian (Architect)
 Date: 2026-03-16
+Status: CLOSED
 ---
+
+<!-- markdownlint-disable MD029 MD032 MD040 -->
 
 # Audit Request: 2a Egress Dispatch Plumbing
 
@@ -257,3 +260,5 @@ At the end, provide:
 - Overall verdict: COMPLIANT or VIOLATION or FLAGGED
 - If FLAGGED: list items to track
 - If VIOLATION: stop, do not proceed
+
+<!-- markdownlint-restore -->

@@ -21,7 +21,7 @@ use crate::capture_enrichment::{
     StepInterruptionsByDecision,
 };
 use crate::egress::{validate_egress_config, EgressConfig, EgressRuntime, EgressValidationWarning};
-use crate::error::HostedStepError;
+use crate::error::{EgressDispatchFailure, HostedStepError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostedEvent {
@@ -95,6 +95,7 @@ pub struct HostedRunner {
     applied_intent_acks: AppliedIntentAcksByDecision,
     interruptions: StepInterruptionsByDecision,
     egress: Option<EgressRuntime>,
+    egress_provenance: Option<String>,
     replay_external_kinds: HashSet<String>,
     #[cfg(test)]
     last_step_mode: Option<StepMode>,
@@ -108,6 +109,7 @@ impl HostedRunner {
         runtime_provenance: String,
         adapter: Option<HostedAdapterConfig>,
         egress_config: Option<EgressConfig>,
+        egress_provenance: Option<String>,
         replay_external_kinds: Option<HashSet<String>>,
     ) -> Result<Self, HostedStepError> {
         let graph_emittable_effect_kinds = runtime.graph_emittable_effect_kinds();
@@ -160,6 +162,16 @@ impl HostedRunner {
                 "replay ownership requires adapter-bound mode".to_string(),
             ));
         }
+        if egress.is_none() && egress_provenance.is_some() {
+            return Err(HostedStepError::EgressValidation(
+                "egress provenance requires egress configuration".to_string(),
+            ));
+        }
+        if egress.is_some() && egress_provenance.is_none() {
+            return Err(HostedStepError::EgressValidation(
+                "egress provenance is required when egress configuration is present".to_string(),
+            ));
+        }
 
         let runtime = BufferingRuntimeInvoker::new(runtime);
         let decision_log = HostDecisionLog::default();
@@ -195,6 +207,7 @@ impl HostedRunner {
             applied_intent_acks: AppliedIntentAcksByDecision::default(),
             interruptions: StepInterruptionsByDecision::default(),
             egress,
+            egress_provenance,
             replay_external_kinds,
             #[cfg(test)]
             last_step_mode: None,
@@ -309,8 +322,11 @@ impl HostedRunner {
                                 });
                             }
                             // SUP-6 alignment: no rollback on handler failure.
-                            let writes =
-                                handler.apply(effect, &mut self.context_store, &adapter.provides)?;
+                            let writes = handler.apply(
+                                effect,
+                                &mut self.context_store,
+                                &adapter.provides,
+                            )?;
                             applied_writes.extend(writes);
                         }
                         (None, true) => {
@@ -330,7 +346,11 @@ impl HostedRunner {
                                     ),
                                 });
                             }
-                            if effect.intents.iter().any(|intent| intent.kind != effect.kind) {
+                            if effect
+                                .intents
+                                .iter()
+                                .any(|intent| intent.kind != effect.kind)
+                            {
                                 return Err(HostedStepError::LifecycleViolation {
                                     detail: format!(
                                         "egress-owned effect '{}' contains intent with mismatched kind",
@@ -341,12 +361,7 @@ impl HostedRunner {
 
                             if mode == StepMode::Live {
                                 let Some(egress) = self.egress.as_mut() else {
-                                    self.interruptions.record(
-                                        decision_index,
-                                        "egress dispatch failed: no egress runtime configured"
-                                            .to_string(),
-                                    );
-                                    return Err(HostedStepError::EgressDispatchFailure {
+                                    return Err(HostedStepError::LifecycleViolation {
                                         detail: "intent dispatch required but no egress runtime configured"
                                             .to_string(),
                                     });
@@ -356,17 +371,73 @@ impl HostedRunner {
                                     match egress.dispatch_intent(intent) {
                                         Ok(ack) => intent_acks.push(ack),
                                         Err(err) => {
+                                            let dispatch_failure = match err {
+                                                crate::egress::EgressProcessError::Timeout {
+                                                    channel,
+                                                    intent_id,
+                                                    ..
+                                                } => Some(EgressDispatchFailure::AckTimeout {
+                                                    channel,
+                                                    intent_id,
+                                                }),
+                                                crate::egress::EgressProcessError::Protocol {
+                                                    channel,
+                                                    detail,
+                                                } => Some(EgressDispatchFailure::ProtocolViolation {
+                                                    channel,
+                                                    detail,
+                                                }),
+                                                crate::egress::EgressProcessError::Io {
+                                                    channel,
+                                                    detail,
+                                                } => Some(EgressDispatchFailure::Io {
+                                                    channel,
+                                                    detail,
+                                                }),
+                                                crate::egress::EgressProcessError::Startup {
+                                                    channel,
+                                                    detail,
+                                                } => {
+                                                    return Err(HostedStepError::EgressLifecycle(
+                                                        format!(
+                                                            "egress startup error on channel '{channel}': {detail}"
+                                                        ),
+                                                    ))
+                                                }
+                                                crate::egress::EgressProcessError::InvalidConfig(
+                                                    detail,
+                                                ) => {
+                                                    return Err(HostedStepError::EgressValidation(
+                                                        detail,
+                                                    ))
+                                                }
+                                                crate::egress::EgressProcessError::PendingAcks {
+                                                    channel,
+                                                    detail,
+                                                } => {
+                                                    return Err(HostedStepError::EgressLifecycle(
+                                                        format!(
+                                                            "egress pending-ack invariant failed on channel '{channel}': {detail}"
+                                                        ),
+                                                    ))
+                                                }
+                                            };
                                             if !intent_acks.is_empty() {
                                                 self.applied_intent_acks
                                                     .record(decision_index, intent_acks.clone());
                                             }
                                             self.interruptions.record(
                                                 decision_index,
-                                                format!("egress dispatch failed: {err}"),
+                                                format!(
+                                                    "egress dispatch failed: {}",
+                                                    dispatch_failure
+                                                        .as_ref()
+                                                        .expect("dispatch error mapped")
+                                                ),
                                             );
-                                            return Err(HostedStepError::EgressDispatchFailure {
-                                                detail: err.to_string(),
-                                            });
+                                            return Err(HostedStepError::EgressDispatchFailure(
+                                                dispatch_failure.expect("dispatch error mapped"),
+                                            ));
                                         }
                                     }
                                 }
@@ -445,6 +516,7 @@ impl HostedRunner {
 
     pub fn into_capture_bundle_and_egress(mut self) -> (CaptureBundle, Option<EgressRuntime>) {
         let mut bundle = self.session.into_bundle();
+        bundle.egress_provenance = self.egress_provenance.clone();
         enrich_bundle_with_host_artifacts(
             &mut bundle,
             self.applied_effects.effects(),
@@ -1074,6 +1146,7 @@ mod tests {
             Some(adapter),
             None,
             None,
+            None,
         )
         .expect("hosted runner should initialize");
 
@@ -1122,6 +1195,7 @@ mod tests {
             Some(adapter),
             None,
             None,
+            None,
         )
         .expect("hosted runner should initialize");
 
@@ -1150,6 +1224,7 @@ mod tests {
             Constraints::default(),
             runtime,
             "runtime:test".to_string(),
+            None,
             None,
             None,
             None,
@@ -1184,6 +1259,7 @@ mod tests {
             runtime,
             "runtime:test".to_string(),
             Some(adapter),
+            None,
             None,
             None,
         )
@@ -1222,6 +1298,7 @@ mod tests {
             Constraints::default(),
             runtime,
             "runtime:test".to_string(),
+            None,
             None,
             None,
             None,
@@ -1266,6 +1343,7 @@ mod tests {
             "runtime:test".to_string(),
             Some(adapter),
             Some(egress_config),
+            Some("epv1:sha256:test".to_string()),
             None,
         )
         .expect("runner initialization should validate egress config");
@@ -1302,7 +1380,11 @@ mod tests {
             channels: BTreeMap::from([(
                 "broker".to_string(),
                 EgressChannelConfig::Process {
-                    command: vec!["/bin/sh".to_string(), "-c".to_string(), "exit 0".to_string()],
+                    command: vec![
+                        "/bin/sh".to_string(),
+                        "-c".to_string(),
+                        "exit 0".to_string(),
+                    ],
                 },
             )]),
             routes: BTreeMap::from([(
@@ -1321,6 +1403,7 @@ mod tests {
             "runtime:test".to_string(),
             Some(adapter),
             Some(egress_config),
+            Some("epv1:sha256:test".to_string()),
             Some(HashSet::from(["place_order".to_string()])),
         ) {
             Ok(_) => panic!("runner initialization must reject mixed live/replay ownership config"),
@@ -1346,6 +1429,7 @@ mod tests {
             "runtime:test".to_string(),
             Some(adapter),
             None,
+            None,
             Some(HashSet::from(["set_context".to_string()])),
         ) {
             Ok(_) => panic!("replay ownership overlapping handler ownership must fail"),
@@ -1370,6 +1454,7 @@ mod tests {
             runtime,
             "runtime:test".to_string(),
             Some(adapter),
+            None,
             None,
             None,
         )
@@ -1434,6 +1519,7 @@ mod tests {
             Some(adapter),
             None,
             None,
+            None,
         )
         .expect("hosted runner should initialize");
 
@@ -1483,6 +1569,7 @@ mod tests {
             Some(adapter_ok),
             None,
             None,
+            None,
         );
         assert!(ok.is_ok());
     }
@@ -1502,6 +1589,7 @@ mod tests {
             runtime,
             "runtime:test".to_string(),
             Some(adapter),
+            None,
             None,
             None,
         )
@@ -1556,6 +1644,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .expect("hosted runner should initialize");
 
@@ -1593,6 +1682,7 @@ mod tests {
             Constraints::default(),
             runtime,
             "runtime:test".to_string(),
+            None,
             None,
             None,
             None,

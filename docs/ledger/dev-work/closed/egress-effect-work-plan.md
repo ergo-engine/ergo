@@ -3,14 +3,16 @@ Authority: PROJECT
 Date: 2026-03-15
 Author: Claude (Structural Auditor) + Sebastian (Architect)
 Verified-By: Codex (Ontology Guardian)
-Status: Active
+Status: CLOSED
 Scope: v1
 Source-Gaps: ../../gap-work/open/effect-realization-boundary.md
 ---
 
+<!-- markdownlint-disable MD013 MD029 MD036 -->
+
 # Egress and Effect Realization — Work Plan
 
-This file sequences the closure of all open rows in
+This file records the closure sequence for all `GW-EFX-3*` rows in
 [effect-realization-boundary.md](../../gap-work/open/effect-realization-boundary.md).
 
 Each row is classified as one of:
@@ -39,6 +41,8 @@ These decisions constrain everything below. Read them first.
 | Egress routing config | `decisions/egress-routing-config.md` | Hybrid: host run request canonical, file surfaces compile into it. BTreeMap route table. TOML for v0. |
 | Egress timing/lifecycle | `decisions/egress-timing-lifecycle.md` | Start before first event, per-step blocking dispatch+ack, quiesce/stop egress before capture finalization. |
 | Crash consistency | `decisions/crash-consistency.md` | At-most-once host dispatch, egress-owned post-ack, recording gap, v2 exactness path. |
+| Egress failure taxonomy | `decisions/egress-failure-taxonomy.md` | Flat InterruptionReason variants (AckTimeout, ProtocolViolation, Io). Stop on first failure. Partial acks preserved. |
+| Egress provenance | `decisions/egress-provenance.md` | Full normalized EgressConfig hash (`epv1:sha256:hex`). Include timeouts. Audit-only for replay. |
 
 ## Classification Summary
 
@@ -58,10 +62,10 @@ These decisions constrain everything below. Read them first.
 9. ~~GW-EFX-3E timing/lifecycle~~ — DECIDED (`egress-timing-lifecycle.md`)
 10. ~~GW-EFX-3I crash consistency~~ — DECIDED (`crash-consistency.md`)
 
-**Remaining (2 decision records):**
+13. ~~GW-EFX-3J failure taxonomy~~ — DECIDED (`egress-failure-taxonomy.md`)
+14. ~~GW-EFX-3C egress provenance~~ — DECIDED (`egress-provenance.md`)
 
-11. GW-EFX-3C — Egress provenance granularity and replay strictness
-12. GW-EFX-3J — Egress failure and partial-apply semantics
+**Remaining decision records: 0**
 
 **Phase 2 inline fork resolved:**
 
@@ -69,8 +73,8 @@ These decisions constrain everything below. Read them first.
 
 ## Work Sequence
 
-Three phases. Each phase must complete before the next begins.
-Within a phase, rows can be worked in parallel unless noted.
+Three phases were completed in order. Within a phase, rows could be
+worked in parallel unless noted.
 
 ---
 
@@ -147,29 +151,15 @@ All three sub-items closed. 22 files changed, +745 lines. Audited line-by-line.
 
 ---
 
-### Deferred Validations (Phase 2-dependent)
-
-These items were flagged during the Phase 1 audit but cannot be
-closed until Phase 2 work provides the necessary infrastructure.
-
-**CHECK-15: End-to-end intent_id determinism test**
+### Deferred Validation — CHECK-15 — CLOSED
 
 - **Source:** Phase 1 audit, CHECK-15 (FLAG)
-- **What:** `derive_intent_id()` is unit-tested for determinism, but
-  the full derivation path — from host step through runtime emission
-  to capture and replay comparison — does not yet exist. The
-  derivation inputs (`graph_id`, `event_id`, `node_runtime_id`,
-  `intent_kind`, `intent_ordinal`) are individually proven
-  deterministic, but their composition through the emission path is
-  not yet exercised by an integration test.
-- **Why deferred:** Intent emission wiring (plumbing `event_id` and
-  `graph_id` to the runtime emit path) is Phase 2 work. The test
-  cannot be written until that plumbing exists.
-- **Closure condition:** An integration test exists that captures a
-  run with at least one emitted intent, replays it, and verifies
-  `compare_decisions()` passes — proving `intent_id` is identical
-  across capture and replay.
-- **Becomes closable after:** 2a (dispatch plumbing) lands.
+- **What:** Prove end-to-end `intent_id` determinism from live capture
+  through replay.
+- **Closed:** Integration test added for an intent-emitting graph with
+  live durable-accept egress. The test captures the bundle, replays it,
+  verifies `compare_decisions()` passes, and asserts exact
+  captured-versus-replayed external `intent_id` equality.
 
 ---
 
@@ -272,40 +262,31 @@ These follow from Phase 2 decisions.
 - **Closed:** Workspace tests green after remediation (`cargo test
   --workspace`).
 
-#### 3a. GW-EFX-3J — Egress failure and partial-apply semantics — DECISION RECORD
+#### 3a. GW-EFX-3J — Egress failure and partial-apply semantics — CLOSED
 
-- **The fork:** User-visible failure taxonomy for egress. Current
-  `InterruptionReason` is ingress-only. Real options:
-  - Partial delivery across multiple intent targets: acceptable,
-    or all-or-nothing?
-  - Failure granularity: one catch-all egress error, or distinct
-    variants for launch, protocol, I/O, delivery, and drain failures?
-  - How do these compose with the crash consistency model (2e)?
-- **Why it matters:** Users need to write error handling code against
-  these variants. Wrong granularity means they can't distinguish
-  recoverable from terminal failures.
-- **Output:** Decision record. New enum variants or error types. Tests.
-- **Depends on:** 2b (ack model), 2d (timing), 2e (crash policy).
+- **Decision:** Flat `InterruptionReason` variants for in-run dispatch
+  failures: `EgressAckTimeout { channel, intent_id }`,
+  `EgressProtocolViolation { channel }`, `EgressIo { channel }`. Pre-run
+  failures (startup, config, handshake) stay as `HostRunError`. Stop on
+  first failure, preserve partial acks. Quiescence outcome not in reason.
+  Typed `EgressDispatchFailure` enum replaces `detail: String`.
+- **Record:** `docs/ledger/decisions/egress-failure-taxonomy.md`
+- **Closed:** Both Codex instances agreed on all points. Flat variants
+  match ingress style. Channel on all variants, intent_id only on
+  timeout.
 
-#### 3b. GW-EFX-3C — Egress channel provenance — DECISION RECORD
+#### 3b. GW-EFX-3C — Egress channel provenance — CLOSED
 
-- **The fork:** Capture currently has adapter and runtime provenance.
-  Per-ack channel identity now exists in capture via
-  `CapturedIntentAck.channel`. The remaining question is run-level
-  egress provenance granularity and replay strictness. Decisions:
-  - **Identity granularity:** Per-channel? Per-route-table? Per-run
-    config hash?
-  - **What's included:** Process path? Version? Config hash?
-    Handshake-declared kinds?
-  - **Replay strictness:** Reject on mismatch? Warn? Ignore?
-- **Why it matters:** Without egress provenance, replay can't verify
-  the same egress contract was in place. With the wrong granularity,
-  replay is either too strict (breaks on benign changes) or too
-  loose (misses real contract drift).
-- **Output:** Decision record. Extended `CaptureBundle`. Replay
-  validation. Tests.
-- **Depends on:** 2c (routing config defines egress identity),
-  2d (lifecycle defines when provenance is captured).
+- **Decision:** Run-level `egress_provenance: Option<String>` on capture
+  bundle. `epv1:sha256:{hex}` hash of full normalized `EgressConfig`
+  including timeouts. Exclude handshake `handled_kinds` (runtime
+  attestation, not config). Audit-only for replay — no strict
+  validation. Complementary to per-ack `CapturedIntentAck.channel`.
+- **Record:** `docs/ledger/decisions/egress-provenance.md`
+- **Closed:** Codex A and B debated timeout inclusion. Codex B conceded:
+  timeout affects capture truth (step completion vs interruption), so
+  it belongs in the provenance hash. Structural-only comparator
+  deferred as optional secondary field.
 
 ---
 
@@ -347,12 +328,13 @@ block and is not blocked by any row above.
 | 2 | 3E — timing | Downstream design | CLOSED |
 | 2 | 3I — crash consistency | Decision record | CLOSED |
 | 3 | 3x — remediation pass | Code/design hardening | CLOSED |
-| 3 | 3J — failure taxonomy | Decision record | Ready (2e done) |
-| 3 | 3C — egress provenance | Decision record | Ready (2c+2d done) |
+| 3 | 3J — failure taxonomy | Decision record | CLOSED |
+| 3 | 3C — egress provenance | Decision record | CLOSED |
 
-**Phase 1: COMPLETE** (2 decisions landed, 1 inline fork resolved, 3 code items done).
-**Remaining: 2 decision records. 0 inline forks. 0 design/code items.**
-GW-EFX-2 is independent.
+**Phase 1: COMPLETE** (2 decisions landed, 1 inline fork resolved,
+3 code items done).
+**ALL DECISIONS AND IMPLEMENTATION PASSES CLOSED.** `GW-EFX-2`
+remains independent in the still-open gap file.
 
 ## Rules
 
@@ -363,3 +345,5 @@ GW-EFX-2 is independent.
 - Code changes follow the normal branch/ledger process.
 - If any decision changes a prior decision, the earlier record gets an
   amendment, not a silent overwrite.
+
+<!-- markdownlint-restore -->
