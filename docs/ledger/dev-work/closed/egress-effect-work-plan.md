@@ -5,7 +5,7 @@ Author: Claude (Structural Auditor) + Sebastian (Architect)
 Verified-By: Codex (Ontology Guardian)
 Status: CLOSED
 Scope: v1
-Source-Gaps: ../../gap-work/open/effect-realization-boundary.md
+Source-Gaps: ../../gap-work/closed/effect-realization-boundary.md
 ---
 
 <!-- markdownlint-disable MD013 MD029 MD036 -->
@@ -13,7 +13,7 @@ Source-Gaps: ../../gap-work/open/effect-realization-boundary.md
 # Egress and Effect Realization — Work Plan
 
 This file records the closure sequence for all `GW-EFX-3*` rows in
-[effect-realization-boundary.md](../../gap-work/open/effect-realization-boundary.md).
+[effect-realization-boundary.md](../../gap-work/closed/effect-realization-boundary.md).
 
 Each row is classified as one of:
 
@@ -334,7 +334,9 @@ block and is not blocked by any row above.
 **Phase 1: COMPLETE** (2 decisions landed, 1 inline fork resolved,
 3 code items done).
 **ALL DECISIONS AND IMPLEMENTATION PASSES CLOSED.** `GW-EFX-2`
-remains independent in the still-open gap file.
+closed separately in
+`docs/ledger/decisions/multi-ingress-host-direction.md`; this work plan
+remains the archive for the `GW-EFX-3*` lane.
 
 ## Rules
 
