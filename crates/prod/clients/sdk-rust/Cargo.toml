@@ -5,5 +5,9 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+ergo-adapter = { path = "../../../kernel/adapter" }
 ergo-host = { path = "../../core/host" }
 ergo-loader = { path = "../../core/loader" }
+ergo-runtime = { path = "../../../kernel/runtime" }
+serde_json = "1.0"
+serde_yaml = "0.9"

@@ -111,12 +111,19 @@ let outcome = ergo.run_profile("live")?;
 That means:
 
 - user code owns primitive registration
-- project/profile resolution is shared infrastructure
+- project/profile resolution is shared loader infrastructure consumed
+  by the SDK now and available for future CLI convenience paths
 - canonical execution still delegates to host
 - replay still delegates to host strict replay
 
 The SDK should wrap host + loader ergonomically. It should not invent a
 second execution model.
+
+For the initial SDK surface, the built `Ergo` handle is one-shot:
+`run`, `run_profile`, `replay`, and validation operations consume it.
+Projects should build a fresh handle per operation for now. A reusable
+engine handle is expected later as an ergonomics improvement, not a v1
+prerequisite.
 
 ## 4. Profile Model
 

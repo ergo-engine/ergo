@@ -6,7 +6,8 @@ Status: OPEN
 Branch: feat/ergo-init
 Tier: 3 (Developer Experience — the gate)
 Depends-On: >-
-  feat/catalog-builder, feat/adapter-runtime, feat/egress-surface;
+  feat/catalog-builder, feat/adapter-runtime, feat/egress-surface,
+  feat/sdk-rust;
   docs/ledger/decisions/custom-implementation-loading.md
   (EI-8 uses in-process Rust crate registration through CatalogBuilder);
   docs/ledger/decisions/multi-ingress-host-direction.md
@@ -48,12 +49,21 @@ semantics.
 
 ## Current State
 
-There is still no coherent application surface.
+The SDK-first application surface now exists, but the scaffolded
+project surface does not.
 
 Current reality:
 
 - [sdk-rust](/Users/sebastian/Projects/ergo/crates/prod/clients/sdk-rust/src/lib.rs)
-  is still a placeholder.
+  now exposes:
+  - `Ergo::builder()`
+  - `Ergo::from_project(...)`
+  - in-process primitive registration
+  - `run_profile(...)`
+  - `replay_profile(...)`
+  - `validate_project()`
+- Project/profile resolution now exists in the SDK, including implicit
+  `clusters/` search path handling.
 - The CLI operates on explicit paths and run flags:
   - `ergo run <graph.yaml> --fixture <fixture.jsonl> --adapter <adapter.yaml>`
   - `ergo run <graph.yaml> --driver-cmd <program> [--driver-arg
@@ -64,11 +74,13 @@ Current reality:
 - Real production users need custom Rust `ActionPrimitive`,
   `SourcePrimitive`, and related implementations plus
   `CatalogBuilder` registration to do useful work.
+- There is still no `ergo init` scaffolded Rust crate, no generated
+  sample project, and no CLI convenience command layer consuming the
+  shared loader-owned project-resolution surface yet.
 
-So the repo has engine truth without a coherent product surface. Users
-can run paths or wire primitives manually, but there is no scaffolded
-Rust project, no shared project manifest resolution, and no ergonomic
-SDK-first entrypoint.
+So the repo now has a real SDK-first entrypoint, but it still lacks the
+workspace and scaffolding layer that makes that product surface
+habitable for users.
 
 ## V1 Stance
 
@@ -267,18 +279,18 @@ In other words:
 <!-- markdownlint-disable MD013 -->
 | ID | Task | Closure Condition | Owner | Status |
 | -- | ---- | ----------------- | ----- | ------ |
-| EI-0 | Define SDK-first public surface | `ergo-sdk-rust` exposes the canonical builder/project API over host + loader, and the scaffolded user crate can build/run against it without calling host internals directly. | Codex | OPEN |
+| EI-0 | Define SDK-first public surface | `ergo-sdk-rust` exposes the canonical builder/project API over host + loader. Scaffold consumption remains with `feat/ergo-init`. | Codex | CLOSED |
 | EI-1 | Define Rust crate project layout | Layout documented as the concrete v1 project convention, including `Cargo.toml`, `src/main.rs`, `src/implementations/`, `graphs/`, `clusters/`, `adapters/`, `channels/`, `egress/`, `fixtures/`, `captures/`, and `ergo.toml`. Reviewed by Sebastian. | Claude + Sebastian | OPEN |
-| EI-2 | Define `ergo.toml` schema | Project manifest includes named profiles that resolve graph, adapter, implicit cluster search path, exactly one ingress source, optional egress config path, and optional capture output. | Codex | OPEN |
+| EI-2 | Define `ergo.toml` schema | Project manifest includes named profiles that resolve graph, adapter, implicit cluster search path, exactly one ingress source, optional egress config path, and optional capture output. Delivered and implemented by `feat/sdk-rust`. | Codex | CLOSED |
 | EI-3 | Implement `ergo init` scaffold | `ergo init` creates a Rust crate depending on the SDK, with sample primitives, graph, cluster, adapter, channels, fixture, capture directory, and `ergo.toml`. | Codex | OPEN |
-| EI-4 | Implement shared project discovery/resolution | SDK and optional CLI convenience paths share one project-resolution surface for `ergo.toml`, relative paths, and cluster search paths. | Codex | OPEN |
-| EI-5 | Implement SDK profile execution path | `Ergo::from_project(...).run_profile(...)` (or equivalent) resolves one named profile into graph + adapter + ingress source + optional egress config and runs through the existing host path. | Codex | OPEN |
-| EI-6 | Implement project validation surface | SDK validation resolves every named profile, including graph/adapter composition and referenced egress config parsing when present. CLI validation may wrap the same surface. | Codex | OPEN |
+| EI-4 | Implement shared project discovery/resolution | `ergo-loader` exposes one project-resolution surface for `ergo.toml`, relative paths, and cluster search paths. SDK consumes it now; optional CLI convenience paths may consume the same surface later. | Codex | CLOSED |
+| EI-5 | Implement SDK profile execution path | `Ergo::from_project(...).run_profile(...)` (or equivalent) resolves one named profile into graph + adapter + ingress source + optional egress config and runs through the existing host path. Delivered by `feat/sdk-rust`. | Codex | CLOSED |
+| EI-6 | Implement project validation surface | SDK validation resolves every named profile, including graph/adapter composition and referenced egress config parsing when present. CLI validation may wrap the same surface. Delivered by `feat/sdk-rust`. | Codex | CLOSED |
 | EI-7 | Make clusters first-class in scaffold and resolution | Scaffold includes `clusters/` plus a sample cluster used by the sample graph. Project resolution automatically adds `project_root/clusters` to loader search paths. | Codex | OPEN |
 | EI-8 | Implement in-process custom primitive registration | Scaffolded Rust crate registers user primitives through `CatalogBuilder` / SDK builder according to `custom-implementation-loading.md`, with matching tests. | Codex | OPEN |
 | EI-9 | Test: scaffolded project builds and runs | Init a project, build it as a Rust crate, run a fixture-backed profile through the SDK path, and verify capture output in `captures/`. | Codex | OPEN |
 | EI-10 | Test: project validation catches composition errors | Project with mismatched adapter/graph. Validation reports typed error with rule ID. | Codex | OPEN |
-| EI-11 | Test: project profile resolves egress config | Profile that references an `egress/*.toml` file resolves and passes parsed `EgressConfig` into the host run path. | Codex | OPEN |
+| EI-11 | Test: project profile resolves egress config | Profile that references an `egress/*.toml` file resolves and passes parsed `EgressConfig` into the host run path. SDK path is implemented; scaffolded-project proof remains open. | Codex | OPEN |
 | EI-12 | Documentation | User-facing guide: "Getting Started with Ergo SDK." Covers init, custom primitive registration, graphs, clusters, adapters, channels, profiles, running, validation, and replay. | Claude | OPEN |
 <!-- markdownlint-restore -->
 

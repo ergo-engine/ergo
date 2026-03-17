@@ -11,8 +11,9 @@ Change Rule: Tracks implementation
 
 **Crate:** `crates/prod/core/loader`
 
-The loader owns graph file transport, format decode, and cluster
-discovery. It operates entirely without catalog access. The
+The loader owns project discovery, graph file transport, format
+decode, and cluster discovery. It operates entirely without catalog
+access. The
 catalog-access boundary (`yaml-format.md` §8.3) is the loader/kernel
 divide.
 
@@ -22,6 +23,9 @@ divide.
 
 The loader does:
 
+- Project root discovery via `ergo.toml`
+- Project/profile manifest resolution into graph, adapter, ingress,
+  egress, and cluster path references
 - YAML decode of graph files into `ClusterDefinition` (JSON decode is
   stubbed but not yet wired)
 - Shorthand expansion and format-level coercions tied to file format
@@ -42,6 +46,11 @@ The loader does NOT:
 - `load_graph_sources`
   File path plus search paths to `LoadedGraphBundle` (primary entry
   point).
+- `discover_project_root`
+  Nested path to project root containing `ergo.toml`.
+- `load_project`
+  Project root discovery plus `ergo.toml` parse into resolved
+  profiles.
 - `decode_graph_yaml`
   YAML string to `ClusterDefinition`.
 - `parse_graph_file`

@@ -53,9 +53,10 @@ In practice that means:
 - CLI remains supporting tooling for validation, replay, and explicit
   path-based runs
 
-The SDK crate itself is still being filled in by `feat/ergo-init`, but
-the engine architecture already supports this shape through the host +
-loader library boundaries.
+The SDK crate itself is now delivered by `feat/sdk-rust`, and the
+engine architecture supports it cleanly through the host + loader
+library boundaries. Rust-crate scaffolding and generated project UX
+remain the responsibility of `feat/ergo-init`.
 
 ---
 
@@ -155,10 +156,11 @@ The current v1 shape still has a few explicit limits:
   run**. Projects that need many live feeds must multiplex them
   upstream into one ingress channel.
 - Egress routing is configured through `EgressConfig` and current
-  path-based runs often pass `--egress-config`; fuller project-mode
-  resolution is being formalized by `feat/ergo-init`.
-- SDK-first project convention and Rust-crate scaffolding are tracked
-  by `feat/ergo-init`.
+  path-based runs often pass `--egress-config`; project-mode
+  resolution now exists through the shared loader + SDK surface.
+- SDK-first project convention is delivered, but Rust-crate
+  scaffolding and generated sample-project UX are still tracked by
+  `feat/ergo-init`.
 
 These are current product-surface limits, not hidden semantic gaps.
 
