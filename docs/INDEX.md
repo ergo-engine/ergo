@@ -23,13 +23,15 @@ New to the system? Read these in order:
 8. [project-convention](authoring/project-convention.md) — SDK-first
    Ergo project shape, `Cargo.toml` vs `ergo.toml`, profiles,
    clusters, and crate layout
-9. [ingress-channel-guide](authoring/ingress-channel-guide.md) —
+9. [getting-started-sdk](authoring/getting-started-sdk.md) — Scaffold,
+   run, validate, replay, and edit a real SDK-first Ergo project
+10. [ingress-channel-guide](authoring/ingress-channel-guide.md) —
    HostedEvent ingress and process-channel authoring
-10. [egress-channel-guide](authoring/egress-channel-guide.md) — Intent
+11. [egress-channel-guide](authoring/egress-channel-guide.md) — Intent
     dispatch and durable-accept egress authoring
-11. [concepts](authoring/concepts.md) — Cluster composition concepts
-12. [invariants](invariants/INDEX.md) — Enforcement loci for all invariants
-13. [terminology](system/terminology.md) — Canonical terms and usage
+12. [concepts](authoring/concepts.md) — Cluster composition concepts
+13. [invariants](invariants/INDEX.md) — Enforcement loci for all invariants
+14. [terminology](system/terminology.md) — Canonical terms and usage
 
 ---
 
@@ -46,9 +48,9 @@ Directory structure is the topic map. No separate navigation aids needed.
   contract.
 - [authoring/](authoring/)
   Building projects, clusters, graphs, adapters, and boundary
-  channels: project convention, authoring concepts, cluster spec, YAML
-  format, loader contract, ingress channel guide, and egress channel
-  guide.
+  channels: project convention, getting-started guide, authoring
+  concepts, cluster spec, YAML format, loader contract, ingress
+  channel guide, and egress channel guide.
 - [primitives/](primitives/)
   Primitive implementation contracts: Source, Compute, Trigger,
   Action, and Adapter manifests.
@@ -89,6 +91,7 @@ and their change rules:
   [kernel-prod-separation](system/kernel-prod-separation.md),
   [terminology](system/terminology.md),
   [project-convention](authoring/project-convention.md),
+  [getting-started-sdk](authoring/getting-started-sdk.md),
   [loader](authoring/loader.md),
   [ingress-channel-guide](authoring/ingress-channel-guide.md),
   [egress-channel-guide](authoring/egress-channel-guide.md), and

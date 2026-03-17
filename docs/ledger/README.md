@@ -55,4 +55,4 @@ Use this lane for final rulings that unblock dev work or resolve gaps.
 
 The extension-surface dependency board lives at:
 
-- `docs/ledger/dev-work/open/extension-surface-order.md`
+- `docs/ledger/dev-work/closed/extension-surface-order.md`

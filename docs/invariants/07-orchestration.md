@@ -88,6 +88,6 @@ Notes:
 - HST-9: duplicate `event_id` rejection is enforced at `HostedRunner`, so non-CLI host callers cannot bypass identity guarantees. Host replay execution flows through `HostedRunner::replay_step(...)` which performs strict preflight, event rehydration with hash checks, and effect-integrity comparison against host-enriched capture decisions.
 - HST-7 commit rule follows SUP-6 partial execution semantics: commit if drained buffer is non-empty regardless of final termination; no transactional rollback.
 - DOC-GATE-1 enforcement script: `tools/verify_doctrine_gate.sh`; integrated via `tools/verify_runtime_surface.sh`.
-- SDK-CANON-1: currently a design constraint, not an exercised enforcement point. `sdk-rust` is scaffold-only (`sdk_placeholder`) and does not yet expose run/replay APIs.
+- SDK-CANON-1: now exercised by `ergo-sdk-rust`. SDK run/replay/validate delegate to host entrypoint APIs; `ergo init` scaffolds against that real surface rather than a placeholder.
 
 ---

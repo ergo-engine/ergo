@@ -55,8 +55,8 @@ In practice that means:
 
 The SDK crate itself is now delivered by `feat/sdk-rust`, and the
 engine architecture supports it cleanly through the host + loader
-library boundaries. Rust-crate scaffolding and generated project UX
-remain the responsibility of `feat/ergo-init`.
+library boundaries. `ergo init` now provides Rust-crate scaffolding
+and generated sample-project UX on top of that surface.
 
 ---
 
@@ -158,9 +158,12 @@ The current v1 shape still has a few explicit limits:
 - Egress routing is configured through `EgressConfig` and current
   path-based runs often pass `--egress-config`; project-mode
   resolution now exists through the shared loader + SDK surface.
-- SDK-first project convention is delivered, but Rust-crate
-  scaffolding and generated sample-project UX are still tracked by
-  `feat/ergo-init`.
+- Rust-crate scaffolding now exists through `ergo init`; optional
+  future CLI project conveniences remain secondary to the SDK-first
+  path.
+- The scaffolded sample ingress and egress channel programs currently
+  target POSIX `sh`. Non-POSIX environments must replace those sample
+  boundary programs or provide local equivalents.
 
 These are current product-surface limits, not hidden semantic gaps.
 
@@ -170,6 +173,7 @@ These are current product-surface limits, not hidden semantic gaps.
 
 - [Kernel/Prod Separation](kernel-prod-separation.md)
 - [Project Convention](../authoring/project-convention.md)
+- [Getting Started with Ergo SDK](../authoring/getting-started-sdk.md)
 - [Action Primitive Manifest](../primitives/action.md)
 - [Adapter Manifest](../primitives/adapter.md)
 - [Ingress Channel Guide](../authoring/ingress-channel-guide.md)
