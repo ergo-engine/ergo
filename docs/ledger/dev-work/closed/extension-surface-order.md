@@ -2,7 +2,7 @@
 Authority: PROJECT
 Date: 2026-03-15
 Author: Sebastian (Architect) + Claude (Structural Auditor)
-Status: Active
+Status: CLOSED
 ---
 
 # Extension Surface — Implementation Order
@@ -24,22 +24,12 @@ defines start gates, merge gates, and critical path only.
 | `feat/catalog-builder` | `docs/ledger/dev-work/closed/catalog-builder.md` | none | CB-rows closed | `feat/ergo-init` custom impl loading path |
 | `feat/adapter-runtime` | `docs/ledger/dev-work/closed/adapter-ingress-surface.md` | none | AR-rows closed | `feat/ergo-init` adapter ingress + host path |
 | `feat/sdk-rust` | `docs/ledger/dev-work/closed/sdk-rust.md` | `feat/catalog-builder` + `feat/adapter-runtime` + `feat/egress-surface` merged | SDK-rows closed | `feat/ergo-init` SDK-first product surface |
-| `feat/ergo-init` | `docs/ledger/dev-work/open/ergo-init.md` | `feat/catalog-builder` + `feat/adapter-runtime` + `feat/egress-surface` + `feat/sdk-rust` merged | EI-rows closed (**EI-8 implements the decided in-process `CatalogBuilder` path**) | Extension-surface completion gate |
+| `feat/ergo-init` | `docs/ledger/dev-work/closed/ergo-init.md` | `feat/catalog-builder` + `feat/adapter-runtime` + `feat/egress-surface` + `feat/sdk-rust` merged | EI-rows closed (**EI-8 implements the decided in-process `CatalogBuilder` path**) | Extension-surface completion gate |
 <!-- markdownlint-restore -->
 
 ## Parallel Start Set
 
-Start immediately:
-
-- `feat/sdk-rust`
-
-After `feat/sdk-rust` merge:
-
-- `feat/ergo-init`
-
-After S-0 decision:
-
-- `feat/series-action-types`
+All six extension-surface branches are now closed.
 
 ## Critical Path
 
@@ -51,7 +41,7 @@ egress-surface ------/
 
 ## Merge Rule
 
-No branch merges until all of its ledger rows are `CLOSED` in the
+No branch merged until all of its ledger rows were `CLOSED` in the
 branch's detailed ledger file.
 
 ## Audit Rule

@@ -5,7 +5,10 @@
 **Litmus test:** Demo 1 graph (15 nodes, 16 edges, 4 boundary outputs)
 **Current CLI contract:** `ergo run <graph.yaml> (--fixture <events.jsonl> | --driver-cmd <program> [--driver-arg <value> ...]) [--adapter <adapter.yaml>] [--capture-output <path>] [--cluster-path <path> ...]` and `ergo fixture run <events.jsonl> [--capture-output <path>] [--pretty-capture]` (current flag names retain legacy `driver` terminology)
 **Related ingress guidance:** [ingress-channel-guide](ingress-channel-guide.md) documents `HostedEvent`, process-channel protocol, and fixture/process authoring expectations.
-**Future work:** Workspace-level discovery and ergonomic ingress-channel wiring remain a future extension for `feat/ergo-init`.
+**Future work:** Workspace-level project discovery now exists through
+`ergo-loader` + `ergo-sdk-rust` and `ergo init` now scaffolds the
+project layout. Optional CLI project-mode convenience commands remain a
+future extension.
 
 ---
 

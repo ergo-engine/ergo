@@ -96,6 +96,11 @@ pub(crate) fn dispatch_with_args(args: &[String]) -> Result<DispatchOutput, Stri
                 let out = crate::gen_docs::gen_docs_command(&rest)?;
                 Ok(DispatchOutput::Text(out))
             }
+            "init" => {
+                let rest: Vec<String> = args_it.collect();
+                let out = crate::init_project::init_command(&rest)?;
+                Ok(DispatchOutput::Text(out))
+            }
             "validate" => {
                 let rest: Vec<String> = args_it.collect();
                 let out = crate::validate::validate_command(&rest)?;
@@ -186,6 +191,7 @@ pub(crate) fn dispatch_with_args(args: &[String]) -> Result<DispatchOutput, Stri
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -198,6 +204,14 @@ mod tests {
         let path = base.join(name);
         fs::write(&path, contents).map_err(|err| format!("write {}: {err}", path.display()))?;
         Ok(path)
+    }
+
+    fn cli_sdk_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(4)
+            .expect("workspace root")
+            .join("crates/prod/clients/sdk-rust")
     }
 
     #[test]
@@ -325,6 +339,50 @@ outputs:
         );
 
         let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn init_dispatch_routes_to_scaffold_command() -> Result<(), String> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-cli-dispatch-init-{}-{}",
+            std::process::id(),
+            index
+        ));
+        let project_root = temp_dir.join("sample-app");
+        let sdk_path = cli_sdk_path();
+
+        let args = vec![
+            "init".to_string(),
+            project_root.to_string_lossy().to_string(),
+            "--sdk-path".to_string(),
+            sdk_path.to_string_lossy().to_string(),
+        ];
+        let result = dispatch_with_args(&args)?;
+        let text = match result {
+            DispatchOutput::Text(text) => text,
+            DispatchOutput::Json(_) => return Err("expected text output".to_string()),
+        };
+
+        assert!(text.contains("initialized Ergo SDK project"));
+        assert!(project_root.join("Cargo.toml").exists());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn help_init_dispatch_returns_init_notes() -> Result<(), String> {
+        let result = dispatch_with_args(&["help".to_string(), "init".to_string()])?;
+        let text = match result {
+            DispatchOutput::Text(text) => text,
+            DispatchOutput::Json(_) => return Err("expected text output".to_string()),
+        };
+
+        assert!(text.contains("ergo init <project-dir>"));
+        assert!(text.contains("use --sdk-path outside the checkout"));
+        assert!(text.contains("POSIX 'sh'"));
         Ok(())
     }
 }

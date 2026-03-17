@@ -330,8 +330,10 @@ Why this is forbidden:
 
 - `adapter.yaml` is the semantic adapter contract
 - host owns ingress-channel configuration and launch
-- workspace-level discovery and ergonomics belong to `feat/ergo-init`
-- egress-channel design is separate follow-on work
+- workspace-level discovery and ergonomics belong to project
+  convention, `ergo init`, and the shared loader/SDK surface
+- egress-channel design is a separate authoring concern documented in
+  `egress-channel-guide.md`
 
 ## Troubleshooting
 

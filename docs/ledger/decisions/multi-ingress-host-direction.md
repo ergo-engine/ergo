@@ -119,4 +119,4 @@ many external feeds.
 ## Impacted Ledger Files
 
 - [effect-realization-boundary.md](../gap-work/closed/effect-realization-boundary.md)
-- [ergo-init.md](../dev-work/open/ergo-init.md)
+- [ergo-init.md](../dev-work/closed/ergo-init.md)

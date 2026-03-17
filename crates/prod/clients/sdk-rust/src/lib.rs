@@ -35,6 +35,7 @@ pub use ergo_host::{
 };
 pub use ergo_runtime::catalog::{build_core, build_core_catalog, core_registries};
 pub use ergo_runtime::{action, common, compute, source, trigger};
+pub use ergo_runtime::runtime::ExecutionContext;
 
 #[derive(Debug)]
 pub enum ErgoBuildError {

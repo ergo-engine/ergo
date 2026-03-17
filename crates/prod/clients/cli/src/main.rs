@@ -11,6 +11,7 @@ mod fixture_ops;
 mod gen_docs;
 mod graph_to_dot;
 mod graph_yaml;
+mod init_project;
 mod output;
 mod render;
 mod validate;

@@ -19,6 +19,10 @@ pub fn usage() -> String {
         "  ergo fixture inspect <events.jsonl> [--format text|json]",
         "  ergo fixture validate <events.jsonl> [--format text|json]",
         "",
+        "Project scaffolding",
+        "  ergo init <project-dir> [--sdk-path <path-to-ergo-sdk-rust>] [--force]",
+        "    note: default SDK path works inside this Ergo checkout; generated sample channels target POSIX 'sh'",
+        "",
         "Graph visualization",
         "  ergo graph-to-dot <graph.yaml> [-o out.dot|--output out.dot] [--show-ports] [--show-impl] [--show-runtime-id] [--cluster-path <path> ...]",
         "  ergo render graph <graph.yaml> [-o out.svg|--output out.svg] [--show-ports] [--show-impl] [--show-runtime-id] [--cluster-path <path> ...]",
@@ -31,7 +35,7 @@ pub fn usage() -> String {
         "",
         "Help",
         "  ergo help",
-        "  ergo help run|replay|fixture|render graph|graph-to-dot|validate|check-compose|csv-to-fixture|gen-docs",
+        "  ergo help init|run|replay|fixture|render graph|graph-to-dot|validate|check-compose|csv-to-fixture|gen-docs",
     ]
     .join("\n")
 }
@@ -55,6 +59,18 @@ pub fn help_topic(topic: &str, fixture_usage: &str) -> Option<String> {
         "fixture" | "fixture run" | "fixture inspect" | "fixture validate" => {
             Some(fixture_usage.to_string())
         }
+        "init" => Some(
+            [
+                "usage:",
+                "  ergo init <project-dir> [--sdk-path <path-to-ergo-sdk-rust>] [--force]",
+                "",
+                "notes:",
+                "  - default SDK path works when scaffolding inside this Ergo checkout",
+                "  - use --sdk-path outside the checkout until ergo-sdk-rust is published",
+                "  - generated sample ingress/egress channels currently target POSIX 'sh'",
+            ]
+            .join("\n"),
+        ),
         "render" | "render graph" => Some(
             [
                 "usage:",

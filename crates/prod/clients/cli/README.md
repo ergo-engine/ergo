@@ -10,6 +10,7 @@ If code is domain logic (validation rules, YAML parsing, composition policy, fix
 ergo-cli/
   src/
     main.rs
+    init_project.rs
     cli/
       args.rs
       dispatch.rs
@@ -27,6 +28,18 @@ ergo-cli/
 - Use for: app wiring/composition root only.
 - Register here: startup flow (`parse -> dispatch -> render -> exit`).
 - Do not put here: command/domain business logic.
+
+### `src/init_project.rs`
+
+- Use for: project scaffold generation and template assembly for
+  `ergo init`.
+- Register here: generated file contents, scaffold directory layout,
+  and init-specific validation of target paths.
+- Current sample channel scripts target POSIX `sh`, and the generated
+  SDK dependency path stays local-checkout based until the SDK is
+  published.
+- Do not put here: runtime/host semantics or project-resolution logic
+  that belongs to SDK + loader.
 
 ### `src/cli/args.rs`
 
@@ -68,6 +81,7 @@ ergo-cli/
 
 - "Does this parse command-line flags?" -> `src/cli/args.rs`
 - "Does this decide which use-case to call?" -> `src/cli/dispatch.rs`
+- "Does this generate the scaffolded Rust project files?" -> `src/init_project.rs`
 - "Does this call runtime/host/adapter APIs?" -> `src/cli/dispatch.rs`
 - "Does this format text output?" -> `src/output/text.rs`
 - "Does this format JSON output?" -> `src/output/json.rs`
