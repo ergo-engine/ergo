@@ -28,7 +28,9 @@ semantic. Ingress-channel configuration and launch or wiring are host
 concerns.
 
 This guide covers ingress only. For the outbound side of the same
-system, see [Egress Channel Guide](egress-channel-guide.md).
+system, see [Egress Channel Guide](egress-channel-guide.md). For where
+ingress channels live in an SDK-first Ergo project, see
+[Project Convention](project-convention.md).
 
 ## What An Ingress Channel Is Allowed To Do
 
@@ -152,8 +154,8 @@ This branch supports two ingress shapes in current code:
   testing and local runs
 - `DriverConfig::Process` — the public live ingress-channel model
 
-If you need multiple live sources today, combine them upstream into one
-ingress channel or wait for future host multi-ingress support.
+If you need multiple live sources, combine them upstream into one
+ingress channel. Canonical host remains single-ingress in v1.
 
 No public Rust trait ingress-channel model ships in this branch.
 

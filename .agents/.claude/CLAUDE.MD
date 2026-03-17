@@ -54,7 +54,7 @@ Your governing document is **CLAUDE_CODE_PROTOCOL.md**. Read it. Follow it.
 
 ## What You May Do
 
-- Fix invariant violations (referenced by ID from PHASE_INVARIANTS.md)
+- Fix invariant violations (referenced by ID from docs/invariants/)
 - Add assertions for undeclared invariants
 - Add doc comments for implicit contracts
 - Add tests for untested invariants
@@ -79,10 +79,10 @@ Your governing document is **CLAUDE_CODE_PROTOCOL.md**. Read it. Follow it.
 
 These documents are frozen at v0. Any task that seems to require modifying them is wrong:
 
-- `src/DOCUMENTS_START_HERE/ontology.md`
-- `src/DOCUMENTS_START_HERE/execution_model.md`
-- `src/DOCUMENTS_START_HERE/V0_FREEZE.md`
-- `src/DOCUMENTS_START_HERE/adapter_contract.md`
+- `docs/system/ontology.md`
+- `docs/system/execution.md`
+- `docs/system/freeze.md`
+- `docs/contracts/adapter_contract.md` (if exists, otherwise see docs/primitives/adapter.md)
 
 If you believe a frozen spec must change, **stop and escalate to Claude Prime**.
 
@@ -95,7 +95,7 @@ Every task from Claude Prime includes:
 ```
 **Task:** [Brief description]
 
-**Invariant ID:** [From PHASE_INVARIANTS.md, e.g., F.1]
+**Invariant ID:** [From docs/invariants/, e.g., F.1]
 
 **File(s):** [Specific files to modify]
 
@@ -117,7 +117,7 @@ After completing a task, report:
 ```
 **Task completed:** [Brief description]
 
-**Invariant addressed:** [ID from PHASE_INVARIANTS.md]
+**Invariant addressed:** [ID from docs/invariants/]
 
 **Files changed:**
 - [file]: [lines added/modified/deleted]
@@ -157,10 +157,10 @@ If a task requires judgment beyond mechanical implementation:
 
 | Document | Purpose | Location |
 |----------|---------|----------|
-| PHASE_INVARIANTS.md | Canonical invariant source | src/DOCUMENTS_START_HERE/ |
+| docs/invariants/ | Canonical invariant source (phase-organized) | docs/invariants/ |
 | CLAUDE_CODE_PROTOCOL.md | Your full operating instructions | Project root |
-| ontology.md | Frozen primitive definitions | src/DOCUMENTS_START_HERE/ |
-| execution_model.md | Frozen execution semantics | src/DOCUMENTS_START_HERE/ |
+| ontology.md | Frozen primitive definitions | docs/system/ |
+| execution.md | Frozen execution semantics | docs/system/ |
 
 ---
 
@@ -180,7 +180,7 @@ At the start of each session:
 ```
 □ Confirm reporting to Claude Prime
 □ Confirm awareness of frozen specs
-□ Confirm access to PHASE_INVARIANTS.md
+□ Confirm access to docs/invariants/
 □ Await task in required format
 ```
 
@@ -210,10 +210,10 @@ When documents conflict, this hierarchy determines precedence.
 
 | Document | Location | Scope |
 |----------|----------|-------|
-| ontology.md | src/DOCUMENTS_START_HERE/FROZEN/ | Primitive definitions, wiring matrix, causal roles |
-| execution_model.md | src/DOCUMENTS_START_HERE/FROZEN/ | Evaluation semantics, phase rules, determinism |
-| V0_FREEZE.md | src/DOCUMENTS_START_HERE/FROZEN/ | What is frozen vs patchable, version boundaries |
-| adapter_contract.md | src/DOCUMENTS_START_HERE/FROZEN/ | Trust boundary, replay guarantees, capture requirements |
+| ontology.md | docs/system/ | Primitive definitions, wiring matrix, causal roles |
+| execution.md | docs/system/ | Evaluation semantics, phase rules, determinism |
+| freeze.md | docs/system/ | What is frozen vs patchable, version boundaries |
+| adapter.md | docs/primitives/ | Trust boundary, replay guarantees, capture requirements |
 
 **Rule:** If implementation contradicts frozen docs, implementation is wrong.
 
@@ -225,8 +225,8 @@ When documents conflict, this hierarchy determines precedence.
 
 | Document | Location | Scope |
 |----------|----------|-------|
-| AUTHORING_LAYER.md | src/DOCUMENTS_START_HERE/STABLE/ | Cluster concepts, fractal composition, boundary kinds |
-| CLUSTER_SPEC.md | src/DOCUMENTS_START_HERE/STABLE/ | Data structures, inference algorithm, validation rules |
+| AUTHORING_LAYER.md | docs/authoring/ | Cluster concepts, fractal composition, boundary kinds |
+| CLUSTER_SPEC.md | docs/authoring/ | Data structures, inference algorithm, validation rules |
 
 **Rule:** Changes must preserve the frozen invariant: "All authoring constructs compile away before execution."
 
@@ -238,8 +238,8 @@ When documents conflict, this hierarchy determines precedence.
 
 | Document | Location | Scope |
 |----------|----------|-------|
-| PHASE_INVARIANTS.md | src/DOCUMENTS_START_HERE/CANONICAL/ | Phase boundaries, enforcement loci, gap tracking |
-| TERMINOLOGY.md | src/DOCUMENTS_START_HERE/CANONICAL/ | Canonical terms: primitive, implementation, cluster, macro-primitive |
+| docs/invariants/ | docs/invariants/ | Phase-organized invariant rules, enforcement loci, gap tracking |
+| terminology.md | docs/system/ | Canonical terms: primitive, implementation, cluster, macro-primitive |
 
 **Rule:** Every invariant must have an enforcement locus. Gaps are tracked, not hidden.
 
@@ -271,7 +271,7 @@ When documents conflict, this hierarchy determines precedence.
 
 | Artifact | Governance |
 |----------|------------|
-| Rust code | Must satisfy PHASE_INVARIANTS.md |
+| Rust code | Must satisfy docs/invariants/ |
 | Tests | Must encode invariants, not just behavior |
 | Comments | Must reflect spec, not contradict it |
 

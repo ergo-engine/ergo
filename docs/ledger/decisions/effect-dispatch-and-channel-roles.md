@@ -117,7 +117,7 @@ This also gives replay a stable doctrine:
 
 ## Impacted Ledger Files
 
-- [effect-realization-boundary.md](/Users/sebastian/Projects/ergo/docs/ledger/gap-work/open/effect-realization-boundary.md)
+- [effect-realization-boundary.md](/Users/sebastian/Projects/ergo/docs/ledger/gap-work/closed/effect-realization-boundary.md)
 
 ## Follow-Up Actions
 

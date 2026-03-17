@@ -7,86 +7,127 @@ Branch: feat/ergo-init
 Tier: 3 (Developer Experience — the gate)
 Depends-On: >-
   feat/catalog-builder, feat/adapter-runtime, feat/egress-surface;
-  docs/ledger/gap-work/open/custom-implementation-loading.md (for EI-8);
-  docs/ledger/gap-work/open/effect-realization-boundary.md
-  (GW-EFX-2 constrains v1 to one ingress channel per run)
+  docs/ledger/decisions/custom-implementation-loading.md
+  (EI-8 uses in-process Rust crate registration through CatalogBuilder);
+  docs/ledger/decisions/multi-ingress-host-direction.md
+  (v1 remains one ingress channel per run profile)
 ---
 
-# Ergo Workspace Scaffolding and Project Conventions
+# Ergo SDK Project Scaffolding and Workspace Conventions
 
 ## Scope
 
-Define the v1 workspace convention for how a developer creates,
-organizes, and runs an Ergo project.
+Define the v1 project convention for how a developer creates,
+organizes, builds, and runs an Ergo application.
 
-After this branch, domain work happens inside an Ergo workspace rather
-than inside `crates/kernel/` or `crates/prod/`. That workspace must
-give users a clear home for:
+The product surface is the Rust SDK, not the CLI. A production Ergo
+project is a Rust crate that:
+
+- depends on `ergo-sdk-rust`
+- registers custom primitives in-process
+- runs named profiles from `ergo.toml`
+
+After this branch, domain work happens inside an Ergo project rather
+than inside `crates/kernel/` or `crates/prod/`. That project must give
+users a clear home for:
 
 - implementations
 - graphs
+- clusters
 - adapters
 - ingress channels
 - egress channels
 - fixtures
 - captures
+- `Cargo.toml`
 - `ergo.toml`
 
-This branch owns workspace convention and project-mode CLI ergonomics.
-It does not redefine runtime or host semantics, and it does not decide
-the mechanism for custom implementation loading. `GW-EI8-1` remains the
-gate for that specific loading mechanism.
+This branch owns project convention, SDK-oriented scaffolding, and
+shared project/profile resolution. It does not redefine runtime or host
+semantics.
 
 ## Current State
 
-There is still no project convention. The CLI operates on individual
-file paths and explicit run flags:
+There is still no coherent application surface.
 
-- `ergo run <graph.yaml> --fixture <fixture.jsonl> --adapter <adapter.yaml>`
-- `ergo run <graph.yaml> --driver-cmd <program> [--driver-arg
-  <value> ...] --adapter <adapter.yaml> [--egress-config
-  <egress.toml>]`
-- `ergo validate <graph.yaml>`
-- `ergo replay <capture.json>`
+Current reality:
 
-Users must know which flags to pass, where their files are, and how to
-wire ingress and egress explicitly. There is no project discovery, no
-workspace manifest, and no scaffolding.
+- [sdk-rust](/Users/sebastian/Projects/ergo/crates/prod/clients/sdk-rust/src/lib.rs)
+  is still a placeholder.
+- The CLI operates on explicit paths and run flags:
+  - `ergo run <graph.yaml> --fixture <fixture.jsonl> --adapter <adapter.yaml>`
+  - `ergo run <graph.yaml> --driver-cmd <program> [--driver-arg
+    <value> ...] --adapter <adapter.yaml> [--egress-config
+    <egress.toml>]`
+  - `ergo validate <graph.yaml>`
+  - `ergo replay <capture.json>`
+- Real production users need custom Rust `ActionPrimitive`,
+  `SourcePrimitive`, and related implementations plus
+  `CatalogBuilder` registration to do useful work.
 
-Path-based CLI usage remains valid after this branch. `feat/ergo-init`
-adds a project-mode surface; it does not delete the current explicit
-path surface.
+So the repo has engine truth without a coherent product surface. Users
+can run paths or wire primitives manually, but there is no scaffolded
+Rust project, no shared project manifest resolution, and no ergonomic
+SDK-first entrypoint.
 
 ## V1 Stance
 
-The v1 workspace convention should lock the following scope now:
+The v1 project convention should lock the following scope now:
 
+- `ergo-sdk-rust` is the primary product surface.
+- The CLI remains a development/support tool for validation, replay,
+  fixture runs, and optional project conveniences.
 - One ingress channel per run profile.
 - If a user needs multiple live feeds, they must multiplex them
-  upstream into one ingress channel until `GW-EFX-2` is decided.
-- `ergo.toml` owns project and profile resolution.
+  upstream into one ingress channel; canonical host remains
+  single-ingress by
+  [multi-ingress-host-direction.md](../decisions/multi-ingress-host-direction.md).
+- `Cargo.toml` owns Rust build configuration.
+- `ergo.toml` owns Ergo project and profile resolution.
 - `ergo.toml` references a standalone egress TOML file rather than
   embedding the route table in v1.
-- Workspace convention belongs to the CLI plus prod loader surface.
-  The SDK may consume the same project model later, but it is not the
-  authority for workspace layout.
+- Clusters are first-class scaffolded authoring artifacts and should be
+  readily usable in the sample project.
+- Shared project resolution belongs to SDK plus prod loader. CLI may
+  consume it, but it is not the authority for the product surface.
+
+## SDK-First Entry Surface
+
+The scaffolded project should feel like a normal Rust application:
+
+```rust
+let ergo = Ergo::builder()
+    .project_root(".")
+    .add_source(MyPriceSource::new())
+    .add_action(MyOrderAction::new())
+    .build()?;
+
+let outcome = ergo.run_profile("live")?;
+```
+
+Equivalent explicit-config mode should also exist for non-project use,
+but project/profile execution is the v1 ergonomic path.
 
 ## Project Layout Convention
 
-The v1 layout should be concrete, not aspirational:
+The v1 layout should be a Rust crate plus authored asset directories:
 
 ```text
 my-project/
+├── Cargo.toml
 ├── ergo.toml
+├── src/
+│   ├── main.rs
+│   └── implementations/
+│       ├── mod.rs
+│       ├── sources.rs
+│       └── actions.rs
 ├── graphs/
 │   └── strategy.yaml
 ├── clusters/
-│   └── math.yaml
+│   └── shared_math.yaml
 ├── adapters/
 │   └── strategy.yaml
-├── implementations/
-│   └── src/
-│       └── lib.rs
 ├── channels/
 │   ├── ingress/
 │   │   └── live_feed.py
@@ -102,12 +143,14 @@ my-project/
 
 Directory roles:
 
+- `Cargo.toml` defines the Rust crate and SDK dependency.
+- `src/main.rs` is the user-owned application entrypoint.
+- `src/implementations/` contains custom Source, Compute, Trigger, and
+  Action implementations registered through the SDK/CatalogBuilder path.
 - `graphs/` contains graph YAML entrypoints.
-- `clusters/` contains reusable cluster definitions and is added to the
-  loader search path automatically.
+- `clusters/` contains reusable cluster definitions. Project resolution
+  adds it to loader search paths automatically.
 - `adapters/` contains adapter manifests.
-- `implementations/` contains user-owned custom implementation code.
-  Loading mechanism remains gated by `GW-EI8-1`.
 - `channels/ingress/` contains user-authored ingress channel programs.
 - `channels/egress/` contains user-authored egress channel programs.
 - `egress/` contains standalone `EgressConfig` TOML files referenced by
@@ -115,11 +158,21 @@ Directory roles:
 - `fixtures/` contains deterministic input event streams.
 - `captures/` contains replay artifacts produced by runs.
 
+The sample project should include:
+
+- one sample cluster in `clusters/`
+- one sample graph in `graphs/` that uses that cluster
+- one sample custom Action implementation with external intent
+- one sample adapter, ingress channel, egress channel, and fixture
+
 ## `ergo.toml` As Project Authority
 
-The project manifest should do more than name the project. In v1 it
-must define named run profiles that resolve the authored artifacts into
-the inputs the current host already understands.
+`Cargo.toml` answers Rust build questions. `ergo.toml` answers Ergo
+project questions.
+
+The project manifest must define named run profiles that resolve the
+authored artifacts into the inputs the current host already
+understands.
 
 Minimum project fields:
 
@@ -131,6 +184,7 @@ Each profile should resolve:
 
 - `graph`
 - `adapter`
+- implicit project `clusters/` search path
 - exactly one ingress source:
   - `fixture`, or
   - `ingress` process command
@@ -164,86 +218,93 @@ Profile rules:
 
 - one profile resolves to one graph + one adapter + one ingress source
 - `fixture` and `ingress` are mutually exclusive
+- project `clusters/` is always searched automatically; users do not
+  repeat it in every profile
 - `egress` is optional, but when present it points to the existing
   standalone TOML surface chosen in
   `decisions/egress-routing-config.md`
-- custom implementation discovery remains conventional from
-  `implementations/` once `GW-EI8-1` lands; it does not need a
-  per-profile field in v1
+- custom primitive registration is code-level in `src/main.rs` /
+  `src/implementations/`, not a per-profile manifest field
 
-## CLI Commands
+## Product Entry Points
 
 <!-- markdownlint-disable MD013 -->
-| Command | Description |
-| ------- | ----------- |
-| `ergo init` | Scaffold a new project with the standard layout |
-| `ergo run <profile>` (inside project) | Resolve one named project profile into graph, adapter, one ingress source, and optional egress config. |
-| `ergo validate` (inside project) | Validate all named profiles, including graph/adapter composition and referenced egress config parsing when present. |
-| `ergo replay <capture>` (inside project) | Replay a capture artifact resolved relative to the project root or `captures/`. |
+| Surface | Role |
+| ------- | ---- |
+| `ergo-sdk-rust` | Primary product API for building an engine, registering primitives, resolving projects, running profiles, validating, and replaying |
+| `ergo init` | Scaffold a Rust crate that depends on the SDK and includes sample authored assets |
+| CLI project commands | Optional development convenience over the same shared project-resolution surface |
+| Existing path-based CLI commands | Continue to work for explicit non-project usage |
 <!-- markdownlint-restore -->
 
-Existing path-based commands continue to work for non-project usage.
+## Shared Project Resolution Logic
 
-## Discovery And Resolution Logic
-
-When the CLI runs inside a project directory:
+Project resolution should be shared between SDK and CLI:
 
 1. Discover project root by locating `ergo.toml`.
 2. Resolve all manifest-relative paths from that root.
-3. Add `clusters/` to loader search paths automatically.
+3. Add `project_root/clusters/` to loader search paths automatically.
 4. Resolve a named profile into current host inputs:
    - graph path
    - adapter path
    - one ingress source (`fixture` or process ingress command)
    - optional egress config path parsed into `EgressConfig`
-5. Load custom implementations from `implementations/` once the
-   `GW-EI8-1` mechanism is approved and implemented.
+5. Build runtime surfaces from:
+   - core primitives
+   - user-registered custom primitives from the Rust crate
 6. Pass the resolved project profile into the existing host run/replay
    surfaces rather than inventing a second execution model.
 
 In other words:
 
-- CLI scaffolds and discovers the workspace
-- prod loader resolves `ergo.toml`
+- SDK is the primary product entry surface
+- prod loader resolves project files and cluster discovery
 - host executes the resolved profile
-- SDK may consume the same resolved project model later, but it should
-  not define the workspace convention
+- CLI may wrap the same resolution and host calls for convenience
 
 ## Closure Ledger
 
 <!-- markdownlint-disable MD013 -->
 | ID | Task | Closure Condition | Owner | Status |
 | -- | ---- | ----------------- | ----- | ------ |
-| EI-1 | Define project layout convention | Layout documented as the concrete v1 workspace convention, including `channels/ingress`, `channels/egress`, `egress`, `fixtures`, and `captures`. Reviewed by Sebastian. | Claude + Sebastian | OPEN |
-| EI-2 | Define `ergo.toml` schema | Project manifest includes named profiles that resolve graph, adapter, exactly one ingress source, optional egress config path, and optional capture output. | Codex | OPEN |
-| EI-3 | Implement `ergo init` | Command creates directory structure with template files. | Codex | OPEN |
-| EI-4 | Implement project discovery | CLI detects `ergo.toml`, resolves project root, and loads named profiles from the manifest. | Codex | OPEN |
-| EI-5 | `ergo run` inside project | `ergo run <profile>` resolves one named profile into graph + adapter + fixture or ingress command + optional egress config, then runs through the existing host path. | Codex | OPEN |
-| EI-6 | `ergo validate` inside project | Validates every named profile, including graph/adapter composition and referenced egress config parsing when present. Reports all errors, not just first. | Codex | OPEN |
-| EI-7 | Cluster search path integration | `clusters/` directory automatically added to loader search paths during project runs. | Codex | OPEN |
-| EI-8 | Custom implementation loading | Implementations from `implementations/` are loaded via `feat/catalog-builder` API using the mechanism approved in `GW-EI8-1`, with matching tests. | Codex | OPEN |
-| EI-9 | Test: `ergo init` + `ergo run` round-trip | Init a project, place a graph and fixture, run it, verify capture output in `captures/`. | Codex | OPEN |
-| EI-10 | Test: project validation catches composition errors | Project with mismatched adapter/graph. `ergo validate` reports typed error with rule ID. | Codex | OPEN |
+| EI-0 | Define SDK-first public surface | `ergo-sdk-rust` exposes the canonical builder/project API over host + loader, and the scaffolded user crate can build/run against it without calling host internals directly. | Codex | OPEN |
+| EI-1 | Define Rust crate project layout | Layout documented as the concrete v1 project convention, including `Cargo.toml`, `src/main.rs`, `src/implementations/`, `graphs/`, `clusters/`, `adapters/`, `channels/`, `egress/`, `fixtures/`, `captures/`, and `ergo.toml`. Reviewed by Sebastian. | Claude + Sebastian | OPEN |
+| EI-2 | Define `ergo.toml` schema | Project manifest includes named profiles that resolve graph, adapter, implicit cluster search path, exactly one ingress source, optional egress config path, and optional capture output. | Codex | OPEN |
+| EI-3 | Implement `ergo init` scaffold | `ergo init` creates a Rust crate depending on the SDK, with sample primitives, graph, cluster, adapter, channels, fixture, capture directory, and `ergo.toml`. | Codex | OPEN |
+| EI-4 | Implement shared project discovery/resolution | SDK and optional CLI convenience paths share one project-resolution surface for `ergo.toml`, relative paths, and cluster search paths. | Codex | OPEN |
+| EI-5 | Implement SDK profile execution path | `Ergo::from_project(...).run_profile(...)` (or equivalent) resolves one named profile into graph + adapter + ingress source + optional egress config and runs through the existing host path. | Codex | OPEN |
+| EI-6 | Implement project validation surface | SDK validation resolves every named profile, including graph/adapter composition and referenced egress config parsing when present. CLI validation may wrap the same surface. | Codex | OPEN |
+| EI-7 | Make clusters first-class in scaffold and resolution | Scaffold includes `clusters/` plus a sample cluster used by the sample graph. Project resolution automatically adds `project_root/clusters` to loader search paths. | Codex | OPEN |
+| EI-8 | Implement in-process custom primitive registration | Scaffolded Rust crate registers user primitives through `CatalogBuilder` / SDK builder according to `custom-implementation-loading.md`, with matching tests. | Codex | OPEN |
+| EI-9 | Test: scaffolded project builds and runs | Init a project, build it as a Rust crate, run a fixture-backed profile through the SDK path, and verify capture output in `captures/`. | Codex | OPEN |
+| EI-10 | Test: project validation catches composition errors | Project with mismatched adapter/graph. Validation reports typed error with rule ID. | Codex | OPEN |
 | EI-11 | Test: project profile resolves egress config | Profile that references an `egress/*.toml` file resolves and passes parsed `EgressConfig` into the host run path. | Codex | OPEN |
-| EI-12 | Documentation | User-facing guide: "Getting Started with Ergo." Covers init, authoring graphs/adapters/channels, running profiles, replaying, and current single-ingress v1 scope. | Claude | OPEN |
+| EI-12 | Documentation | User-facing guide: "Getting Started with Ergo SDK." Covers init, custom primitive registration, graphs, clusters, adapters, channels, profiles, running, validation, and replay. | Claude | OPEN |
 <!-- markdownlint-restore -->
 
 ## Design Constraints
 
 - The project layout is a convention, not a hard requirement.
   Path-based CLI usage continues to work.
-- Custom implementation loading (EI-8) is gated by `GW-EI8-1`;
-  implementation must follow the selected mechanism and documented
-  non-goals.
+- EI-8 must follow the selected in-process mechanism from
+  `decisions/custom-implementation-loading.md`.
 - The v1 project model supports one ingress channel per run profile.
-  Multi-ingress remains outside scope until `GW-EFX-2` lands.
+  Projects needing multiple live sources use a multiplexer ingress
+  channel upstream of host.
 - `ergo.toml` references standalone egress TOML files; it does not
   redefine `EgressConfig`.
+- The primary production path is SDK-first. CLI project-mode commands,
+  if added, are convenience wrappers rather than the defining product
+  surface.
+- `Cargo.toml` and `ergo.toml` serve different purposes and must remain
+  separate.
 - No domain-specific language in project scaffolding. Template files
   use generic examples (`number_source`, `add`, `emit_if_true`), not
   trading examples.
-- Project convention is a prod-layer concern. Workspace scaffolding and
-  discovery belong to CLI plus loader, not the SDK.
+- Clusters are normal authored artifacts in v1, not an advanced or
+  deferred feature.
+- Project convention is a prod-layer concern shared by SDK plus loader.
+  CLI may consume it, but does not define it.
 - After this branch, domain-specific vertical work is done by Sebastian
   inside a workspace using the extension surface. It does not appear in
   the Ergo repo.
@@ -253,15 +314,18 @@ In other words:
 After `feat/ergo-init` merges, a developer can:
 
 1. `ergo init my-project`
-2. Write graphs and clusters in YAML
-3. Write an adapter manifest in YAML
-4. Write ingress and egress channel programs in the workspace
-5. Optionally write custom implementations in Rust once `EI-8` lands
-6. Declare named run profiles in `ergo.toml`
-7. `ergo validate` to check profile compositions
-8. `ergo run <profile>` to execute fixture-backed or live profiles
-9. `ergo replay` to verify determinism from captures
+2. Open a real Rust crate with working SDK dependency and sample
+   `main.rs`
+3. Write custom primitives in `src/implementations/`
+4. Write graphs and clusters in YAML
+5. Write an adapter manifest in YAML
+6. Write ingress and egress channel programs in the workspace
+7. Declare named run profiles in `ergo.toml`
+8. `cargo run` or equivalent SDK-driven binary execution to run a
+   fixture-backed or live profile
+9. Validate project profiles and replay captures through the same
+   project model
 
 All domain-specific work lives in the workspace. The Ergo repo provides
-the runtime, the contracts, and the tooling that scaffold, load, and
-execute that workspace.
+the runtime, the contracts, the SDK, and the tooling that scaffold,
+load, and execute that workspace.

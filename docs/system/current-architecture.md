@@ -18,18 +18,44 @@ reconstructing the model from decision records.
 
 ## 1. What Users Author
 
-Users author five kinds of project artifacts:
+Users author five semantic artifact kinds inside a project that also
+contains `Cargo.toml`, `ergo.toml`, fixtures, and captures:
 
-| Artifact | Purpose |
-| --- | --- |
-| **Implementations** | Concrete Source, Compute, Trigger, and Action implementations |
-| **Graphs** | Cluster/graph compositions that wire implementations together |
-| **Adapters** | Declarative contracts for context, events, and accepted effect kinds |
-| **Ingress channels** | Prod boundary code that delivers external events into host execution |
-| **Egress channels** | Prod boundary code that receives effect intent from host and performs true external I/O |
+- **Implementations**
+  Concrete Source, Compute, Trigger, and Action implementations.
+- **Graphs**
+  Cluster/graph compositions that wire implementations together.
+- **Adapters**
+  Declarative contracts for context, events, and accepted effect
+  kinds.
+- **Ingress channels**
+  Prod boundary code that delivers external events into host
+  execution.
+- **Egress channels**
+  Prod boundary code that receives effect intent from host and performs
+  true external I/O.
 
 Projects may also contain fixtures and capture artifacts, but those are
 operational inputs/outputs rather than authored semantic components.
+
+---
+
+## 1A. Product Surface
+
+The intended primary product surface is the Rust SDK layer over host +
+loader.
+
+In practice that means:
+
+- a production Ergo application is a Rust crate
+- user code registers custom primitives in-process
+- named profiles live in `ergo.toml`
+- CLI remains supporting tooling for validation, replay, and explicit
+  path-based runs
+
+The SDK crate itself is still being filled in by `feat/ergo-init`, but
+the engine architecture already supports this shape through the host +
+loader library boundaries.
 
 ---
 
@@ -37,13 +63,17 @@ operational inputs/outputs rather than authored semantic components.
 
 Ergo's current execution model distinguishes five runtime-facing roles:
 
-| Role | Responsibility |
-| --- | --- |
-| **Action** | Emits effect intent from graph execution |
-| **Adapter** | Declares the accepted external contract |
-| **Host** | Runs canonical orchestration, drains post-episode effects, and manages capture/replay |
-| **Ingress channel** | Brings external events into host execution |
-| **Egress channel** | Takes effect intent out of host execution to real external systems |
+- **Action**
+  Emits effect intent from graph execution.
+- **Adapter**
+  Declares the accepted external contract.
+- **Host**
+  Runs canonical orchestration, drains post-episode effects, and
+  manages capture/replay.
+- **Ingress channel**
+  Brings external events into host execution.
+- **Egress channel**
+  Takes effect intent out of host execution to real external systems.
 
 The important separation is:
 
@@ -121,11 +151,13 @@ for traceability but does not gate strict replay success.
 
 The current v1 shape still has a few explicit limits:
 
-- Canonical host run currently supports **one ingress channel per run**.
-  Multi-ingress is future work.
-- Egress routing is configured through `EgressConfig` / `--egress-config`
-  rather than a full project workspace convention.
-- Workspace/project convention is a separate prod-layer concern tracked
+- Canonical host run intentionally supports **one ingress channel per
+  run**. Projects that need many live feeds must multiplex them
+  upstream into one ingress channel.
+- Egress routing is configured through `EgressConfig` and current
+  path-based runs often pass `--egress-config`; fuller project-mode
+  resolution is being formalized by `feat/ergo-init`.
+- SDK-first project convention and Rust-crate scaffolding are tracked
   by `feat/ergo-init`.
 
 These are current product-surface limits, not hidden semantic gaps.
@@ -135,6 +167,7 @@ These are current product-surface limits, not hidden semantic gaps.
 ## 7. Where To Read Next
 
 - [Kernel/Prod Separation](kernel-prod-separation.md)
+- [Project Convention](../authoring/project-convention.md)
 - [Action Primitive Manifest](../primitives/action.md)
 - [Adapter Manifest](../primitives/adapter.md)
 - [Ingress Channel Guide](../authoring/ingress-channel-guide.md)

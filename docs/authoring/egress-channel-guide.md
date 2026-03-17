@@ -29,6 +29,10 @@ concerns:
 These stay separate on purpose. The adapter declares accepted effect
 vocabulary. Routing and real external I/O are prod concerns.
 
+For where egress channels and `egress/*.toml` configs live in an
+SDK-first Ergo project, see
+[Project Convention](project-convention.md).
+
 ## What An Egress Channel Is Allowed To Do
 
 An egress channel may:

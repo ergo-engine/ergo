@@ -280,7 +280,7 @@ runtime constructs the records; the host dispatches them.
 
 ## Impacted Ledger Files
 
-- `docs/ledger/gap-work/open/effect-realization-boundary.md` (GW-EFX-3
+- `docs/ledger/gap-work/closed/effect-realization-boundary.md` (GW-EFX-3
   and sub-gaps)
 - `docs/ledger/decisions/effect-dispatch-and-channel-roles.md` (this
   decision extends but does not modify the prior ruling)
