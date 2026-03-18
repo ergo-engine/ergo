@@ -25,6 +25,7 @@ ergo init my-project
 
 `ergo init` generates:
 
+- `README.md`
 - `Cargo.toml`
 - `ergo.toml`
 - `src/main.rs`
@@ -55,6 +56,10 @@ cd my-project
 cargo run
 ```
 
+The generated `README.md` is the first stop after scaffolding. It
+summarizes the project layout, available profiles, and the first files
+to edit.
+
 This default path runs the `backtest` profile from `ergo.toml`:
 
 - graph: `graphs/strategy.yaml`
@@ -73,14 +78,13 @@ The sample run proves the full SDK path:
 - external intent dispatch
 - capture output
 
-Current sample boundary programs are POSIX examples:
+Current sample boundary programs are Python 3 examples:
 
-- `channels/ingress/live_feed.sh`
-- `channels/egress/sample_outbox.sh`
+- `channels/ingress/live_feed.py`
+- `channels/egress/sample_outbox.py`
 
-If you are not running on a POSIX shell environment, replace those
-sample channel programs and the corresponding commands in
-`ergo.toml` / `egress/live.toml` before using the live profile.
+Make sure `python3` is available on your machine before using the live
+profile or the scaffolded `doctor` command.
 
 ## 3. Validate and Replay
 
@@ -88,6 +92,18 @@ Validate every named profile in the project:
 
 ```text
 cargo run -- validate
+```
+
+List the named profiles in the scaffolded project:
+
+```text
+cargo run -- profiles
+```
+
+Run the scaffold health check:
+
+```text
+cargo run -- doctor
 ```
 
 Replay the generated backtest capture:
@@ -101,6 +117,8 @@ The scaffolded `main.rs` is intentionally small. It shows how to:
 - build `Ergo` from the project root
 - register custom primitives
 - run one named profile
+- list available profiles
+- doctor the scaffolded project
 - validate the project
 - replay a capture
 
@@ -145,8 +163,8 @@ capture fields are declared.
 
 Edit:
 
-- `channels/ingress/live_feed.sh`
-- `channels/egress/sample_outbox.sh`
+- `channels/ingress/live_feed.py`
+- `channels/egress/sample_outbox.py`
 - `egress/live.toml`
 
 The sample project includes both ingress and egress channel programs.
@@ -181,6 +199,7 @@ Keep the two top-level manifests separate:
 ## 7. Read Next
 
 - [Project Convention](project-convention.md)
+- [Testing Notes](testing-notes.md)
 - [Loader Contract](loader.md)
 - [Ingress Channel Guide](ingress-channel-guide.md)
 - [Egress Channel Guide](egress-channel-guide.md)

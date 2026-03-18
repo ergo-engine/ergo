@@ -148,17 +148,22 @@ fn ensure_target_ready(target_dir: &Path, force: bool) -> Result<(), String> {
             )
         })?;
 
-        if !force && entries.next().transpose().map_err(|err| {
-            render_cli_error(
-                &CliErrorInfo::new(
-                    "cli.init_target_read_failed",
-                    format!("failed to inspect '{}'", target_dir.display()),
-                )
-                .with_where("init target")
-                .with_fix("verify directory permissions")
-                .with_detail(err.to_string()),
-            )
-        })?.is_some()
+        if !force
+            && entries
+                .next()
+                .transpose()
+                .map_err(|err| {
+                    render_cli_error(
+                        &CliErrorInfo::new(
+                            "cli.init_target_read_failed",
+                            format!("failed to inspect '{}'", target_dir.display()),
+                        )
+                        .with_where("init target")
+                        .with_fix("verify directory permissions")
+                        .with_detail(err.to_string()),
+                    )
+                })?
+                .is_some()
         {
             return Err(render_cli_error(
                 &CliErrorInfo::new(
@@ -237,9 +242,11 @@ fn derive_project_names(target_dir: &Path) -> Result<ProjectNames, String> {
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .or_else(|| {
-            std::env::current_dir()
-                .ok()
-                .and_then(|path| path.file_name().and_then(|value| value.to_str()).map(ToOwned::to_owned))
+            std::env::current_dir().ok().and_then(|path| {
+                path.file_name()
+                    .and_then(|value| value.to_str())
+                    .map(ToOwned::to_owned)
+            })
         })
         .unwrap_or_else(|| "ergo-app".to_string());
 
@@ -293,7 +300,11 @@ fn sanitize_package_name(raw_name: &str) -> String {
 fn scaffold_files(names: &ProjectNames, sdk_dependency_path: &str) -> Vec<(&'static str, String)> {
     vec![
         (".gitignore", gitignore_contents()),
-        ("Cargo.toml", cargo_toml_contents(names, sdk_dependency_path)),
+        ("README.md", readme_contents(names)),
+        (
+            "Cargo.toml",
+            cargo_toml_contents(names, sdk_dependency_path),
+        ),
         ("ergo.toml", ergo_toml_contents(names)),
         ("src/main.rs", main_rs_contents()),
         ("src/implementations/mod.rs", implementations_mod_contents()),
@@ -302,12 +313,9 @@ fn scaffold_files(names: &ProjectNames, sdk_dependency_path: &str) -> Vec<(&'sta
         ("graphs/strategy.yaml", graph_yaml_contents()),
         ("clusters/sample_message.yaml", cluster_yaml_contents()),
         ("adapters/sample.yaml", adapter_yaml_contents()),
+        ("channels/ingress/live_feed.py", ingress_channel_contents()),
         (
-            "channels/ingress/live_feed.sh",
-            ingress_channel_contents(),
-        ),
-        (
-            "channels/egress/sample_outbox.sh",
+            "channels/egress/sample_outbox.py",
             egress_channel_contents(),
         ),
         ("egress/live.toml", egress_toml_contents()),
@@ -318,6 +326,55 @@ fn scaffold_files(names: &ProjectNames, sdk_dependency_path: &str) -> Vec<(&'sta
 
 fn gitignore_contents() -> String {
     "target/\ncaptures/*.json\n".to_string()
+}
+
+fn readme_contents(names: &ProjectNames) -> String {
+    format!(
+        r#"# {project_name}
+
+This project was scaffolded by `ergo init`.
+
+It is an SDK-first Ergo application:
+
+- `Cargo.toml` owns Rust build configuration
+- `ergo.toml` owns Ergo profiles and authored-asset wiring
+- `src/implementations/` is where you add custom primitives
+- `graphs/`, `clusters/`, `adapters/`, and `channels/` hold the authored runtime assets
+
+## Quick Start
+
+```text
+cargo run
+cargo run -- profiles
+cargo run -- doctor
+cargo run -- validate
+cargo run -- replay backtest captures/backtest.capture.json
+```
+
+## Profiles
+
+- `backtest`
+  fixture-backed sample profile that writes `captures/backtest.capture.json`
+- `live`
+  process-ingress sample profile that uses the Python 3 example channel scripts
+
+## First Files To Edit
+
+- `src/implementations/actions.rs`
+- `src/implementations/sources.rs`
+- `graphs/strategy.yaml`
+- `clusters/sample_message.yaml`
+- `adapters/sample.yaml`
+- `ergo.toml`
+
+## Notes
+
+- The scaffolded sample channels use `python3`.
+- The built `Ergo` handle is currently one-shot; the sample `main.rs` builds a fresh handle per command.
+- Use `cargo run -- doctor` after your first edits if you want a quick project health check.
+"#,
+        project_name = names.project_name
+    )
 }
 
 fn cargo_toml_contents(names: &ProjectNames, sdk_dependency_path: &str) -> String {
@@ -360,7 +417,7 @@ capture_output = "captures/live.capture.json"
 
 [profiles.live.ingress]
 type = "process"
-command = ["sh", "channels/ingress/live_feed.sh"]
+command = ["python3", "channels/ingress/live_feed.py"]
 "#,
         project_name = names.project_name,
     )
@@ -368,9 +425,10 @@ command = ["sh", "channels/ingress/live_feed.sh"]
 
 fn main_rs_contents() -> String {
     r#"use std::error::Error;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use ergo_sdk_rust::Ergo;
+use ergo_sdk_rust::{Ergo, ProjectSummary};
 
 mod implementations;
 
@@ -394,14 +452,17 @@ fn run() -> Result<(), Box<dyn Error>> {
             println!("run profile '{profile}': {outcome:?}");
             Ok(())
         }
-        "validate" => {
+        "profiles" => {
             let summary = build_ergo()?.validate_project()?;
-            println!(
-                "validated project '{}' version={} profiles={:?}",
-                summary.name, summary.version, summary.profiles
-            );
+            print_profiles(&summary);
             Ok(())
         }
+        "validate" => {
+            let summary = build_ergo()?.validate_project()?;
+            print_project_summary("validate ok", &summary);
+            Ok(())
+        }
+        "doctor" => doctor(),
         "replay" => {
             let profile = args.get(1).map(String::as_str).unwrap_or("backtest");
             let capture_path = args
@@ -430,8 +491,80 @@ fn build_ergo() -> Result<Ergo, Box<dyn Error>> {
         .build()?)
 }
 
+fn doctor() -> Result<(), Box<dyn Error>> {
+    for path in [
+        "graphs/strategy.yaml",
+        "clusters/sample_message.yaml",
+        "adapters/sample.yaml",
+        "channels/ingress/live_feed.py",
+        "channels/egress/sample_outbox.py",
+        "egress/live.toml",
+        "fixtures/backtest.jsonl",
+    ] {
+        ensure_exists(path)?;
+    }
+
+    ensure_python3_available()?;
+    compile_python("channels/ingress/live_feed.py")?;
+    compile_python("channels/egress/sample_outbox.py")?;
+
+    let summary = build_ergo()?.validate_project()?;
+
+    print_project_summary("doctor ok", &summary);
+    Ok(())
+}
+
+fn print_project_summary(label: &str, summary: &ProjectSummary) {
+    println!(
+        "{label} project '{}' version={} root={}",
+        summary.name,
+        summary.version,
+        summary.root.display()
+    );
+    print_profiles(summary);
+}
+
+fn print_profiles(summary: &ProjectSummary) {
+    println!("profiles:");
+    for profile in &summary.profiles {
+        println!("  - {profile}");
+    }
+}
+
+fn ensure_exists(path: &str) -> Result<(), Box<dyn Error>> {
+    if Path::new(path).exists() {
+        Ok(())
+    } else {
+        Err(format!("doctor failed: expected '{}' to exist", path).into())
+    }
+}
+
+fn ensure_python3_available() -> Result<(), Box<dyn Error>> {
+    let status = Command::new("python3")
+        .arg("--version")
+        .status()
+        .map_err(|err| format!("doctor failed: unable to run python3 --version: {err}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("doctor failed: python3 is required for the scaffolded sample channels".into())
+    }
+}
+
+fn compile_python(path: &str) -> Result<(), Box<dyn Error>> {
+    let status = Command::new("python3")
+        .args(["-m", "py_compile", path])
+        .status()
+        .map_err(|err| format!("doctor failed: unable to compile '{}': {err}", path))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("doctor failed: python3 could not compile '{}'", path).into())
+    }
+}
+
 fn usage() -> &'static str {
-    "usage:\n  cargo run -- [run [profile] | validate | replay [profile] [capture.json]]"
+    "usage:\n  cargo run -- [run [profile] | profiles | validate | doctor | replay [profile] [capture.json]]"
 }
 "#
     .to_string()
@@ -722,29 +855,63 @@ capture:
 }
 
 fn ingress_channel_contents() -> String {
-    r#"#!/bin/sh
-printf '%s\n' '{"type":"hello","protocol":"ergo-driver.v0"}'
-printf '%s\n' '{"type":"event","event":{"event_id":"sample-live-evt-1","kind":"Command","at":{"secs":0,"nanos":0},"semantic_kind":"sample_event","payload":{"message":"hello-from-live-ingress"}}}'
-printf '%s\n' '{"type":"end"}'
+    r#"#!/usr/bin/env python3
+import json
+import sys
+
+frames = [
+    {"type": "hello", "protocol": "ergo-driver.v0"},
+    {
+        "type": "event",
+        "event": {
+            "event_id": "sample-live-evt-1",
+            "kind": "Command",
+            "at": {"secs": 0, "nanos": 0},
+            "semantic_kind": "sample_event",
+            "payload": {"message": "hello-from-live-ingress"},
+        },
+    },
+    {"type": "end"},
+]
+
+for frame in frames:
+    sys.stdout.write(json.dumps(frame) + "\n")
+    sys.stdout.flush()
 "#
     .to_string()
 }
 
 fn egress_channel_contents() -> String {
-    r#"#!/bin/sh
-printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["publish_sample"]}'
+    r#"#!/usr/bin/env python3
+import json
+import sys
 
-while IFS= read -r line; do
-  case "$line" in
-    *'"type":"end"'*)
-      break
-      ;;
-  esac
-  intent_id=$(printf '%s\n' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
-  if [ -n "$intent_id" ]; then
-    printf '{"type":"intent_ack","intent_id":"%s","status":"accepted","acceptance":"durable","egress_ref":"sample-outbox-1"}\n' "$intent_id"
-  fi
-done
+ready = {
+    "type": "ready",
+    "protocol": "ergo-egress.v1",
+    "handled_kinds": ["publish_sample"],
+}
+sys.stdout.write(json.dumps(ready) + "\n")
+sys.stdout.flush()
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    frame = json.loads(line)
+    if frame.get("type") == "end":
+        break
+    intent_id = frame.get("intent_id")
+    if intent_id:
+        ack = {
+            "type": "intent_ack",
+            "intent_id": intent_id,
+            "status": "accepted",
+            "acceptance": "durable",
+            "egress_ref": "sample-outbox-1",
+        }
+        sys.stdout.write(json.dumps(ack) + "\n")
+        sys.stdout.flush()
 "#
     .to_string()
 }
@@ -754,7 +921,7 @@ fn egress_toml_contents() -> String {
 
 [channels.sample_outbox]
 type = "process"
-command = ["sh", "channels/egress/sample_outbox.sh"]
+command = ["python3", "channels/egress/sample_outbox.py"]
 
 [routes.publish_sample]
 channel = "sample_outbox"
@@ -782,11 +949,17 @@ fn default_sdk_dependency_path(target_dir: &Path) -> Result<String, String> {
         ));
     }
 
-    let sdk_path = canonicalize_path(&workspace_root.join("crates/prod/clients/sdk-rust"), "default SDK path")?;
+    let sdk_path = canonicalize_path(
+        &workspace_root.join("crates/prod/clients/sdk-rust"),
+        "default SDK path",
+    )?;
     Ok(render_dependency_path(target_dir, &sdk_path))
 }
 
-fn resolve_explicit_sdk_dependency_path(target_dir: &Path, sdk_path: &Path) -> Result<String, String> {
+fn resolve_explicit_sdk_dependency_path(
+    target_dir: &Path,
+    sdk_path: &Path,
+) -> Result<String, String> {
     let sdk_path = absolutize_path(sdk_path, "sdk path")?;
     let sdk_path = canonicalize_path(&sdk_path, "sdk path")?;
     Ok(render_dependency_path(target_dir, &sdk_path))
@@ -921,9 +1094,10 @@ fn escape_toml_string(value: &str) -> String {
 
 fn render_init_summary(summary: &InitSummary) -> String {
     format!(
-        "initialized Ergo SDK project at {}\nsdk dependency: {}\nchannel scripts: sample ingress/egress scripts target POSIX 'sh'\nnext steps:\n  cd {}\n  cargo run\n  cargo run -- validate",
+        "initialized Ergo SDK project at {}\nsdk dependency: {}\nchannel scripts: sample ingress/egress scripts target Python 3\ngenerated guide: {}/README.md\nnext steps:\n  cd {}\n  cargo run\n  cargo run -- profiles\n  cargo run -- doctor\n  cargo run -- validate\n  cargo run -- replay backtest captures/backtest.capture.json",
         summary.root.display(),
         summary.sdk_dependency_path,
+        summary.root.display(),
         summary.root.display(),
     )
 }
@@ -931,6 +1105,7 @@ fn render_init_summary(summary: &InitSummary) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
     use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -969,12 +1144,60 @@ mod tests {
             .join("crates/prod/clients/sdk-rust")
     }
 
-    fn run_cargo_project(project_root: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    fn run_cargo_project(
+        project_root: &Path,
+        args: &[&str],
+    ) -> Result<std::process::Output, String> {
         Command::new("cargo")
             .args(args)
             .current_dir(project_root)
             .output()
             .map_err(|err| format!("spawn cargo {:?}: {err}", args))
+    }
+
+    fn collect_project_files(project_root: &Path) -> Result<BTreeSet<String>, String> {
+        let mut files = BTreeSet::new();
+        let mut dirs = vec![project_root.to_path_buf()];
+
+        while let Some(dir) = dirs.pop() {
+            for entry in
+                fs::read_dir(&dir).map_err(|err| format!("read dir '{}': {err}", dir.display()))?
+            {
+                let entry = entry.map_err(|err| format!("read dir entry: {err}"))?;
+                let path = entry.path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else {
+                    let relative = path.strip_prefix(project_root).map_err(|err| {
+                        format!("strip prefix '{}': {err}", project_root.display())
+                    })?;
+                    files.insert(normalize_path(relative));
+                }
+            }
+        }
+
+        Ok(files)
+    }
+
+    fn expected_scaffold_files() -> BTreeSet<String> {
+        BTreeSet::from([
+            ".gitignore".to_string(),
+            "README.md".to_string(),
+            "Cargo.toml".to_string(),
+            "ergo.toml".to_string(),
+            "src/main.rs".to_string(),
+            "src/implementations/mod.rs".to_string(),
+            "src/implementations/sources.rs".to_string(),
+            "src/implementations/actions.rs".to_string(),
+            "graphs/strategy.yaml".to_string(),
+            "clusters/sample_message.yaml".to_string(),
+            "adapters/sample.yaml".to_string(),
+            "channels/ingress/live_feed.py".to_string(),
+            "channels/egress/sample_outbox.py".to_string(),
+            "egress/live.toml".to_string(),
+            "fixtures/backtest.jsonl".to_string(),
+            "captures/.gitkeep".to_string(),
+        ])
     }
 
     #[test]
@@ -984,13 +1207,19 @@ mod tests {
         let message = init_command(&[project_root.display().to_string()])?;
 
         assert!(message.contains("initialized Ergo SDK project"));
-        assert!(message.contains("channel scripts: sample ingress/egress scripts target POSIX 'sh'"));
+        assert!(message.contains("channel scripts: sample ingress/egress scripts target Python 3"));
+        assert!(message.contains("cargo run -- profiles"));
+        assert!(message.contains("cargo run -- replay backtest captures/backtest.capture.json"));
+        assert!(project_root.join("README.md").exists());
         assert!(project_root.join("Cargo.toml").exists());
         assert!(project_root.join("ergo.toml").exists());
         assert!(project_root.join("graphs/strategy.yaml").exists());
         assert!(project_root.join("clusters/sample_message.yaml").exists());
         assert!(project_root.join("src/implementations/actions.rs").exists());
-        assert!(project_root.join("channels/egress/sample_outbox.sh").exists());
+        assert!(project_root
+            .join("channels/egress/sample_outbox.py")
+            .exists());
+        assert!(project_root.join("channels/ingress/live_feed.py").exists());
 
         let cargo_toml = fs::read_to_string(project_root.join("Cargo.toml"))
             .map_err(|err| format!("read Cargo.toml: {err}"))?;
@@ -1004,10 +1233,56 @@ mod tests {
             .map_err(|err| format!("read main.rs: {err}"))?;
         assert!(main_rs.contains("Ergo::from_project"));
         assert!(main_rs.contains("run_profile"));
+        assert!(main_rs.contains("\"profiles\""));
 
         let graph_yaml = fs::read_to_string(project_root.join("graphs/strategy.yaml"))
             .map_err(|err| format!("read graph: {err}"))?;
         assert!(graph_yaml.contains("cluster: sample_message@0.1.0"));
+
+        let readme = fs::read_to_string(project_root.join("README.md"))
+            .map_err(|err| format!("read README.md: {err}"))?;
+        assert!(readme.contains("cargo run -- profiles"));
+        assert!(readme.contains("src/implementations/actions.rs"));
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn scaffold_matches_expected_tree_and_templates() -> Result<(), String> {
+        let root = make_workspace_temp_dir("snapshot");
+        let project_root = root.join("sample-app");
+        init_command(&[project_root.display().to_string()])?;
+
+        let generated_files = collect_project_files(&project_root)?;
+        assert_eq!(generated_files, expected_scaffold_files());
+
+        let names = derive_project_names(&project_root)?;
+        let expected_sdk_path = render_dependency_path(&project_root, &cli_sdk_path());
+
+        let cargo_toml = fs::read_to_string(project_root.join("Cargo.toml"))
+            .map_err(|err| format!("read Cargo.toml: {err}"))?;
+        assert_eq!(
+            cargo_toml,
+            cargo_toml_contents(&names, &expected_sdk_path),
+            "Cargo.toml drifted from the scaffold template"
+        );
+
+        let ergo_toml = fs::read_to_string(project_root.join("ergo.toml"))
+            .map_err(|err| format!("read ergo.toml: {err}"))?;
+        assert_eq!(
+            ergo_toml,
+            ergo_toml_contents(&names),
+            "ergo.toml drifted from the scaffold template"
+        );
+
+        let readme = fs::read_to_string(project_root.join("README.md"))
+            .map_err(|err| format!("read README.md: {err}"))?;
+        assert_eq!(
+            readme,
+            readme_contents(&names),
+            "README.md drifted from the scaffold template"
+        );
 
         let _ = fs::remove_dir_all(root);
         Ok(())
@@ -1058,6 +1333,44 @@ mod tests {
                 String::from_utf8_lossy(&validate.stderr)
             ));
         }
+        let validate_stdout = String::from_utf8_lossy(&validate.stdout);
+        assert!(validate_stdout.contains("validate ok project"));
+        assert!(validate_stdout.contains("profiles:"));
+
+        let profiles = run_cargo_project(&project_root, &["run", "--quiet", "--", "profiles"])?;
+        if !profiles.status.success() {
+            return Err(format!(
+                "cargo run -- profiles failed\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&profiles.stdout),
+                String::from_utf8_lossy(&profiles.stderr)
+            ));
+        }
+        let profiles_stdout = String::from_utf8_lossy(&profiles.stdout);
+        assert!(profiles_stdout.contains("profiles:"));
+        assert!(profiles_stdout.contains("backtest"));
+        assert!(profiles_stdout.contains("live"));
+
+        let doctor = run_cargo_project(&project_root, &["run", "--quiet", "--", "doctor"])?;
+        if !doctor.status.success() {
+            return Err(format!(
+                "cargo run -- doctor failed\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&doctor.stdout),
+                String::from_utf8_lossy(&doctor.stderr)
+            ));
+        }
+
+        let live = run_cargo_project(&project_root, &["run", "--quiet", "--", "run", "live"])?;
+        if !live.status.success() {
+            return Err(format!(
+                "cargo run -- run live failed\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&live.stdout),
+                String::from_utf8_lossy(&live.stderr)
+            ));
+        }
+        assert!(
+            project_root.join("captures/live.capture.json").exists(),
+            "expected live capture to be written"
+        );
 
         let adapter_path = project_root.join("adapters/sample.yaml");
         let broken_adapter =
@@ -1121,6 +1434,59 @@ mod tests {
         assert!(
             cargo_toml.contains(".."),
             "expected relative SDK path segments, got:\n{cargo_toml}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_reports_missing_scaffold_file() -> Result<(), String> {
+        let root = make_workspace_temp_dir("doctor_missing");
+        let project_root = root.join("sample-app");
+        init_command(&[project_root.display().to_string()])?;
+
+        fs::remove_file(project_root.join("graphs/strategy.yaml"))
+            .map_err(|err| format!("remove graph: {err}"))?;
+
+        let doctor = run_cargo_project(&project_root, &["run", "--quiet", "--", "doctor"])?;
+        assert!(
+            !doctor.status.success(),
+            "doctor should fail when graph is missing"
+        );
+        let stderr = String::from_utf8_lossy(&doctor.stderr);
+        assert!(
+            stderr.contains("doctor failed: expected 'graphs/strategy.yaml' to exist"),
+            "unexpected stderr: {stderr}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_reports_python_channel_syntax_error() -> Result<(), String> {
+        let root = make_workspace_temp_dir("doctor_python_syntax");
+        let project_root = root.join("sample-app");
+        init_command(&[project_root.display().to_string()])?;
+
+        fs::write(
+            project_root.join("channels/ingress/live_feed.py"),
+            "def broken(:\n    pass\n",
+        )
+        .map_err(|err| format!("write broken ingress script: {err}"))?;
+
+        let doctor = run_cargo_project(&project_root, &["run", "--quiet", "--", "doctor"])?;
+        assert!(
+            !doctor.status.success(),
+            "doctor should fail on invalid python scaffold channel"
+        );
+        let stderr = String::from_utf8_lossy(&doctor.stderr);
+        assert!(
+            stderr.contains(
+                "doctor failed: python3 could not compile 'channels/ingress/live_feed.py'"
+            ),
+            "unexpected stderr: {stderr}"
         );
 
         let _ = fs::remove_dir_all(root);

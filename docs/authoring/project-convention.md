@@ -22,10 +22,9 @@ surface.
 
 `ergo init` now scaffolds this project shape directly.
 
-Today that scaffold uses POSIX `sh` sample channel programs for the
-generated live-profile examples. Projects on other environments should
-replace those sample boundary programs while keeping the same manifest
-layout.
+Today that scaffold uses Python 3 sample channel programs for the
+generated live-profile examples. Projects can replace those sample
+boundary programs while keeping the same manifest layout.
 
 ## 1. Two Manifests, Two Jobs
 
@@ -59,6 +58,7 @@ The v1 project layout is:
 
 ```text
 my-project/
+├── README.md
 ├── Cargo.toml
 ├── ergo.toml
 ├── src/
@@ -77,6 +77,9 @@ my-project/
 
 Purpose of each area:
 
+- `README.md`
+  Generated quick-start guide for the scaffolded project, including
+  commands, profiles, and first-edit locations.
 - `src/main.rs`
   User-owned application entrypoint that builds an Ergo engine through
   the SDK.

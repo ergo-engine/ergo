@@ -25,13 +25,16 @@ New to the system? Read these in order:
    clusters, and crate layout
 9. [getting-started-sdk](authoring/getting-started-sdk.md) — Scaffold,
    run, validate, replay, and edit a real SDK-first Ergo project
-10. [ingress-channel-guide](authoring/ingress-channel-guide.md) —
+10. [testing-notes](authoring/testing-notes.md) — Practical notes from
+   real project testing, including live ingress and current product
+   edges
+11. [ingress-channel-guide](authoring/ingress-channel-guide.md) —
    HostedEvent ingress and process-channel authoring
-11. [egress-channel-guide](authoring/egress-channel-guide.md) — Intent
+12. [egress-channel-guide](authoring/egress-channel-guide.md) — Intent
     dispatch and durable-accept egress authoring
-12. [concepts](authoring/concepts.md) — Cluster composition concepts
-13. [invariants](invariants/INDEX.md) — Enforcement loci for all invariants
-14. [terminology](system/terminology.md) — Canonical terms and usage
+13. [concepts](authoring/concepts.md) — Cluster composition concepts
+14. [invariants](invariants/INDEX.md) — Enforcement loci for all invariants
+15. [terminology](system/terminology.md) — Canonical terms and usage
 
 ---
 
@@ -49,8 +52,8 @@ Directory structure is the topic map. No separate navigation aids needed.
 - [authoring/](authoring/)
   Building projects, clusters, graphs, adapters, and boundary
   channels: project convention, getting-started guide, authoring
-  concepts, cluster spec, YAML format, loader contract, ingress
-  channel guide, and egress channel guide.
+  concepts, cluster spec, YAML format, loader contract, testing notes,
+  ingress channel guide, and egress channel guide.
 - [primitives/](primitives/)
   Primitive implementation contracts: Source, Compute, Trigger,
   Action, and Adapter manifests.
@@ -93,6 +96,7 @@ and their change rules:
   [project-convention](authoring/project-convention.md),
   [getting-started-sdk](authoring/getting-started-sdk.md),
   [loader](authoring/loader.md),
+  [testing-notes](authoring/testing-notes.md),
   [ingress-channel-guide](authoring/ingress-channel-guide.md),
   [egress-channel-guide](authoring/egress-channel-guide.md), and
   [invariants/](invariants/) (all phase files plus INDEX).

@@ -137,6 +137,7 @@ The v1 layout is a Rust crate plus authored asset directories:
 
 ```text
 my-project/
+├── README.md
 ├── Cargo.toml
 ├── ergo.toml
 ├── src/
@@ -153,9 +154,9 @@ my-project/
 │   └── sample.yaml
 ├── channels/
 │   ├── ingress/
-│   │   └── live_feed.sh
+│   │   └── live_feed.py
 │   └── egress/
-│       └── sample_outbox.sh
+│       └── sample_outbox.py
 ├── egress/
 │   └── live.toml
 ├── fixtures/
@@ -167,6 +168,8 @@ my-project/
 Directory roles:
 
 - `Cargo.toml` defines the Rust crate and SDK dependency.
+- `README.md` gives users the generated quick-start commands, profile
+  list, and first files to edit.
 - `src/main.rs` is the user-owned application entrypoint.
 - `src/implementations/` contains custom Source, Compute, Trigger, and
   Action implementations registered through the SDK/CatalogBuilder path.

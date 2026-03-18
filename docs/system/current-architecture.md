@@ -161,9 +161,9 @@ The current v1 shape still has a few explicit limits:
 - Rust-crate scaffolding now exists through `ergo init`; optional
   future CLI project conveniences remain secondary to the SDK-first
   path.
-- The scaffolded sample ingress and egress channel programs currently
-  target POSIX `sh`. Non-POSIX environments must replace those sample
-  boundary programs or provide local equivalents.
+- The scaffolded sample ingress and egress channel programs now target
+  Python 3 instead of POSIX shell. Projects still need a local
+  `python3` command available for the generated live-profile examples.
 
 These are current product-surface limits, not hidden semantic gaps.
 
