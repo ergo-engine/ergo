@@ -319,7 +319,7 @@ fn scaffold_files(names: &ProjectNames, sdk_dependency_path: &str) -> Vec<(&'sta
             egress_channel_contents(),
         ),
         ("egress/live.toml", egress_toml_contents()),
-        ("fixtures/backtest.jsonl", fixture_contents()),
+        ("fixtures/historical.jsonl", fixture_contents()),
         ("captures/.gitkeep", String::new()),
     ]
 }
@@ -348,13 +348,13 @@ cargo run
 cargo run -- profiles
 cargo run -- doctor
 cargo run -- validate
-cargo run -- replay backtest captures/backtest.capture.json
+cargo run -- replay historical captures/historical.capture.json
 ```
 
 ## Profiles
 
-- `backtest`
-  fixture-backed sample profile that writes `captures/backtest.capture.json`
+- `historical`
+  fixture-backed sample profile that writes `captures/historical.capture.json`
 - `live`
   process-ingress sample profile that uses the Python 3 example channel scripts
 
@@ -402,12 +402,12 @@ fn ergo_toml_contents(names: &ProjectNames) -> String {
         r#"name = "{project_name}"
 version = "0.1.0"
 
-[profiles.backtest]
+[profiles.historical]
 graph = "graphs/strategy.yaml"
 adapter = "adapters/sample.yaml"
-fixture = "fixtures/backtest.jsonl"
+fixture = "fixtures/historical.jsonl"
 egress = "egress/live.toml"
-capture_output = "captures/backtest.capture.json"
+capture_output = "captures/historical.capture.json"
 
 [profiles.live]
 graph = "graphs/strategy.yaml"
@@ -447,7 +447,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     match command {
         "run" => {
-            let profile = args.get(1).map(String::as_str).unwrap_or("backtest");
+            let profile = args.get(1).map(String::as_str).unwrap_or("historical");
             let outcome = build_ergo()?.run_profile(profile)?;
             println!("run profile '{profile}': {outcome:?}");
             Ok(())
@@ -464,7 +464,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         "doctor" => doctor(),
         "replay" => {
-            let profile = args.get(1).map(String::as_str).unwrap_or("backtest");
+            let profile = args.get(1).map(String::as_str).unwrap_or("historical");
             let capture_path = args
                 .get(2)
                 .map(PathBuf::from)
@@ -499,7 +499,7 @@ fn doctor() -> Result<(), Box<dyn Error>> {
         "channels/ingress/live_feed.py",
         "channels/egress/sample_outbox.py",
         "egress/live.toml",
-        "fixtures/backtest.jsonl",
+        "fixtures/historical.jsonl",
     ] {
         ensure_exists(path)?;
     }
@@ -931,7 +931,7 @@ ack_timeout = "5s"
 }
 
 fn fixture_contents() -> String {
-    "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\",\"semantic_kind\":\"sample_event\",\"payload\":{\"message\":\"hello-from-backtest\"}}}\n".to_string()
+    "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\",\"semantic_kind\":\"sample_event\",\"payload\":{\"message\":\"hello-from-historical\"}}}\n".to_string()
 }
 
 fn default_sdk_dependency_path(target_dir: &Path) -> Result<String, String> {
@@ -1094,7 +1094,7 @@ fn escape_toml_string(value: &str) -> String {
 
 fn render_init_summary(summary: &InitSummary) -> String {
     format!(
-        "initialized Ergo SDK project at {}\nsdk dependency: {}\nchannel scripts: sample ingress/egress scripts target Python 3\ngenerated guide: {}/README.md\nnext steps:\n  cd {}\n  cargo run\n  cargo run -- profiles\n  cargo run -- doctor\n  cargo run -- validate\n  cargo run -- replay backtest captures/backtest.capture.json",
+        "initialized Ergo SDK project at {}\nsdk dependency: {}\nchannel scripts: sample ingress/egress scripts target Python 3\ngenerated guide: {}/README.md\nnext steps:\n  cd {}\n  cargo run\n  cargo run -- profiles\n  cargo run -- doctor\n  cargo run -- validate\n  cargo run -- replay historical captures/historical.capture.json",
         summary.root.display(),
         summary.sdk_dependency_path,
         summary.root.display(),
@@ -1195,7 +1195,7 @@ mod tests {
             "channels/ingress/live_feed.py".to_string(),
             "channels/egress/sample_outbox.py".to_string(),
             "egress/live.toml".to_string(),
-            "fixtures/backtest.jsonl".to_string(),
+            "fixtures/historical.jsonl".to_string(),
             "captures/.gitkeep".to_string(),
         ])
     }
@@ -1209,7 +1209,7 @@ mod tests {
         assert!(message.contains("initialized Ergo SDK project"));
         assert!(message.contains("channel scripts: sample ingress/egress scripts target Python 3"));
         assert!(message.contains("cargo run -- profiles"));
-        assert!(message.contains("cargo run -- replay backtest captures/backtest.capture.json"));
+        assert!(message.contains("cargo run -- replay historical captures/historical.capture.json"));
         assert!(project_root.join("README.md").exists());
         assert!(project_root.join("Cargo.toml").exists());
         assert!(project_root.join("ergo.toml").exists());
@@ -1303,7 +1303,7 @@ mod tests {
             ));
         }
 
-        let capture_path = project_root.join("captures/backtest.capture.json");
+        let capture_path = project_root.join("captures/historical.capture.json");
         let raw_capture =
             fs::read_to_string(&capture_path).map_err(|err| format!("read capture: {err}"))?;
         let capture_json: serde_json::Value =
@@ -1347,7 +1347,7 @@ mod tests {
         }
         let profiles_stdout = String::from_utf8_lossy(&profiles.stdout);
         assert!(profiles_stdout.contains("profiles:"));
-        assert!(profiles_stdout.contains("backtest"));
+        assert!(profiles_stdout.contains("historical"));
         assert!(profiles_stdout.contains("live"));
 
         let doctor = run_cargo_project(&project_root, &["run", "--quiet", "--", "doctor"])?;

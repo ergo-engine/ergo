@@ -1,7 +1,0 @@
-{"kind":"episode_start","id":"E1"}
-{"kind":"event","event":{"type":"DataAvailable","id":"csv_evt_1","semantic_kind":"price_bar","payload":{"close":100.95,"high":101.1,"low":99.85,"open":100.25,"symbol":"AAPL","timestamp":"2026-01-02T09:30:00Z","volume":18420.0,"x":100.95}}}
-{"kind":"event","event":{"type":"DataAvailable","id":"csv_evt_2","semantic_kind":"price_bar","payload":{"close":101.22,"high":101.35,"low":100.6,"open":100.95,"symbol":"AAPL","timestamp":"2026-01-02T09:31:00Z","volume":15210.0,"x":101.22}}}
-{"kind":"event","event":{"type":"DataAvailable","id":"csv_evt_3","semantic_kind":"price_bar","payload":{"close":100.97,"high":101.44,"low":100.88,"open":101.22,"symbol":"AAPL","timestamp":"2026-01-02T09:32:00Z","volume":13980.0,"x":100.97}}}
-{"kind":"event","event":{"type":"DataAvailable","id":"csv_evt_4","semantic_kind":"price_bar","payload":{"close":101.41,"high":101.58,"low":100.92,"open":100.97,"symbol":"AAPL","timestamp":"2026-01-02T09:33:00Z","volume":16855.0,"x":101.41}}}
-{"kind":"event","event":{"type":"DataAvailable","id":"csv_evt_5","semantic_kind":"price_bar","payload":{"close":101.73,"high":101.89,"low":101.21,"open":101.41,"symbol":"AAPL","timestamp":"2026-01-02T09:34:00Z","volume":17401.0,"x":101.73}}}
-{"kind":"event","event":{"type":"DataAvailable","id":"csv_evt_6","semantic_kind":"price_bar","payload":{"close":101.09,"high":101.84,"low":101.02,"open":101.73,"symbol":"AAPL","timestamp":"2026-01-02T09:35:00Z","volume":14772.0,"x":101.09}}}

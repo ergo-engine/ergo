@@ -932,10 +932,10 @@ outputs:
 name = "sdk-project"
 version = "0.1.0"
 
-[profiles.backtest]
+[profiles.historical]
 graph = "graphs/strategy.yaml"
-fixture = "fixtures/backtest.jsonl"
-capture_output = "captures/backtest.capture.json"
+fixture = "fixtures/historical.jsonl"
+capture_output = "captures/historical.capture.json"
 "#,
         );
         write_file(
@@ -972,15 +972,15 @@ outputs:
         );
         write_file(
             &root,
-            "fixtures/backtest.jsonl",
+            "fixtures/historical.jsonl",
             "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
         );
 
         let outcome = Ergo::from_project(root.join("graphs"))
             .build()?
-            .run_profile("backtest")?;
+            .run_profile("historical")?;
 
-        let capture = root.join("captures/backtest.capture.json");
+        let capture = root.join("captures/historical.capture.json");
         match outcome {
             RunOutcome::Completed(summary) => {
                 assert_eq!(summary.events, 1);
@@ -1003,10 +1003,10 @@ outputs:
 name = "sdk-project"
 version = "0.1.0"
 
-[profiles.backtest]
+[profiles.historical]
 graph = "graphs/strategy.yaml"
-fixture = "fixtures/backtest.jsonl"
-capture_output = "captures/backtest.capture.json"
+fixture = "fixtures/historical.jsonl"
+capture_output = "captures/historical.capture.json"
 "#,
         );
         write_file(
@@ -1028,16 +1028,16 @@ outputs:
         );
         write_file(
             &root,
-            "fixtures/backtest.jsonl",
+            "fixtures/historical.jsonl",
             "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
         );
 
-        let capture = root.join("captures/backtest.capture.json");
-        let _ = Ergo::from_project(&root).build()?.run_profile("backtest")?;
+        let capture = root.join("captures/historical.capture.json");
+        let _ = Ergo::from_project(&root).build()?.run_profile("historical")?;
 
         let replay = Ergo::from_project(&root)
             .build()?
-            .replay_profile("backtest", &capture)?;
+            .replay_profile("historical", &capture)?;
 
         assert_eq!(replay.graph_id.as_str(), "sdk_replay_graph");
         assert_eq!(replay.events, 1);

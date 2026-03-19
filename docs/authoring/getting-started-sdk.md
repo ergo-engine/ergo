@@ -60,14 +60,14 @@ The generated `README.md` is the first stop after scaffolding. It
 summarizes the project layout, available profiles, and the first files
 to edit.
 
-This default path runs the `backtest` profile from `ergo.toml`:
+This default path runs the `historical` profile from `ergo.toml`:
 
 - graph: `graphs/strategy.yaml`
 - cluster search path: implicit `clusters/`
 - adapter: `adapters/sample.yaml`
-- ingress source: `fixtures/backtest.jsonl`
+- ingress source: `fixtures/historical.jsonl`
 - egress config: `egress/live.toml`
-- capture output: `captures/backtest.capture.json`
+- capture output: `captures/historical.capture.json`
 
 The sample run proves the full SDK path:
 
@@ -106,10 +106,10 @@ Run the scaffold health check:
 cargo run -- doctor
 ```
 
-Replay the generated backtest capture:
+Replay the generated historical capture:
 
 ```text
-cargo run -- replay backtest captures/backtest.capture.json
+cargo run -- replay historical captures/historical.capture.json
 ```
 
 The scaffolded `main.rs` is intentionally small. It shows how to:
@@ -168,7 +168,7 @@ Edit:
 - `egress/live.toml`
 
 The sample project includes both ingress and egress channel programs.
-The backtest profile uses fixture ingress. The live profile uses the
+The historical profile uses fixture ingress. The live profile uses the
 process ingress script plus the same egress routing config.
 
 ## 5. Manifest Split

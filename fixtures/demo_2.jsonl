@@ -1,4 +1,0 @@
-{"kind":"episode_start","id":"E1"}
-{"kind":"event","event":{"type":"Command","payload":{"x":0.0}}}
-{"kind":"episode_start","id":"E2"}
-{"kind":"event","event":{"type":"Command","payload":{"x":5.0}}}

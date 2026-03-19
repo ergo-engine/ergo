@@ -1,6 +1,0 @@
-{"kind":"episode_start","id":"E1"}
-{"kind":"event","event":{"type":"Command"}}
-{"kind":"episode_start","id":"E2"}
-{"kind":"event","event":{"type":"Pump"}}
-{"kind":"episode_start","id":"E3"}
-{"kind":"event","event":{"type":"Command"}}

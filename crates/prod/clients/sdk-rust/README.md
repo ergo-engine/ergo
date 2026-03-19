@@ -32,7 +32,7 @@ use ergo_sdk_rust::{Ergo, IngressConfig, RunConfig};
 let outcome = Ergo::builder()
     .project_root(".")
     .build()?
-    .run_profile("backtest")?;
+    .run_profile("historical")?;
 
 let explicit = Ergo::builder()
     .build()?

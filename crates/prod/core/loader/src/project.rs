@@ -262,28 +262,28 @@ mod tests {
 name = "sdk-project"
 version = "0.1.0"
 
-[profiles.backtest]
+[profiles.historical]
 graph = "graphs/strategy.yaml"
-fixture = "fixtures/backtest.jsonl"
-capture_output = "captures/backtest.capture.json"
+fixture = "fixtures/historical.jsonl"
+capture_output = "captures/historical.capture.json"
 "#,
         );
 
         let project = load_project(&root).expect("load project");
         let resolved = project
-            .resolve_run_profile("backtest")
+            .resolve_run_profile("historical")
             .expect("resolve profile");
 
         assert_eq!(resolved.graph_path, root.join("graphs/strategy.yaml"));
         assert_eq!(resolved.cluster_paths, vec![root.join("clusters")]);
         assert_eq!(
             resolved.capture_output,
-            Some(root.join("captures/backtest.capture.json"))
+            Some(root.join("captures/historical.capture.json"))
         );
         assert_eq!(
             resolved.ingress,
             ResolvedProjectIngress::Fixture {
-                path: root.join("fixtures/backtest.jsonl")
+                path: root.join("fixtures/historical.jsonl")
             }
         );
 

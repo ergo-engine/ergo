@@ -160,9 +160,9 @@ my-project/
 ├── egress/
 │   └── live.toml
 ├── fixtures/
-│   └── backtest.jsonl
+│   └── historical.jsonl
 └── captures/
-    └── backtest.capture.json
+    └── historical.capture.json
 ```
 
 Directory roles:
@@ -223,11 +223,11 @@ Illustrative v1 shape:
 name = "my-project"
 version = "0.1.0"
 
-[profiles.backtest]
+[profiles.historical]
 graph = "graphs/strategy.yaml"
 adapter = "adapters/strategy.yaml"
-fixture = "fixtures/backtest.jsonl"
-capture_output = "captures/backtest.capture.json"
+fixture = "fixtures/historical.jsonl"
+capture_output = "captures/historical.capture.json"
 
 [profiles.live]
 graph = "graphs/strategy.yaml"

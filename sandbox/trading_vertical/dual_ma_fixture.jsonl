@@ -1,7 +1,0 @@
-{"kind":"episode_start","id":"E1"}
-{"kind":"event","event":{"type":"Command","payload":{"x":2.5}}}
-{"kind":"event","event":{"type":"Command","payload":{"x":1.0}}}
-{"kind":"event","event":{"type":"Command","payload":{"x":0.1}}}
-{"kind":"event","event":{"type":"Command","payload":{"x":-0.5}}}
-{"kind":"event","event":{"type":"Command","payload":{"x":-2.0}}}
-{"kind":"event","event":{"type":"Command","payload":{"x":0.8}}}

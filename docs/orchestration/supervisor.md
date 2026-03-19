@@ -222,7 +222,7 @@ need not match exactly.
 |--------|---------------|
 | **Invariant** | All decisions emit to DecisionLog; replay produces identical schedule |
 | **Enforcement** | Mandatory DecisionLog emission; replay harness in CI |
-| **Violation** | Silent divergence between backtest and live |
+| **Violation** | Silent divergence between historical and live |
 
 ### SUP-4: Retries only on mechanical failure
 

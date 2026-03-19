@@ -102,7 +102,7 @@ Without adapter compliance:
 
 - Replay determinism is not guaranteed
 - Source outputs may have different meanings across deployments
-- Backtest/paper/live alignment cannot be assured
+- Historical/paper/live alignment cannot be assured
 
 ---
 

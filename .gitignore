@@ -5,4 +5,5 @@ Cargo.lock
 tools/ergo-mcp/
 tools/ralph/
 /sandbox/
+/fixtures/
 .agents/

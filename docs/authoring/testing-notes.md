@@ -46,7 +46,7 @@ The tested project shape was the standard v1 scaffold:
 The scaffolded SDK-first project is runnable as generated:
 
 - project validates cleanly
-- fixture-backed backtest completes
+- fixture-backed historical runs complete
 - replay of generated capture succeeds
 
 This proves the current v1 stack works across:
