@@ -19,6 +19,9 @@ compatibility validation.
 This is a narrow implementation cleanup. It does not introduce a new
 compatibility policy or alter semver comparison semantics.
 
+Doctrine status: mechanical under existing ADP-3 semantics; no new
+decision required.
+
 ## Current State
 
 Today:

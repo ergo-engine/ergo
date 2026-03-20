@@ -32,6 +32,9 @@ This work covers:
 This branch does not add new ontology, new adapter rules, or new
 replay semantics.
 
+Doctrine status: authorized family extension under the shipped Phase 8
+context-source pattern; no new decision required.
+
 ## Current State
 
 Today:
