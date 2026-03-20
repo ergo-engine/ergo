@@ -32,10 +32,12 @@ pub use replay_error_surface::{
 pub use runner::{HostedAdapterConfig, HostedEvent, HostedRunner, HostedStepOutcome};
 pub use usecases::{
     replay_graph, replay_graph_from_paths, replay_graph_from_paths_with_surfaces, run_fixture,
-    run_graph, run_graph_from_paths, run_graph_from_paths_with_surfaces, scan_adapter_dependencies,
-    validate_adapter_composition, AdapterDependencySummary, DriverConfig, HostReplayError,
-    HostRunError, InterruptedRun, InterruptionReason, ReplayGraphFromPathsRequest,
-    ReplayGraphRequest, ReplayGraphResult, RunFixtureRequest, RunFixtureResult,
+    run_graph, run_graph_from_paths, run_graph_from_paths_with_control,
+    run_graph_from_paths_with_surfaces, run_graph_from_paths_with_surfaces_and_control,
+    run_graph_with_control, scan_adapter_dependencies, validate_adapter_composition,
+    AdapterDependencySummary, DriverConfig, HostReplayError, HostRunError, HostStopHandle,
+    InterruptedRun, InterruptionReason, ReplayGraphFromPathsRequest, ReplayGraphRequest,
+    ReplayGraphResult, RunControl, RunFixtureRequest, RunFixtureResult,
     RunGraphFromPathsRequest, RunGraphRequest, RunGraphResponse, RunOutcome, RunSummary,
     RuntimeSurfaces,
 };

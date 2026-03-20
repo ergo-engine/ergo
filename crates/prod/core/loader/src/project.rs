@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -61,6 +62,10 @@ pub struct ProjectProfile {
     pub capture_output: Option<String>,
     #[serde(default)]
     pub pretty_capture: Option<bool>,
+    #[serde(default, with = "duration_option_serde")]
+    pub max_duration: Option<Duration>,
+    #[serde(default)]
+    pub max_events: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -84,6 +89,8 @@ pub struct ResolvedProjectProfile {
     pub egress_config_path: Option<PathBuf>,
     pub capture_output: Option<PathBuf>,
     pub pretty_capture: bool,
+    pub max_duration: Option<Duration>,
+    pub max_events: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -155,7 +162,61 @@ impl ResolvedProject {
                 .as_ref()
                 .map(|path| self.root.join(path)),
             pretty_capture: profile.pretty_capture.unwrap_or(false),
+            max_duration: profile.max_duration,
+            max_events: profile.max_events,
         })
+    }
+}
+
+mod duration_option_serde {
+    use std::time::Duration;
+
+    use serde::{Deserialize, Deserializer};
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = Option::<String>::deserialize(deserializer)?;
+        raw.map(|value| parse_duration_literal(&value))
+            .transpose()
+            .map_err(serde::de::Error::custom)
+    }
+
+    fn parse_duration_literal(raw: &str) -> Result<Duration, String> {
+        if let Some(value) = raw.strip_suffix("ms") {
+            let millis = value
+                .parse::<u64>()
+                .map_err(|err| format!("invalid duration '{raw}': {err}"))?;
+            return Ok(Duration::from_millis(millis));
+        }
+
+        if let Some(value) = raw.strip_suffix('s') {
+            let secs = value
+                .parse::<u64>()
+                .map_err(|err| format!("invalid duration '{raw}': {err}"))?;
+            return Ok(Duration::from_secs(secs));
+        }
+
+        if let Some(value) = raw.strip_suffix('m') {
+            let mins = value
+                .parse::<u64>()
+                .map_err(|err| format!("invalid duration '{raw}': {err}"))?;
+            return Ok(Duration::from_secs(mins.saturating_mul(60)));
+        }
+
+        if let Some(value) = raw.strip_suffix('h') {
+            let hours = value
+                .parse::<u64>()
+                .map_err(|err| format!("invalid duration '{raw}': {err}"))?;
+            return Ok(Duration::from_secs(
+                hours.saturating_mul(60).saturating_mul(60),
+            ));
+        }
+
+        Err(format!(
+            "unsupported duration '{raw}' (expected suffix ms|s|m|h)"
+        ))
     }
 }
 
@@ -266,6 +327,8 @@ version = "0.1.0"
 graph = "graphs/strategy.yaml"
 fixture = "fixtures/historical.jsonl"
 capture_output = "captures/historical.capture.json"
+max_duration = "15m"
+max_events = 42
 "#,
         );
 
@@ -280,12 +343,37 @@ capture_output = "captures/historical.capture.json"
             resolved.capture_output,
             Some(root.join("captures/historical.capture.json"))
         );
+        assert_eq!(resolved.max_duration, Some(Duration::from_secs(15 * 60)));
+        assert_eq!(resolved.max_events, Some(42));
         assert_eq!(
             resolved.ingress,
             ResolvedProjectIngress::Fixture {
                 path: root.join("fixtures/historical.jsonl")
             }
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_project_rejects_invalid_profile_duration_literal() {
+        let root = make_temp_dir("invalid_duration");
+        write_file(
+            &root,
+            "ergo.toml",
+            r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.historical]
+graph = "graphs/strategy.yaml"
+fixture = "fixtures/historical.jsonl"
+max_duration = "15fortnights"
+"#,
+        );
+
+        let err = load_project(&root).expect_err("invalid duration must fail project load");
+        assert!(matches!(err, ProjectError::ProjectParse { .. }));
 
         let _ = fs::remove_dir_all(root);
     }
