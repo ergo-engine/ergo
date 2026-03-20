@@ -494,11 +494,14 @@ impl HostedRunner {
         Ok(())
     }
 
-    pub fn ensure_no_pending_egress_acks(&self) -> Result<(), HostedStepError> {
-        let Some(egress) = self.egress.as_ref() else {
+    pub fn ensure_no_pending_egress_acks(
+        &mut self,
+        host_stop_requested: bool,
+    ) -> Result<(), HostedStepError> {
+        let Some(egress) = self.egress.as_mut() else {
             return Ok(());
         };
-        egress.assert_no_pending_acks()?;
+        egress.assert_no_pending_acks(host_stop_requested)?;
         Ok(())
     }
 

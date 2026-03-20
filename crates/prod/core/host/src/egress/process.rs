@@ -108,6 +108,27 @@ enum ChannelObservation {
     ReadError(String),
 }
 
+fn configure_host_managed_child(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        command.process_group(0);
+    }
+}
+
+fn kill_host_managed_child(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let _ = unsafe { libc::killpg(child.id() as libc::pid_t, libc::SIGKILL) };
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+}
+
 struct EgressChannelHandle {
     channel_id: String,
     child: Child,
@@ -134,6 +155,7 @@ impl EgressChannelHandle {
         child.stdin(Stdio::piped());
         child.stdout(Stdio::piped());
         child.stderr(Stdio::piped());
+        configure_host_managed_child(&mut child);
         let mut child = child.spawn().map_err(|err| EgressProcessError::Startup {
             channel: channel_id.to_string(),
             detail: format!("spawn {:?}: {err}", command),
@@ -419,7 +441,10 @@ impl EgressChannelHandle {
         Ok(())
     }
 
-    fn assert_no_pending_acks(&self) -> Result<(), EgressProcessError> {
+    fn assert_no_pending_acks(
+        &mut self,
+        host_stop_requested: bool,
+    ) -> Result<(), EgressProcessError> {
         if !self.in_flight_intent_ids.is_empty() {
             return Err(EgressProcessError::PendingAcks {
                 channel: self.channel_id.clone(),
@@ -442,6 +467,9 @@ impl EgressChannelHandle {
                     });
                 }
                 Ok(ChannelObservation::Eof) => {
+                    if host_stop_requested {
+                        return Ok(());
+                    }
                     return Err(EgressProcessError::PendingAcks {
                         channel: self.channel_id.clone(),
                         detail: "stdout reached EOF with no explicit shutdown".to_string(),
@@ -456,6 +484,9 @@ impl EgressChannelHandle {
                     });
                 }
                 Err(TryRecvError::Disconnected) => {
+                    if host_stop_requested && self.child_has_exited() {
+                        return Ok(());
+                    }
                     return Err(EgressProcessError::PendingAcks {
                         channel: self.channel_id.clone(),
                         detail: "stdout reader disconnected unexpectedly".to_string(),
@@ -476,8 +507,12 @@ impl EgressChannelHandle {
         self.force_terminate();
     }
 
+    fn child_has_exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
     fn force_terminate(&mut self) {
-        let _ = self.child.kill();
+        kill_host_managed_child(&mut self.child);
         let _ = self.child.wait();
         let _ = take_stderr(self.stderr_handle.take());
     }
@@ -573,12 +608,15 @@ impl EgressRuntime {
         }
     }
 
-    pub fn assert_no_pending_acks(&self) -> Result<(), EgressProcessError> {
+    pub fn assert_no_pending_acks(
+        &mut self,
+        host_stop_requested: bool,
+    ) -> Result<(), EgressProcessError> {
         if !self.started {
             return Ok(());
         }
-        for handle in self.channels.values() {
-            handle.assert_no_pending_acks()?;
+        for handle in self.channels.values_mut() {
+            handle.assert_no_pending_acks(host_stop_requested)?;
         }
         Ok(())
     }
@@ -704,7 +742,7 @@ fn wait_for_exit(child: &mut Child, timeout: Duration) -> Result<Option<ExitStat
         }
 
         if started.elapsed() >= timeout {
-            let _ = child.kill();
+            kill_host_managed_child(child);
             let _ = child.wait();
             return Ok(None);
         }
@@ -752,6 +790,35 @@ mod tests {
         fs::set_permissions(&path, perms)
             .map_err(|err| format!("chmod script '{}': {err}", path.display()))?;
         Ok(path)
+    }
+
+    fn wait_for_path(path: &Path, timeout: Duration) -> Result<(), String> {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if path.exists() {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        Err(format!("timed out waiting for '{}'", path.display()))
+    }
+
+    fn current_process_group_id() -> Result<u32, String> {
+        let output = Command::new("ps")
+            .args(["-o", "pgid=", "-p", &std::process::id().to_string()])
+            .output()
+            .map_err(|err| format!("run ps for parent pgid: {err}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "run ps for parent pgid exited with status {}",
+                output.status
+            ));
+        }
+        let raw = String::from_utf8(output.stdout)
+            .map_err(|err| format!("decode parent pgid output: {err}"))?;
+        raw.trim()
+            .parse::<u32>()
+            .map_err(|err| format!("parse parent pgid '{}': {err}", raw.trim()))
     }
 
     fn config_for_script(script: &Path, ack_timeout: Duration) -> EgressConfig {
@@ -1038,7 +1105,7 @@ done
             .expect_err("quiesced runtime should reject further dispatch");
         assert!(matches!(second, EgressProcessError::Startup { .. }));
         assert!(
-            runtime.assert_no_pending_acks().is_ok(),
+            runtime.assert_no_pending_acks(false).is_ok(),
             "quiesced runtime should not expose pending ack state"
         );
         let _ = fs::remove_dir_all(dir);
@@ -1071,13 +1138,108 @@ done
             .map_err(|err| format!("dispatch: {err}"))?;
 
         let err = runtime
-            .assert_no_pending_acks()
+            .assert_no_pending_acks(false)
             .expect_err("buffered stdout frame must fail pending-ack invariant");
         assert!(matches!(err, EgressProcessError::PendingAcks { .. }));
 
         runtime
             .shutdown_channels()
             .map_err(|err| format!("shutdown channels: {err}"))?;
+        let _ = fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn host_managed_egress_channel_uses_separate_process_group() -> Result<(), String> {
+        let dir = temp_dir("pgid-isolation")?;
+        let pgid_path = dir.join("egress.pgid");
+        let script = write_script(
+            &dir,
+            "egress.sh",
+            &format!(
+                r#"#!/bin/sh
+pgid_path='{pgid_path}'
+ps -o pgid= -p $$ | tr -d ' ' > "$pgid_path"
+printf '%s\n' '{{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}}'
+while IFS= read -r line; do
+  echo "$line" | grep -q '"type":"end"' && exit 0
+done
+"#,
+                pgid_path = pgid_path.display()
+            ),
+        )?;
+
+        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
+        runtime
+            .start_channels()
+            .map_err(|err| format!("start channels: {err}"))?;
+        wait_for_path(&pgid_path, Duration::from_secs(1))?;
+
+        let parent_pgid = current_process_group_id()?;
+        let child_pgid = fs::read_to_string(&pgid_path)
+            .map_err(|err| format!("read child pgid '{}': {err}", pgid_path.display()))?
+            .trim()
+            .parse::<u32>()
+            .map_err(|err| format!("parse child pgid '{}': {err}", pgid_path.display()))?;
+        assert_ne!(
+            child_pgid, parent_pgid,
+            "egress child should run in its own process group"
+        );
+
+        runtime
+            .shutdown_channels()
+            .map_err(|err| format!("shutdown channels: {err}"))?;
+        let _ = fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn host_stop_pending_ack_check_tolerates_eof_after_child_exit() -> Result<(), String> {
+        let dir = temp_dir("host-stop-eof")?;
+        let script = write_script(
+            &dir,
+            "egress.sh",
+            r#"#!/bin/sh
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
+while IFS= read -r line; do
+  echo "$line" | grep -q '"type":"end"' && exit 0
+  id=$(printf '%s\n' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
+  printf '{"type":"intent_ack","intent_id":"%s","status":"accepted","acceptance":"durable"}\n' "$id"
+  exit 0
+done
+"#,
+        )?;
+
+        let mut strict_runtime =
+            EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
+        strict_runtime
+            .start_channels()
+            .map_err(|err| format!("start strict runtime: {err}"))?;
+        strict_runtime
+            .dispatch_intent(&sample_intent("eid1:sha256:strict"))
+            .map_err(|err| format!("dispatch strict intent: {err}"))?;
+        thread::sleep(Duration::from_millis(20));
+        let err = strict_runtime
+            .assert_no_pending_acks(false)
+            .expect_err("normal completion should still reject child EOF");
+        assert!(matches!(err, EgressProcessError::PendingAcks { .. }));
+
+        let mut stop_runtime =
+            EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
+        stop_runtime
+            .start_channels()
+            .map_err(|err| format!("start stop runtime: {err}"))?;
+        stop_runtime
+            .dispatch_intent(&sample_intent("eid1:sha256:stop"))
+            .map_err(|err| format!("dispatch stop intent: {err}"))?;
+        thread::sleep(Duration::from_millis(20));
+        stop_runtime
+            .assert_no_pending_acks(true)
+            .map_err(|err| format!("host-stop pending-ack check: {err}"))?;
+        stop_runtime
+            .shutdown_channels()
+            .map_err(|err| format!("shutdown stop runtime: {err}"))?;
+
         let _ = fs::remove_dir_all(dir);
         Ok(())
     }

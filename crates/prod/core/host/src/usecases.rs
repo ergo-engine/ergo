@@ -1034,10 +1034,12 @@ fn run_graph_with_policy(
                 execution.runner,
                 execution.event_count,
                 execution.episode_event_counts,
+                false,
             )?;
             Ok(RunOutcome::Completed(summary))
         }
         DriverTerminal::Interrupted(reason) => {
+            let host_stop_requested = matches!(reason, InterruptionReason::HostStopRequested);
             let summary = finalize_run_summary(
                 &graph_path,
                 capture_output,
@@ -1045,6 +1047,7 @@ fn run_graph_with_policy(
                 execution.runner,
                 execution.event_count,
                 execution.episode_event_counts,
+                host_stop_requested,
             )?;
             Ok(RunOutcome::Interrupted(InterruptedRun { summary, reason }))
         }
@@ -1327,6 +1330,16 @@ fn run_process_driver(
                 continue;
             }
             Err(ProcessDriverReceiveFailure::Disconnected) => {
+                if lifecycle.should_stop(committed_event_count) {
+                    return process_driver_host_stop_execution(
+                        &mut child,
+                        &mut stderr_handle,
+                        runner,
+                        event_counter,
+                        committed_event_count,
+                        episodes,
+                    );
+                }
                 let detail = abort_process_child(&mut child, stderr_handle.take());
                 return Err(if detail.is_empty() {
                     HostRunError::DriverIo(format!(
@@ -1364,6 +1377,16 @@ fn run_process_driver(
                 }
             }
             ProcessDriverStreamObservation::Eof => {
+                if lifecycle.should_stop(committed_event_count) {
+                    return process_driver_host_stop_execution(
+                        &mut child,
+                        &mut stderr_handle,
+                        runner,
+                        event_counter,
+                        committed_event_count,
+                        episodes,
+                    );
+                }
                 let exit_status =
                     wait_for_child_exit(&mut child, process_policy).map_err(|err| {
                         let detail = abort_process_child(&mut child, stderr_handle.take());
@@ -1412,6 +1435,16 @@ fn run_process_driver(
                 });
             }
             ProcessDriverStreamObservation::ReadError(failure) => {
+                if lifecycle.should_stop(committed_event_count) {
+                    return process_driver_host_stop_execution(
+                        &mut child,
+                        &mut stderr_handle,
+                        runner,
+                        event_counter,
+                        committed_event_count,
+                        episodes,
+                    );
+                }
                 let extra = abort_process_child(&mut child, stderr_handle.take());
                 match failure {
                     ProcessDriverReadFailure::InvalidEncoding(detail) => {
@@ -1569,6 +1602,7 @@ fn spawn_process_driver(command: &[String]) -> Result<Child, HostRunError> {
     child.stdin(Stdio::null());
     child.stdout(Stdio::piped());
     child.stderr(Stdio::piped());
+    configure_host_managed_child(&mut child);
     child.spawn().map_err(|err| {
         HostRunError::DriverStart(format!("spawn process driver {:?}: {err}", command))
     })
@@ -1629,8 +1663,29 @@ fn recv_process_stream_observation(
     }
 }
 
+fn configure_host_managed_child(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        command.process_group(0);
+    }
+}
+
+fn kill_host_managed_child(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let _ = unsafe { libc::killpg(child.id() as libc::pid_t, libc::SIGKILL) };
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+}
+
 fn abort_process_child(child: &mut Child, stderr_handle: Option<JoinHandle<String>>) -> String {
-    let _ = child.kill();
+    kill_host_managed_child(child);
     let _ = child.wait();
     take_process_stderr(stderr_handle)
 }
@@ -1783,6 +1838,7 @@ fn finalize_run_summary(
     mut runner: HostedRunner,
     event_count: usize,
     episode_event_counts: Vec<(String, usize)>,
+    host_stop_requested: bool,
 ) -> Result<RunSummary, HostRunError> {
     if episode_event_counts.is_empty() {
         return Err(HostRunError::InvalidInput(
@@ -1802,7 +1858,7 @@ fn finalize_run_summary(
     }
 
     runner
-        .ensure_no_pending_egress_acks()
+        .ensure_no_pending_egress_acks(host_stop_requested)
         .map_err(|err| HostRunError::StepFailed(format!("egress pending-ack invariant: {err}")))?;
 
     // Freeze egress lifecycle before capture finalization so late channel activity
@@ -2396,6 +2452,37 @@ done
             termination_grace: Duration::from_millis(50),
             poll_interval: Duration::from_millis(5),
             event_recv_timeout: Duration::from_millis(10),
+        }
+    }
+
+    fn wait_for_path(path: &Path, timeout: Duration) -> Result<(), Box<dyn std::error::Error>> {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if path.exists() {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        Err(format!("timed out waiting for '{}'", path.display()).into())
+    }
+
+    fn current_process_group_id() -> Result<u32, Box<dyn std::error::Error>> {
+        let output = Command::new("ps")
+            .args(["-o", "pgid=", "-p", &std::process::id().to_string()])
+            .output()?;
+        if !output.status.success() {
+            return Err(format!("run ps for parent pgid exited with {}", output.status).into());
+        }
+        let raw = String::from_utf8(output.stdout)?;
+        Ok(raw.trim().parse::<u32>()?)
+    }
+
+    fn send_sigint_to_process_group(pgid: u32) -> Result<(), Box<dyn std::error::Error>> {
+        let rc = unsafe { libc::killpg(pgid as libc::pid_t, libc::SIGINT) };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error().into())
         }
     }
 
@@ -3993,8 +4080,9 @@ outputs:
   value_out: src.value
 "#,
         )?;
+        let total_events = 4096;
         let mut fixture = String::from("{\"kind\":\"episode_start\",\"id\":\"E1\"}\n");
-        for _ in 0..128 {
+        for _ in 0..total_events {
             fixture.push_str("{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n");
         }
         let fixture = write_temp_file(&temp_dir, "fixture.jsonl", &fixture)?;
@@ -4041,7 +4129,7 @@ outputs:
             interrupted.summary.events
         );
         assert!(
-            interrupted.summary.events < 128,
+            interrupted.summary.events < total_events,
             "external stop should interrupt before exhausting the fixture"
         );
         assert!(capture.exists());
@@ -4112,6 +4200,155 @@ outputs:
             "host stop finalization must send the egress end sentinel"
         );
         assert_eq!(fs::read_to_string(&sentinel)?.trim(), "saw_end");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn process_driver_runs_in_separate_process_group() -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-process-pgid-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let pgid_path = temp_dir.join("driver.pgid");
+        let driver = write_process_driver_program(
+            &temp_dir,
+            "driver.sh",
+            &format!(
+                "#!/bin/sh\nps -o pgid= -p $$ | tr -d ' ' > '{}'\nexec sleep 5\n",
+                pgid_path.display()
+            ),
+        )?;
+
+        let mut child =
+            spawn_process_driver(&["/bin/sh".to_string(), driver.display().to_string()])?;
+        wait_for_path(&pgid_path, Duration::from_secs(1))?;
+
+        let parent_pgid = current_process_group_id()?;
+        let child_pgid = fs::read_to_string(&pgid_path)?.trim().parse::<u32>()?;
+        assert_ne!(
+            child_pgid, parent_pgid,
+            "process driver should not share the test process group"
+        );
+
+        kill_host_managed_child(&mut child);
+        let _ = child.wait();
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn process_driver_signal_race_after_stop_still_returns_host_stop_requested(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-process-stop-signal-race-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_process_stop_signal_race
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+        let capture = temp_dir.join("capture.json");
+        let pid_path = temp_dir.join("driver.pid");
+        let emitted_path = temp_dir.join("driver.emitted");
+        let hello = serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?;
+        let event = serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?;
+        let driver = write_process_driver_program(
+            &temp_dir,
+            "driver.sh",
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' $$ > '{pid}'\nprintf '%s\\n' '{hello}'\nprintf '%s\\n' '{event}'\nprintf '%s\\n' 'emitted' > '{emitted}'\nexec sleep 5\n",
+                pid = pid_path.display(),
+                hello = hello,
+                event = event,
+                emitted = emitted_path.display()
+            ),
+        )?;
+
+        let stop = HostStopHandle::new();
+        let stop_clone = stop.clone();
+        let pid_path_clone = pid_path.clone();
+        let emitted_path_clone = emitted_path.clone();
+        let stopper = thread::spawn(move || -> Result<(), String> {
+            wait_for_path(&pid_path_clone, Duration::from_secs(1)).map_err(|err| err.to_string())?;
+            wait_for_path(&emitted_path_clone, Duration::from_secs(1))
+                .map_err(|err| err.to_string())?;
+            thread::sleep(Duration::from_millis(50));
+            stop_clone.request_stop();
+            let pgid = fs::read_to_string(&pid_path_clone)
+                .map_err(|err| format!("read driver pid '{}': {err}", pid_path_clone.display()))?
+                .trim()
+                .parse::<u32>()
+                .map_err(|err| format!("parse driver pid '{}': {err}", pid_path_clone.display()))?;
+            send_sigint_to_process_group(pgid)
+                .map_err(|err| format!("send SIGINT to process driver group: {err}"))?;
+            Ok(())
+        });
+
+        let outcome = run_graph_from_paths_with_process_policy_and_control(
+            RunGraphFromPathsRequest {
+                graph_path: graph.clone(),
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Process {
+                    command: vec!["/bin/sh".to_string(), driver.display().to_string()],
+                },
+                adapter_path: None,
+                egress_config: None,
+                capture_output: Some(capture.clone()),
+                pretty_capture: false,
+            },
+            ProcessDriverPolicy {
+                event_recv_timeout: Duration::from_millis(200),
+                ..short_test_process_driver_policy()
+            },
+            RunControl::new().with_stop_handle(stop),
+        )?;
+        stopper
+            .join()
+            .expect("stopper thread must join")
+            .map_err(|err| err.to_string())?;
+
+        let interrupted = match outcome {
+            RunOutcome::Interrupted(interrupted) => interrupted,
+            RunOutcome::Completed(_) => {
+                return Err("signal race after host stop must interrupt".into())
+            }
+        };
+        assert_eq!(interrupted.reason, InterruptionReason::HostStopRequested);
+        assert_eq!(interrupted.summary.events, 1);
+        assert!(capture.exists());
+
+        let replay = replay_graph_from_paths(ReplayGraphFromPathsRequest {
+            capture_path: capture,
+            graph_path: graph,
+            cluster_paths: Vec::new(),
+            adapter_path: None,
+        })?;
+        assert_eq!(replay.graph_id.as_str(), "host_process_stop_signal_race");
+        assert_eq!(replay.events, 1);
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
