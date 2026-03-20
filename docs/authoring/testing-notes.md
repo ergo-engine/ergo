@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-17
+Last Updated: 2026-03-19
 Owner: Sebastian (Architect)
 Scope: Practical testing notes for SDK-first Ergo projects
 Change Rule: Tracks implementation
@@ -26,7 +26,7 @@ The following path has been exercised in a scaffolded SDK-first project:
 - `cargo run -- replay ...`
 - real process ingress
 - real process egress
-- capture writing for completed runs
+- capture writing for completed and graceful interrupted runs
 - strict replay of generated captures
 
 The tested project shape was the standard v1 scaffold:
@@ -103,25 +103,18 @@ the practice environment without:
 That proves the current live streaming path is operational for a real
 SDK-built project.
 
+### Graceful stop path
+
+The scaffolded SDK-first project now installs `Ctrl-C` handling through
+`StopHandle` and runs profiles through `run_profile_with_stop(...)`.
+
+That proves the current app/SDK/host path can:
+
+- stop a long-running profile cleanly
+- finalize the run instead of hard-killing it
+- write a replayable capture when at least one event was committed
+
 ## 3. Current Product Limitations
-
-### Manual interrupt does not flush a capture
-
-If a long-running live profile is stopped with `Ctrl-C`, the process is
-terminated before the host reaches its normal finalize-and-write-capture
-path.
-
-That means:
-
-- completed runs write captures
-- replayable interrupted runs produced by host-managed runtime failures
-  write captures
-- manually interrupted live runs do not currently write a final
-  `capture_output` artifact
-
-This is a current CLI/SDK/app-surface limitation, not an engine
-correctness failure. The host finalization path itself is present for
-normal completion and host-managed interruption.
 
 ### Sample live channels are still simple examples
 
@@ -184,21 +177,12 @@ If a sample channel advertises the wrong handled kind, startup fails
 before the run begins. That is correct behavior, but it is an easy
 integration snag while evolving a sample strategy into a real one.
 
-### Manual live interrupt does not yet flush capture output
-
-Long-running live runs stopped with `Ctrl-C` do not currently write a
-final capture artifact. The host finalization path exists, but there is
-not yet a graceful interrupt path in the app/CLI/SDK surface to stop
-ingress, finalize the run, and then write capture output.
-
 ### Current SDK/project ergonomics still have a few rough edges
 
 - Outside the Ergo checkout, `ergo init` still needs `--sdk-path`
   until `ergo-sdk-rust` is published.
 - Scaffolded live sample channels assume `python3` is available.
 - The built `Ergo` handle is currently one-shot.
-- There is no built-in timed live run mode yet; smoke tests need an
-  external wrapper or manual stop.
 
 ## 6. Related Docs
 

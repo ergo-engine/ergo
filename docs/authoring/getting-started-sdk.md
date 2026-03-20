@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-16
+Last Updated: 2026-03-19
 Owner: Sebastian (Architect)
 Scope: Getting started workflow for SDK-first Ergo projects
 Change Rule: Tracks implementation
@@ -60,6 +60,9 @@ The generated `README.md` is the first stop after scaffolding. It
 summarizes the project layout, available profiles, and the first files
 to edit.
 
+The scaffolded `run` command also installs a `Ctrl-C` handler through
+`StopHandle`.
+
 This default path runs the `historical` profile from `ergo.toml`:
 
 - graph: `graphs/strategy.yaml`
@@ -85,6 +88,14 @@ Current sample boundary programs are Python 3 examples:
 
 Make sure `python3` is available on your machine before using the live
 profile or the scaffolded `doctor` command.
+
+For long-running profiles such as `live`, `Ctrl-C` requests a graceful
+host stop instead of hard-killing the process. That lets the run
+finalize cleanly and still write its capture artifact.
+
+Existing apps only get that behavior when they wire `StopHandle` and
+call `run_profile_with_stop(...)`. `run_profile()` remains the raw
+blocking API when you do not want the scaffolded stop-aware path.
 
 ## 3. Validate and Replay
 
