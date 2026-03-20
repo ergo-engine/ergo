@@ -356,7 +356,7 @@ cargo run -- replay historical captures/historical.capture.json
 - `historical`
   fixture-backed sample profile that writes `captures/historical.capture.json`
 - `live`
-  process-ingress sample profile that uses the Python 3 example channel scripts
+  process-ingress sample profile that uses the Python 3 example channel scripts and finalizes cleanly on Ctrl-C
 
 ## First Files To Edit
 
@@ -370,6 +370,7 @@ cargo run -- replay historical captures/historical.capture.json
 ## Notes
 
 - The scaffolded sample channels use `python3`.
+- The `run` command installs a Ctrl-C handler so long-running profiles can stop cleanly and still write capture artifacts.
 - The built `Ergo` handle is currently one-shot; the sample `main.rs` builds a fresh handle per command.
 - Use `cargo run -- doctor` after your first edits if you want a quick project health check.
 "#,
@@ -389,6 +390,7 @@ edition = "2021"
 # This scaffold points at a local ergo-sdk-rust checkout until the SDK
 # is published outside the repository.
 ergo-sdk-rust = {{ path = "{sdk_dependency_path}" }}
+ctrlc = "3.4"
 
 [workspace]
 "#,
@@ -428,7 +430,7 @@ fn main_rs_contents() -> String {
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use ergo_sdk_rust::{Ergo, ProjectSummary};
+use ergo_sdk_rust::{Ergo, ProjectSummary, StopHandle};
 
 mod implementations;
 
@@ -448,7 +450,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     match command {
         "run" => {
             let profile = args.get(1).map(String::as_str).unwrap_or("historical");
-            let outcome = build_ergo()?.run_profile(profile)?;
+            let stop = StopHandle::new();
+            let stop_clone = stop.clone();
+            ctrlc::set_handler(move || stop_clone.stop())?;
+            let outcome = build_ergo()?.run_profile_with_stop(profile, stop)?;
             println!("run profile '{profile}': {outcome:?}");
             Ok(())
         }
@@ -1228,11 +1233,14 @@ mod tests {
             cargo_toml.contains(&format!("path = \"{expected_sdk_path}\"")),
             "expected repo-relative sdk path, got:\n{cargo_toml}"
         );
+        assert!(cargo_toml.contains("ctrlc = \"3.4\""));
 
         let main_rs = fs::read_to_string(project_root.join("src/main.rs"))
             .map_err(|err| format!("read main.rs: {err}"))?;
         assert!(main_rs.contains("Ergo::from_project"));
-        assert!(main_rs.contains("run_profile"));
+        assert!(main_rs.contains("StopHandle"));
+        assert!(main_rs.contains("run_profile_with_stop"));
+        assert!(main_rs.contains("ctrlc::set_handler"));
         assert!(main_rs.contains("\"profiles\""));
 
         let graph_yaml = fs::read_to_string(project_root.join("graphs/strategy.yaml"))
@@ -1243,6 +1251,7 @@ mod tests {
             .map_err(|err| format!("read README.md: {err}"))?;
         assert!(readme.contains("cargo run -- profiles"));
         assert!(readme.contains("src/implementations/actions.rs"));
+        assert!(readme.contains("Ctrl-C"));
 
         let _ = fs::remove_dir_all(root);
         Ok(())

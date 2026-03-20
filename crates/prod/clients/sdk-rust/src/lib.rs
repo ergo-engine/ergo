@@ -7,15 +7,16 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use ergo_adapter::host::ensure_handler_coverage;
 use ergo_adapter::{validate_adapter, AdapterManifest, AdapterProvides};
 use ergo_host::{
     parse_egress_config_toml, replay_graph_from_paths_with_surfaces,
-    run_graph_from_paths_with_surfaces, scan_adapter_dependencies, validate_adapter_composition,
-    validate_egress_config, DriverConfig, EgressConfig, HostReplayError, HostRunError,
-    ReplayGraphFromPathsRequest, ReplayGraphResult, RunGraphFromPathsRequest, RunOutcome,
-    RuntimeSurfaces,
+    run_graph_from_paths_with_surfaces_and_control, scan_adapter_dependencies,
+    validate_adapter_composition, validate_egress_config, DriverConfig, EgressConfig,
+    HostReplayError, HostRunError, HostStopHandle, ReplayGraphFromPathsRequest,
+    ReplayGraphResult, RunControl, RunGraphFromPathsRequest, RunOutcome, RuntimeSurfaces,
 };
 use ergo_loader::{
     load_project, parse_graph_file, ProjectError as LoaderProjectError, ResolvedProject,
@@ -36,6 +37,27 @@ pub use ergo_host::{
 pub use ergo_runtime::catalog::{build_core, build_core_catalog, core_registries};
 pub use ergo_runtime::runtime::ExecutionContext;
 pub use ergo_runtime::{action, common, compute, source, trigger};
+
+#[derive(Debug, Clone, Default)]
+pub struct StopHandle {
+    handle: HostStopHandle,
+}
+
+impl StopHandle {
+    pub fn new() -> Self {
+        Self {
+            handle: HostStopHandle::new(),
+        }
+    }
+
+    pub fn stop(&self) {
+        self.handle.request_stop();
+    }
+
+    fn host_handle(&self) -> HostStopHandle {
+        self.handle.clone()
+    }
+}
 
 #[derive(Debug)]
 pub enum ErgoBuildError {
@@ -193,6 +215,8 @@ pub struct RunConfig {
     egress_config_path: Option<PathBuf>,
     capture_output: Option<PathBuf>,
     pretty_capture: bool,
+    max_duration: Option<Duration>,
+    max_events: Option<u64>,
 }
 
 impl RunConfig {
@@ -205,6 +229,8 @@ impl RunConfig {
             egress_config_path: None,
             capture_output: None,
             pretty_capture: false,
+            max_duration: None,
+            max_events: None,
         }
     }
 
@@ -230,6 +256,16 @@ impl RunConfig {
 
     pub fn pretty_capture(mut self, enabled: bool) -> Self {
         self.pretty_capture = enabled;
+        self
+    }
+
+    pub fn max_duration(mut self, max_duration: Duration) -> Self {
+        self.max_duration = Some(max_duration);
+        self
+    }
+
+    pub fn max_events(mut self, max_events: u64) -> Self {
+        self.max_events = Some(max_events);
         self
     }
 }
@@ -365,26 +401,65 @@ impl Ergo {
     }
 
     pub fn run(self, config: RunConfig) -> Result<RunOutcome, ErgoRunError> {
+        self.run_with_control(config, RunControl::default())
+    }
+
+    pub fn run_with_stop(
+        self,
+        config: RunConfig,
+        stop: StopHandle,
+    ) -> Result<RunOutcome, ErgoRunError> {
+        self.run_with_control(
+            config,
+            RunControl::new().with_stop_handle(stop.host_handle()),
+        )
+    }
+
+    fn run_with_control(
+        self,
+        config: RunConfig,
+        control: RunControl,
+    ) -> Result<RunOutcome, ErgoRunError> {
         let request = run_request_from_config(&config)
             .map_err(|detail| ProjectError::ConfigInvalid {
                 detail: format!("explicit run configuration is invalid: {detail}"),
             })
             .map_err(ErgoRunError::Project)?;
 
-        run_graph_from_paths_with_surfaces(
+        run_graph_from_paths_with_surfaces_and_control(
             request,
             RuntimeSurfaces::new(self.registries, self.catalog),
+            run_control_from_config(&config, control),
         )
         .map_err(ErgoRunError::Host)
     }
 
     pub fn run_profile(self, profile_name: &str) -> Result<RunOutcome, ErgoRunError> {
+        self.run_profile_with_control(profile_name, RunControl::default())
+    }
+
+    pub fn run_profile_with_stop(
+        self,
+        profile_name: &str,
+        stop: StopHandle,
+    ) -> Result<RunOutcome, ErgoRunError> {
+        self.run_profile_with_control(
+            profile_name,
+            RunControl::new().with_stop_handle(stop.host_handle()),
+        )
+    }
+
+    fn run_profile_with_control(
+        self,
+        profile_name: &str,
+        control: RunControl,
+    ) -> Result<RunOutcome, ErgoRunError> {
         let project = self.load_project().map_err(ErgoRunError::Project)?;
         let resolved = project
             .resolve_run_profile(profile_name)
             .map_err(ProjectError::from)
             .map_err(ErgoRunError::Project)?;
-        self.run(run_config_from_resolved_profile(resolved))
+        self.run_with_control(run_config_from_resolved_profile(resolved), control)
     }
 
     pub fn replay(self, config: ReplayConfig) -> Result<ReplayGraphResult, ErgoReplayError> {
@@ -457,6 +532,8 @@ fn run_config_from_resolved_profile(profile: ResolvedProjectProfile) -> RunConfi
         egress_config_path: profile.egress_config_path,
         capture_output: profile.capture_output,
         pretty_capture: profile.pretty_capture,
+        max_duration: profile.max_duration,
+        max_events: profile.max_events,
     }
 }
 
@@ -554,6 +631,20 @@ fn run_request_from_config(config: &RunConfig) -> Result<RunGraphFromPathsReques
         capture_output: config.capture_output.clone(),
         pretty_capture: config.pretty_capture,
     })
+}
+
+fn run_control_from_config(config: &RunConfig, control: RunControl) -> RunControl {
+    let control = if let Some(max_duration) = config.max_duration {
+        control.max_duration(max_duration)
+    } else {
+        control
+    };
+
+    if let Some(max_events) = config.max_events {
+        control.max_events(max_events)
+    } else {
+        control
+    }
 }
 
 fn ingress_to_driver(ingress: &IngressConfig) -> Result<DriverConfig, String> {
@@ -770,7 +861,8 @@ mod tests {
         SourceRequires, StateSpec as SourceStateSpec,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -960,6 +1052,77 @@ outputs:
     }
 
     #[test]
+    fn run_with_stop_can_request_zero_event_host_stop() -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("explicit_stop");
+        let graph = write_file(
+            &root,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: sdk_explicit_stop
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 3.0
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        );
+        let hello = serde_json::to_string(&serde_json::json!({
+            "type":"hello",
+            "protocol":"ergo-driver.v0"
+        }))?;
+        let driver = write_file(
+            &root,
+            "driver.sh",
+            &format!("#!/bin/sh\nprintf '%s\\n' '{hello}'\nexec sleep 5\n"),
+        );
+        let capture = root.join("capture.json");
+        let stop = StopHandle::new();
+        let stop_clone = stop.clone();
+        let stopper = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(20));
+            stop_clone.stop();
+        });
+
+        let err = Ergo::builder()
+            .build()?
+            .run_with_stop(
+                RunConfig::new(
+                    graph,
+                    IngressConfig::process([
+                        "/bin/sh".to_string(),
+                        driver.display().to_string(),
+                    ]),
+                )
+                .capture_output(&capture),
+                stop,
+            )
+            .expect_err("zero-event host stop should surface an SDK error");
+
+        stopper.join().expect("stopper thread must join");
+        match err {
+            ErgoRunError::Host(HostRunError::StepFailed(message)) => {
+                assert!(
+                    message.contains("host stop requested before first committed event"),
+                    "unexpected error message: {message}"
+                );
+            }
+            other => panic!("expected host stop StepFailed error, got {other:?}"),
+        }
+        assert!(
+            !capture.exists(),
+            "zero-event stop must not write a capture artifact"
+        );
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
     fn run_profile_discovers_project_and_clusters() -> Result<(), Box<dyn std::error::Error>> {
         let root = make_temp_dir("project_run");
         write_file(
@@ -1024,6 +1187,65 @@ outputs:
                 assert_eq!(summary.capture_path, capture);
             }
             other => panic!("expected completed run, got {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn run_profile_with_stop_honors_profile_max_events() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = make_temp_dir("project_profile_bounds");
+        write_file(
+            &root,
+            "ergo.toml",
+            r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.historical]
+graph = "graphs/strategy.yaml"
+fixture = "fixtures/historical.jsonl"
+capture_output = "captures/historical.capture.json"
+max_events = 1
+"#,
+        );
+        write_file(
+            &root,
+            "graphs/strategy.yaml",
+            r#"
+kind: cluster
+id: sdk_profile_bounds
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 3.0
+edges: []
+outputs:
+  result: src.value
+"#,
+        );
+        write_file(
+            &root,
+            "fixtures/historical.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+
+        let outcome = Ergo::from_project(&root)
+            .build()?
+            .run_profile_with_stop("historical", StopHandle::new())?;
+
+        let capture = root.join("captures/historical.capture.json");
+        match outcome {
+            RunOutcome::Interrupted(interrupted) => {
+                assert_eq!(interrupted.reason, InterruptionReason::HostStopRequested);
+                assert_eq!(interrupted.summary.events, 1);
+                assert_eq!(interrupted.summary.capture_path, capture);
+            }
+            other => panic!("expected interrupted host-stop outcome, got {other:?}"),
         }
 
         let _ = fs::remove_dir_all(root);

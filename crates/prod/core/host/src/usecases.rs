@@ -23,6 +23,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -288,6 +289,7 @@ pub enum DriverConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InterruptionReason {
+    HostStopRequested,
     DriverTerminated,
     ProtocolViolation,
     DriverIo,
@@ -299,6 +301,7 @@ pub enum InterruptionReason {
 impl InterruptionReason {
     pub fn code(&self) -> &'static str {
         match self {
+            Self::HostStopRequested => "host_stop_requested",
             Self::DriverTerminated => "driver_terminated",
             Self::ProtocolViolation => "protocol_violation",
             Self::DriverIo => "driver_io",
@@ -324,6 +327,61 @@ fn interruption_from_egress_dispatch_failure(failure: EgressDispatchFailure) -> 
             InterruptionReason::EgressProtocolViolation { channel }
         }
         EgressDispatchFailure::Io { channel, .. } => InterruptionReason::EgressIo { channel },
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HostStopHandle {
+    flag: Arc<AtomicBool>,
+}
+
+impl HostStopHandle {
+    pub fn new() -> Self {
+        Self {
+            flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn request_stop(&self) {
+        self.flag.store(true, Ordering::Release);
+    }
+
+    fn is_requested(&self) -> bool {
+        self.flag.load(Ordering::Acquire)
+    }
+}
+
+impl Default for HostStopHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RunControl {
+    stop: HostStopHandle,
+    max_duration: Option<Duration>,
+    max_events: Option<u64>,
+}
+
+impl RunControl {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_stop_handle(mut self, stop: HostStopHandle) -> Self {
+        self.stop = stop;
+        self
+    }
+
+    pub fn max_duration(mut self, max_duration: Duration) -> Self {
+        self.max_duration = Some(max_duration);
+        self
+    }
+
+    pub fn max_events(mut self, max_events: u64) -> Self {
+        self.max_events = Some(max_events);
+        self
     }
 }
 
@@ -518,12 +576,14 @@ struct ProcessDriverPolicy {
     startup_grace: Duration,
     termination_grace: Duration,
     poll_interval: Duration,
+    event_recv_timeout: Duration,
 }
 
 const DEFAULT_PROCESS_DRIVER_POLICY: ProcessDriverPolicy = ProcessDriverPolicy {
     startup_grace: Duration::from_secs(5),
     termination_grace: Duration::from_secs(5),
     poll_interval: Duration::from_millis(10),
+    event_recv_timeout: Duration::from_millis(100),
 };
 
 #[derive(Debug)]
@@ -637,6 +697,42 @@ fn host_replay_setup_error(message: impl Into<String>) -> HostReplayError {
     HostReplayError::Setup(message.into())
 }
 
+struct RunLifecycleState {
+    control: RunControl,
+    started_at: Instant,
+}
+
+impl RunLifecycleState {
+    fn new(control: RunControl) -> Self {
+        Self {
+            control,
+            started_at: Instant::now(),
+        }
+    }
+
+    fn should_stop(&self, committed_event_count: usize) -> bool {
+        if self.control.stop.is_requested() {
+            return true;
+        }
+
+        let duration_reached = self
+            .control
+            .max_duration
+            .is_some_and(|max_duration| self.started_at.elapsed() >= max_duration);
+        let max_events_reached = self
+            .control
+            .max_events
+            .is_some_and(|max_events| committed_event_count as u64 >= max_events);
+
+        if duration_reached || max_events_reached {
+            self.control.stop.request_stop();
+            return true;
+        }
+
+        false
+    }
+}
+
 fn captured_external_effect_kinds(bundle: &CaptureBundle) -> HashSet<String> {
     bundle
         .decisions
@@ -666,7 +762,21 @@ fn replay_owned_external_kinds(
 // Allow non-Send/Sync in Arc: CoreRegistries and CorePrimitiveCatalog contain non-Send/Sync types.
 #[allow(clippy::arc_with_non_send_sync)]
 pub fn run_graph_from_paths(request: RunGraphFromPathsRequest) -> RunGraphResponse {
-    run_graph_from_paths_internal(request, None, DEFAULT_PROCESS_DRIVER_POLICY)
+    run_graph_from_paths_internal(
+        request,
+        None,
+        DEFAULT_PROCESS_DRIVER_POLICY,
+        RunControl::default(),
+    )
+}
+
+/// Canonical run API with host stop control and bounded-run limits.
+#[allow(clippy::arc_with_non_send_sync)]
+pub fn run_graph_from_paths_with_control(
+    request: RunGraphFromPathsRequest,
+    control: RunControl,
+) -> RunGraphResponse {
+    run_graph_from_paths_internal(request, None, DEFAULT_PROCESS_DRIVER_POLICY, control)
 }
 
 /// Advanced run API for callers that prebuild runtime surfaces before invoking the canonical host path.
@@ -679,6 +789,22 @@ pub fn run_graph_from_paths_with_surfaces(
         request,
         Some(runtime_surfaces),
         DEFAULT_PROCESS_DRIVER_POLICY,
+        RunControl::default(),
+    )
+}
+
+/// Advanced controlled run API for callers that prebuild runtime surfaces before invoking the canonical host path.
+#[allow(clippy::arc_with_non_send_sync)]
+pub fn run_graph_from_paths_with_surfaces_and_control(
+    request: RunGraphFromPathsRequest,
+    runtime_surfaces: RuntimeSurfaces,
+    control: RunControl,
+) -> RunGraphResponse {
+    run_graph_from_paths_internal(
+        request,
+        Some(runtime_surfaces),
+        DEFAULT_PROCESS_DRIVER_POLICY,
+        control,
     )
 }
 
@@ -687,6 +813,7 @@ fn run_graph_from_paths_internal(
     request: RunGraphFromPathsRequest,
     runtime_surfaces: Option<RuntimeSurfaces>,
     process_policy: ProcessDriverPolicy,
+    control: RunControl,
 ) -> RunGraphResponse {
     let RunGraphFromPathsRequest {
         graph_path,
@@ -746,6 +873,7 @@ fn run_graph_from_paths_internal(
             runner,
         },
         process_policy,
+        control,
     )
 }
 
@@ -855,12 +983,18 @@ fn replay_graph_from_paths_internal(
 
 /// Lower-level canonical run API used once a fully configured `HostedRunner` exists.
 pub fn run_graph(request: RunGraphRequest) -> RunGraphResponse {
-    run_graph_with_policy(request, DEFAULT_PROCESS_DRIVER_POLICY)
+    run_graph_with_policy(request, DEFAULT_PROCESS_DRIVER_POLICY, RunControl::default())
+}
+
+/// Lower-level canonical run API with host stop control and bounded-run limits.
+pub fn run_graph_with_control(request: RunGraphRequest, control: RunControl) -> RunGraphResponse {
+    run_graph_with_policy(request, DEFAULT_PROCESS_DRIVER_POLICY, control)
 }
 
 fn run_graph_with_policy(
     request: RunGraphRequest,
     process_policy: ProcessDriverPolicy,
+    control: RunControl,
 ) -> RunGraphResponse {
     let RunGraphRequest {
         graph_path,
@@ -880,9 +1014,15 @@ fn run_graph_with_policy(
         .start_egress_channels()
         .map_err(|err| HostRunError::DriverIo(format!("start egress channels: {err}")))?;
 
+    let lifecycle = RunLifecycleState::new(control);
+
     let execution = match driver {
-        DriverConfig::Fixture { path } => run_fixture_driver(path, adapter_bound, runner)?,
-        DriverConfig::Process { command } => run_process_driver(command, runner, process_policy)?,
+        DriverConfig::Fixture { path } => {
+            run_fixture_driver(path, adapter_bound, runner, &lifecycle)?
+        }
+        DriverConfig::Process { command } => {
+            run_process_driver(command, runner, process_policy, &lifecycle)?
+        }
     };
 
     match execution.terminal {
@@ -915,6 +1055,7 @@ fn run_fixture_driver(
     fixture_path: PathBuf,
     adapter_bound: bool,
     mut runner: HostedRunner,
+    lifecycle: &RunLifecycleState,
 ) -> Result<DriverExecution, HostRunError> {
     let fixture_items = fixture::parse_fixture(&fixture_path)
         .map_err(|err| HostRunError::InvalidInput(format!("failed to parse fixture: {err}")))?;
@@ -922,9 +1063,19 @@ fn run_fixture_driver(
     let mut episodes: Vec<(String, usize)> = Vec::new();
     let mut current_episode: Option<usize> = None;
     let mut event_counter = 0usize;
+    let mut committed_event_count = 0usize;
     let mut seen_fixture_event_ids = HashSet::new();
 
     for item in fixture_items {
+        if lifecycle.should_stop(committed_event_count) {
+            return host_stop_driver_execution(
+                runner,
+                event_counter,
+                committed_event_count,
+                episodes,
+            );
+        }
+
         match item {
             fixture::FixtureItem::EpisodeStart { label } => {
                 episodes.push((label, 0));
@@ -936,6 +1087,15 @@ fn run_fixture_driver(
                 payload,
                 semantic_kind,
             } => {
+                if lifecycle.should_stop(committed_event_count) {
+                    return host_stop_driver_execution(
+                        runner,
+                        event_counter,
+                        committed_event_count,
+                        episodes,
+                    );
+                }
+
                 if current_episode.is_none() {
                     let label = format!("E{}", episodes.len() + 1);
                     episodes.push((label, 0));
@@ -987,8 +1147,17 @@ fn run_fixture_driver(
 
                 match runner.step(hosted_event) {
                     Ok(_) => {
+                        committed_event_count += 1;
                         let index = current_episode.expect("episode index set");
                         episodes[index].1 += 1;
+                        if lifecycle.should_stop(committed_event_count) {
+                            return host_stop_driver_execution(
+                                runner,
+                                event_counter,
+                                committed_event_count,
+                                episodes,
+                            );
+                        }
                     }
                     Err(crate::HostedStepError::EgressDispatchFailure(failure)) => {
                         let index = current_episode.expect("episode index set");
@@ -1010,6 +1179,10 @@ fn run_fixture_driver(
         }
     }
 
+    if lifecycle.should_stop(committed_event_count) {
+        return host_stop_driver_execution(runner, event_counter, committed_event_count, episodes);
+    }
+
     if episodes.is_empty() {
         return Err(HostRunError::InvalidInput(
             "fixture contained no episodes".to_string(),
@@ -1027,6 +1200,10 @@ fn run_fixture_driver(
         )));
     }
 
+    if lifecycle.should_stop(committed_event_count) {
+        return host_stop_driver_execution(runner, event_counter, committed_event_count, episodes);
+    }
+
     Ok(DriverExecution {
         runner,
         event_count: event_counter,
@@ -1035,10 +1212,48 @@ fn run_fixture_driver(
     })
 }
 
+fn host_stop_driver_execution(
+    runner: HostedRunner,
+    event_count: usize,
+    committed_event_count: usize,
+    episode_event_counts: Vec<(String, usize)>,
+) -> Result<DriverExecution, HostRunError> {
+    if committed_event_count == 0 {
+        return Err(HostRunError::StepFailed(
+            "host stop requested before first committed event".to_string(),
+        ));
+    }
+
+    Ok(DriverExecution {
+        runner,
+        event_count,
+        episode_event_counts,
+        terminal: DriverTerminal::Interrupted(InterruptionReason::HostStopRequested),
+    })
+}
+
+fn process_driver_host_stop_execution(
+    child: &mut Child,
+    stderr_handle: &mut Option<JoinHandle<String>>,
+    runner: HostedRunner,
+    event_count: usize,
+    committed_event_count: usize,
+    episode_event_counts: Vec<(String, usize)>,
+) -> Result<DriverExecution, HostRunError> {
+    let _detail = abort_process_child(child, stderr_handle.take());
+    host_stop_driver_execution(
+        runner,
+        event_count,
+        committed_event_count,
+        episode_event_counts,
+    )
+}
+
 fn run_process_driver(
     command: Vec<String>,
     runner: HostedRunner,
     process_policy: ProcessDriverPolicy,
+    lifecycle: &RunLifecycleState,
 ) -> Result<DriverExecution, HostRunError> {
     if command.is_empty() {
         return Err(HostRunError::InvalidInput(
@@ -1057,44 +1272,73 @@ fn run_process_driver(
     let stdout_rx = spawn_process_stdout_reader(stdout);
     let mut hello_received = false;
     let mut event_counter = 0usize;
+    let mut committed_event_count = 0usize;
     let mut episodes = Vec::new();
     let mut runner = runner;
+    let startup_deadline = Instant::now() + process_policy.startup_grace;
 
     loop {
-        // Protocol truth decides what completion means; host policy only bounds how long we
-        // wait for the driver to reveal that truth.
-        let observation = recv_process_stream_observation(
-            &stdout_rx,
-            (!hello_received).then_some(process_policy.startup_grace),
-        )
-        .map_err(|failure| {
+        if lifecycle.should_stop(committed_event_count) {
+            return process_driver_host_stop_execution(
+                &mut child,
+                &mut stderr_handle,
+                runner,
+                event_counter,
+                committed_event_count,
+                episodes,
+            );
+        }
+
+        if !hello_received && Instant::now() >= startup_deadline {
             let detail = abort_process_child(&mut child, stderr_handle.take());
-            match failure {
-                ProcessDriverReceiveFailure::Timeout => {
-                    let suffix = if detail.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" ({detail})")
-                    };
-                    HostRunError::DriverStart(format!(
-                        "process driver {command_display} did not emit a protocol frame within {}ms before startup completed{}",
-                        process_policy.startup_grace.as_millis(),
-                        suffix
-                    ))
+            let suffix = if detail.is_empty() {
+                String::new()
+            } else {
+                format!(" ({detail})")
+            };
+            return Err(HostRunError::DriverStart(format!(
+                "process driver {command_display} did not emit a protocol frame within {}ms before startup completed{}",
+                process_policy.startup_grace.as_millis(),
+                suffix
+            )));
+        }
+
+        let recv_timeout = if hello_received {
+            process_policy.event_recv_timeout
+        } else {
+            startup_deadline
+                .saturating_duration_since(Instant::now())
+                .min(process_policy.event_recv_timeout)
+        };
+
+        let observation = match recv_process_stream_observation(&stdout_rx, Some(recv_timeout)) {
+            Ok(observation) => observation,
+            Err(ProcessDriverReceiveFailure::Timeout) => {
+                if lifecycle.should_stop(committed_event_count) {
+                    return process_driver_host_stop_execution(
+                        &mut child,
+                        &mut stderr_handle,
+                        runner,
+                        event_counter,
+                        committed_event_count,
+                        episodes,
+                    );
                 }
-                ProcessDriverReceiveFailure::Disconnected => {
-                    if detail.is_empty() {
-                        HostRunError::DriverIo(format!(
-                            "receive process driver stdout for {command_display}: stdout reader disconnected unexpectedly"
-                        ))
-                    } else {
-                        HostRunError::DriverIo(format!(
-                            "receive process driver stdout for {command_display}: stdout reader disconnected unexpectedly ({detail})"
-                        ))
-                    }
-                }
+                continue;
             }
-        })?;
+            Err(ProcessDriverReceiveFailure::Disconnected) => {
+                let detail = abort_process_child(&mut child, stderr_handle.take());
+                return Err(if detail.is_empty() {
+                    HostRunError::DriverIo(format!(
+                        "receive process driver stdout for {command_display}: stdout reader disconnected unexpectedly"
+                    ))
+                } else {
+                    HostRunError::DriverIo(format!(
+                        "receive process driver stdout for {command_display}: stdout reader disconnected unexpectedly ({detail})"
+                    ))
+                });
+            }
+        };
 
         let message = match observation {
             ProcessDriverStreamObservation::Line(line) => {
@@ -1103,7 +1347,7 @@ fn run_process_driver(
                     Ok(message) => message,
                     Err(err) => {
                         let _detail = abort_process_child(&mut child, stderr_handle.take());
-                        if event_counter == 0 {
+                        if committed_event_count == 0 {
                             return Err(HostRunError::DriverProtocol(format!(
                                 "process driver {command_display} emitted invalid JSONL protocol before first committed step: {err}"
                             )));
@@ -1139,7 +1383,7 @@ fn run_process_driver(
                     None => abort_process_child(&mut child, stderr_handle.take()),
                 };
 
-                if event_counter == 0 {
+                if committed_event_count == 0 {
                     let suffix = if detail.is_empty() {
                         String::new()
                     } else {
@@ -1180,7 +1424,7 @@ fn run_process_driver(
                                 "process driver {command_display} emitted malformed protocol bytes: {detail} ({extra})"
                             )
                         };
-                        if event_counter == 0 {
+                        if committed_event_count == 0 {
                             return Err(HostRunError::DriverProtocol(message));
                         }
                         return Ok(DriverExecution {
@@ -1200,7 +1444,7 @@ fn run_process_driver(
                                 "read process driver stdout for {command_display}: {detail} ({extra})"
                             )
                         };
-                        if event_counter == 0 {
+                        if committed_event_count == 0 {
                             return Err(HostRunError::DriverIo(message));
                         }
                         return Ok(DriverExecution {
@@ -1239,7 +1483,7 @@ fn run_process_driver(
         match message {
             ProcessDriverMessage::Hello { .. } => {
                 let _detail = abort_process_child(&mut child, stderr_handle.take());
-                if event_counter == 0 {
+                if committed_event_count == 0 {
                     return Err(HostRunError::DriverProtocol(format!(
                         "process driver {command_display} sent duplicate hello before first committed step"
                     )));
@@ -1254,10 +1498,21 @@ fn run_process_driver(
             ProcessDriverMessage::Event { event } => match runner.step(event) {
                 Ok(_) => {
                     event_counter += 1;
+                    committed_event_count += 1;
                     if episodes.is_empty() {
                         episodes.push(("E1".to_string(), 0));
                     }
                     episodes[0].1 += 1;
+                    if lifecycle.should_stop(committed_event_count) {
+                        return process_driver_host_stop_execution(
+                            &mut child,
+                            &mut stderr_handle,
+                            runner,
+                            event_counter,
+                            committed_event_count,
+                            episodes,
+                        );
+                    }
                 }
                 Err(crate::HostedStepError::EgressDispatchFailure(failure)) => {
                     event_counter += 1;
@@ -1281,7 +1536,7 @@ fn run_process_driver(
                 }
             },
             ProcessDriverMessage::End => {
-                if event_counter == 0 {
+                if committed_event_count == 0 {
                     let _detail = abort_process_child(&mut child, stderr_handle.take());
                     return Err(HostRunError::DriverProtocol(format!(
                         "process driver {command_display} ended before first committed step"
@@ -1663,7 +1918,9 @@ mod tests {
     };
     use serde_json::json;
     use std::collections::{BTreeMap, HashMap};
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::thread;
     use std::time::{Duration, Instant};
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -1671,6 +1928,7 @@ mod tests {
     struct InjectedNumberSource {
         manifest: SourcePrimitiveManifest,
         output: f64,
+        counter: Option<Arc<AtomicUsize>>,
     }
 
     struct InjectedIntentAction {
@@ -1701,6 +1959,14 @@ mod tests {
                     side_effects: false,
                 },
                 output,
+                counter: None,
+            }
+        }
+
+        fn new_observed(output: f64, counter: Arc<AtomicUsize>) -> Self {
+            Self {
+                counter: Some(counter),
+                ..Self::new(output)
             }
         }
     }
@@ -1715,6 +1981,9 @@ mod tests {
             _parameters: &HashMap<String, ergo_runtime::source::ParameterValue>,
             _ctx: &ExecutionContext,
         ) -> HashMap<String, Value> {
+            if let Some(counter) = &self.counter {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
             HashMap::from([("value".to_string(), Value::Number(self.output))])
         }
     }
@@ -1793,6 +2062,16 @@ mod tests {
         let (registries, catalog) = builder
             .build()
             .expect("injected runtime surfaces should build");
+        RuntimeSurfaces::new(registries, catalog)
+    }
+
+    fn build_observed_runtime_surfaces(output: f64, counter: Arc<AtomicUsize>) -> RuntimeSurfaces {
+        let mut builder = CatalogBuilder::new();
+        builder.add_source(Box::new(InjectedNumberSource::new_observed(output, counter)));
+        builder.add_action(Box::new(InjectedIntentAction::new()));
+        let (registries, catalog) = builder
+            .build()
+            .expect("observed runtime surfaces should build");
         RuntimeSurfaces::new(registries, catalog)
     }
 
@@ -1984,6 +2263,36 @@ done
         )
     }
 
+    fn write_egress_end_sentinel_script(
+        base: &Path,
+        name: &str,
+        sentinel_path: &Path,
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        write_temp_file(
+            base,
+            name,
+            &format!(
+                r#"#!/bin/sh
+sentinel='{sentinel}'
+printf '%s\n' '{{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"intent"'*)
+      intent_id=$(printf '%s' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
+      printf '{{"type":"intent_ack","intent_id":"%s","status":"accepted","acceptance":"durable"}}\n' "$intent_id"
+      ;;
+    *'"type":"end"'*)
+      printf '%s\n' 'saw_end' > "$sentinel"
+      exit 0
+      ;;
+  esac
+done
+"#,
+                sentinel = sentinel_path.display()
+            ),
+        )
+    }
+
     fn write_egress_ack_once_then_timeout_script(
         base: &Path,
         name: &str,
@@ -2086,6 +2395,7 @@ done
             startup_grace: Duration::from_millis(50),
             termination_grace: Duration::from_millis(50),
             poll_interval: Duration::from_millis(5),
+            event_recv_timeout: Duration::from_millis(10),
         }
     }
 
@@ -2093,7 +2403,15 @@ done
         request: RunGraphFromPathsRequest,
         process_policy: ProcessDriverPolicy,
     ) -> RunGraphResponse {
-        run_graph_from_paths_internal(request, None, process_policy)
+        run_graph_from_paths_internal(request, None, process_policy, RunControl::default())
+    }
+
+    fn run_graph_from_paths_with_process_policy_and_control(
+        request: RunGraphFromPathsRequest,
+        process_policy: ProcessDriverPolicy,
+        control: RunControl,
+    ) -> RunGraphResponse {
+        run_graph_from_paths_internal(request, None, process_policy, control)
     }
 
     #[test]
@@ -3320,6 +3638,480 @@ outputs:
                 return Err(format!("expected completed run, got {:?}", interrupted.reason).into())
             }
         }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn process_driver_host_stop_before_first_committed_event_returns_host_run_error_without_capture(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-process-stop-zero-event-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_process_stop_zero_event
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+        let hello = serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?;
+        let driver = write_process_driver_program(
+            &temp_dir,
+            "driver.sh",
+            &format!("#!/bin/sh\nprintf '%s\\n' '{hello}'\nexec sleep 5\n"),
+        )?;
+        let capture = temp_dir.join("capture.json");
+        let stop = HostStopHandle::new();
+        let stop_clone = stop.clone();
+        let stopper = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(20));
+            stop_clone.request_stop();
+        });
+
+        let err = run_graph_from_paths_with_process_policy_and_control(
+            RunGraphFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Process {
+                    command: vec!["/bin/sh".to_string(), driver.display().to_string()],
+                },
+                adapter_path: None,
+                egress_config: None,
+                capture_output: Some(capture.clone()),
+                pretty_capture: false,
+            },
+            short_test_process_driver_policy(),
+            RunControl::new().with_stop_handle(stop),
+        )
+        .expect_err("host stop before first committed event must surface HostRunError");
+
+        stopper.join().expect("stopper thread must join");
+        match err {
+            HostRunError::StepFailed(message) => {
+                assert!(
+                    message.contains("host stop requested before first committed event"),
+                    "unexpected error message: {message}"
+                );
+            }
+            other => panic!("expected StepFailed host-stop error, got {other:?}"),
+        }
+        assert!(
+            !capture.exists(),
+            "zero-event host stop must not write a capture artifact"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn process_driver_max_events_returns_host_stop_interruption_and_replayable_capture(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-process-max-events-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_process_max_events
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+        let hello = serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?;
+        let mut body = format!("#!/bin/sh\ncat <<'__ERGO_DRIVER__'\n{hello}\n");
+        for index in 1..=64 {
+            body.push_str(&serde_json::to_string(&json!({
+                "type":"event",
+                "event": hosted_event(&format!("evt{index}"))
+            }))?);
+            body.push('\n');
+        }
+        body.push_str("__ERGO_DRIVER__\nexec sleep 5\n");
+        let driver = write_process_driver_program(&temp_dir, "driver.sh", &body)?;
+        let capture = temp_dir.join("capture.json");
+
+        let outcome = run_graph_from_paths_with_process_policy_and_control(
+            RunGraphFromPathsRequest {
+                graph_path: graph.clone(),
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Process {
+                    command: vec!["/bin/sh".to_string(), driver.display().to_string()],
+                },
+                adapter_path: None,
+                egress_config: None,
+                capture_output: Some(capture.clone()),
+                pretty_capture: false,
+            },
+            short_test_process_driver_policy(),
+            RunControl::new().max_events(3),
+        )?;
+
+        let interrupted = match outcome {
+            RunOutcome::Interrupted(interrupted) => interrupted,
+            RunOutcome::Completed(_) => {
+                return Err("max_events stop must interrupt the process run".into())
+            }
+        };
+        assert_eq!(interrupted.reason, InterruptionReason::HostStopRequested);
+        assert_eq!(interrupted.summary.events, 3);
+        assert!(capture.exists());
+
+        let replay = replay_graph_from_paths(ReplayGraphFromPathsRequest {
+            capture_path: capture,
+            graph_path: graph,
+            cluster_paths: Vec::new(),
+            adapter_path: None,
+        })?;
+        assert_eq!(replay.graph_id.as_str(), "host_process_max_events");
+        assert_eq!(replay.events, 3);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn process_driver_hot_stream_host_stop_does_not_wait_for_recv_timeout(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-process-hot-stop-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_process_hot_stop
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+        let marker = temp_dir.join("emitted-events.log");
+        let hello = serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?;
+        let mut body = format!(
+            "#!/bin/sh\nmarker='{}'\nprintf '%s\\n' '{hello}'\n",
+            marker.display()
+        );
+        for index in 1..=256 {
+            let event_line = serde_json::to_string(&json!({
+                "type":"event",
+                "event": hosted_event(&format!("hot_evt{index}"))
+            }))?;
+            body.push_str(&format!(
+                "printf '%s\\n' '{index}' >> \"$marker\"\nprintf '%s\\n' '{event_line}'\nsleep 0.001\n"
+            ));
+        }
+        body.push_str("exec sleep 5\n");
+        let driver = write_process_driver_program(&temp_dir, "driver.sh", &body)?;
+        let capture = temp_dir.join("capture.json");
+        let stop = HostStopHandle::new();
+        let stop_clone = stop.clone();
+        let marker_clone = marker.clone();
+        let stopper = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let observed = fs::read_to_string(&marker_clone)
+                    .map(|data| data.lines().count())
+                    .unwrap_or(0);
+                if observed >= 5 {
+                    stop_clone.request_stop();
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    panic!("timed out waiting for hot-stream marker events");
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
+        });
+
+        let started = Instant::now();
+        let outcome = run_graph_from_paths_with_process_policy_and_control(
+            RunGraphFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Process {
+                    command: vec!["/bin/sh".to_string(), driver.display().to_string()],
+                },
+                adapter_path: None,
+                egress_config: None,
+                capture_output: Some(capture),
+                pretty_capture: false,
+            },
+            ProcessDriverPolicy {
+                event_recv_timeout: Duration::from_secs(2),
+                ..short_test_process_driver_policy()
+            },
+            RunControl::new().with_stop_handle(stop),
+        )?;
+        stopper.join().expect("stopper thread must join");
+
+        let interrupted = match outcome {
+            RunOutcome::Interrupted(interrupted) => interrupted,
+            RunOutcome::Completed(_) => return Err("hot-stream host stop must interrupt".into()),
+        };
+        assert_eq!(interrupted.reason, InterruptionReason::HostStopRequested);
+        assert!(
+            interrupted.summary.events >= 5,
+            "expected at least five committed events before stop, got {}",
+            interrupted.summary.events
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "hot-stream stop should not wait for the 2s recv timeout"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_max_events_returns_host_stop_interruption() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-fixture-max-events-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_fixture_max_events
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 2.5
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+        let fixture = write_temp_file(
+            &temp_dir,
+            "fixture.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        )?;
+        let capture = temp_dir.join("capture.json");
+
+        let outcome = run_graph_from_paths_with_control(
+            RunGraphFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Fixture { path: fixture },
+                adapter_path: None,
+                egress_config: None,
+                capture_output: Some(capture.clone()),
+                pretty_capture: false,
+            },
+            RunControl::new().max_events(2),
+        )?;
+
+        let interrupted = match outcome {
+            RunOutcome::Interrupted(interrupted) => interrupted,
+            RunOutcome::Completed(_) => return Err("fixture max_events must interrupt".into()),
+        };
+        assert_eq!(interrupted.reason, InterruptionReason::HostStopRequested);
+        assert_eq!(interrupted.summary.events, 2);
+        assert!(capture.exists());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_external_stop_handle_returns_host_stop_interruption(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-fixture-external-stop-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_fixture_external_stop
+version: "0.1.0"
+nodes:
+  src:
+    impl: injected_number_source@0.1.0
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+        let mut fixture = String::from("{\"kind\":\"episode_start\",\"id\":\"E1\"}\n");
+        for _ in 0..128 {
+            fixture.push_str("{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n");
+        }
+        let fixture = write_temp_file(&temp_dir, "fixture.jsonl", &fixture)?;
+        let capture = temp_dir.join("capture.json");
+        let stop = HostStopHandle::new();
+        let stop_clone = stop.clone();
+        let source_counter = Arc::new(AtomicUsize::new(0));
+        let observed_counter = source_counter.clone();
+        let stopper = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while observed_counter.load(Ordering::SeqCst) < 5 {
+                assert!(
+                    Instant::now() < deadline,
+                    "timed out waiting for observed fixture events"
+                );
+                thread::yield_now();
+            }
+            stop_clone.request_stop();
+        });
+
+        let outcome = run_graph_from_paths_with_surfaces_and_control(
+            RunGraphFromPathsRequest {
+                graph_path: graph.clone(),
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Fixture { path: fixture },
+                adapter_path: None,
+                egress_config: None,
+                capture_output: Some(capture.clone()),
+                pretty_capture: false,
+            },
+            build_observed_runtime_surfaces(2.5, source_counter),
+            RunControl::new().with_stop_handle(stop),
+        )?;
+        stopper.join().expect("stopper thread must join");
+
+        let interrupted = match outcome {
+            RunOutcome::Interrupted(interrupted) => interrupted,
+            RunOutcome::Completed(_) => return Err("fixture external stop must interrupt".into()),
+        };
+        assert_eq!(interrupted.reason, InterruptionReason::HostStopRequested);
+        assert!(
+            interrupted.summary.events >= 5,
+            "expected at least five committed events before stop, got {}",
+            interrupted.summary.events
+        );
+        assert!(
+            interrupted.summary.events < 128,
+            "external stop should interrupt before exhausting the fixture"
+        );
+        assert!(capture.exists());
+
+        let replay = replay_graph_from_paths_with_surfaces(
+            ReplayGraphFromPathsRequest {
+                capture_path: capture,
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: None,
+            },
+            build_injected_runtime_surfaces(2.5),
+        )?;
+        assert_eq!(replay.graph_id.as_str(), "host_fixture_external_stop");
+        assert_eq!(replay.events, interrupted.summary.events);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn host_stop_still_shuts_down_egress_channels_cleanly() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-stop-egress-shutdown-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_stop_egress_shutdown")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let fixture = write_temp_file(
+            &temp_dir,
+            "fixture.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\",\"semantic_kind\":\"price_bar\",\"payload\":{\"price\":101.5}}}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\",\"semantic_kind\":\"price_bar\",\"payload\":{\"price\":101.6}}}\n",
+        )?;
+        let sentinel = temp_dir.join("egress-ended.txt");
+        let egress_script =
+            write_egress_end_sentinel_script(&temp_dir, "egress.sh", &sentinel)?;
+        let capture = temp_dir.join("capture.json");
+
+        let outcome = run_graph_from_paths_with_surfaces_and_control(
+            RunGraphFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Fixture { path: fixture },
+                adapter_path: Some(adapter),
+                egress_config: Some(make_intent_egress_config(&egress_script)),
+                capture_output: Some(capture),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(42.0),
+            RunControl::new().max_events(1),
+        )?;
+
+        let interrupted = match outcome {
+            RunOutcome::Interrupted(interrupted) => interrupted,
+            RunOutcome::Completed(_) => {
+                return Err("host stop with egress must interrupt the run".into())
+            }
+        };
+        assert_eq!(interrupted.reason, InterruptionReason::HostStopRequested);
+        assert_eq!(interrupted.summary.events, 1);
+        assert!(
+            sentinel.exists(),
+            "host stop finalization must send the egress end sentinel"
+        );
+        assert_eq!(fs::read_to_string(&sentinel)?.trim(), "saw_end");
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
