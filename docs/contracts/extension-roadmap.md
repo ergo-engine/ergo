@@ -375,7 +375,7 @@ capture:
 - `context.<key_name>` for each `context_keys[].name`
 - `effect.<effect_name>` for each `accepts.effects[].name`
 
-**Note:** Adapters do NOT need to pre-seed initial values for writable keys. Shipped context sources provide deterministic missing-key defaults on the same-ingestion path (`context_number_source`, `context_bool_source`, `context_series_source`). `context_string_source` remains deferred.
+**Note:** Adapters do NOT need to pre-seed initial values for writable keys. Shipped context sources provide deterministic missing-key defaults on the same-ingestion path (`context_number_source`, `context_bool_source`, `context_string_source`, `context_series_source`).
 
 **Deliverables:**
 
@@ -406,7 +406,7 @@ capture:
 | ADP-16 | Write effect must be capturable (planned; REP-SCOPE update required) | `any(writable == true) => "effect.set_context" ∈ capture.fields` |
 | ADP-17 | Writable keys cannot be required | `∀k where writable == true: k.required == false` |
 
-**Note on ADP-17:** Writable keys may not exist initially (no prior write). Setting `required: true` on a writable key would cause validation failures on first episode. Shipped context sources already handle missing keys via deterministic defaults on the same-ingestion path; `context_string_source` remains deferred.
+**Note on ADP-17:** Writable keys may not exist initially (no prior write). Setting `required: true` on a writable key would cause validation failures on first episode. Shipped context sources already handle missing keys via deterministic defaults on the same-ingestion path.
 
 **Note on ADP-15/ADP-16:** Planned manifest extension. Same-ingestion Scope A replay already verifies host-owned effect integrity, including `set_context` writes. The deferred work is making that coverage declarative in adapter `capture.fields` and defining any broader cross-ingestion parity requirements.
 
@@ -1480,7 +1480,7 @@ fn adp_5_duplicate_context_key_rejected() {
 
 ## Phase 8: Stdlib State Implementations
 
-**Status:** Substantially complete. All core context source and action implementations are shipped except `context_string_source`.
+**Status:** Complete for the typed context source/action family.
 
 ### Core Freeze Clarification
 
@@ -1496,8 +1496,8 @@ These are a family of implementations, one per supported type:
 
 - `context_number_source@0.1.0` (parameterized key, default `"x"`) — **shipped**
 - `context_bool_source@0.1.0` — **shipped**
+- `context_string_source@0.1.0` — **shipped**
 - `context_series_source@0.1.0` — **shipped**
-- `context_string_source` — deferred
 
 A context source reads a value from the execution context — a key-value map provided by the adapter at each event. The source does not know or care whether the adapter populated that key from external data (market feed, user command) or from a prior episode's `context_set_*` write. Both paths are identical from the source's perspective.
 
@@ -1624,7 +1624,7 @@ effects:
 
 - [x] `context_number_source@0.1.0` parameterized with `key` default `"x"` in `crates/kernel/runtime/src/source/implementations/context_number/`
 - [x] `context_bool_source@0.1.0` in `crates/kernel/runtime/src/source/implementations/context_bool/`
-- [ ] `context_string_source@0.1.0` (deferred)
+- [x] `context_string_source@0.1.0` in `crates/kernel/runtime/src/source/implementations/context_string/`
 - [x] `context_set_number@0.1.0`, `context_set_bool@0.1.0`, `context_set_string@0.1.0` in `crates/kernel/runtime/src/action/implementations/`
 - [x] `$key` parameter resolution in manifest/composition validation
 - [x] Effect routing/capture/replay integrity tests with real stdlib implementations

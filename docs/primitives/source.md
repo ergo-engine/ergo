@@ -365,6 +365,42 @@ This source reads the context key named by parameter `key` (default `"x"`). Sinc
 `required: false`, missing keys and wrong-type values resolve to the source default
 (`false`).
 
+### Source with string context requirements
+
+```yaml
+kind: source
+id: context_string_source
+version: 0.1.0
+
+outputs:
+  - name: value
+    type: String
+
+parameters:
+  - name: key
+    type: string
+    default: "x"
+
+requires:
+  context:
+    - name: $key
+      type: String
+      required: false
+
+execution:
+  cadence: continuous
+  deterministic: true
+
+state:
+  allowed: false
+
+side_effects: false
+```
+
+This source reads the context key named by parameter `key` (default `"x"`). Since
+`required: false`, missing keys and wrong-type values resolve to the source default
+(`""`).
+
 ### Source without context requirements
 
 ```yaml
