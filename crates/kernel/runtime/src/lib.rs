@@ -2,6 +2,8 @@
 //! Canonical compute/trigger/action primitive contracts and reference implementations.
 //! v0 – Experimental but enforced.
 
+pub const RUNTIME_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub mod action;
 pub mod catalog;
 pub mod cluster;

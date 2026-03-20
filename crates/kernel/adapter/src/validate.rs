@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use jsonschema::draft202012;
+use ergo_runtime::RUNTIME_VERSION;
 use regex::Regex;
 use semver::Version;
 use serde_json::Value;
@@ -10,10 +11,6 @@ use crate::manifest::AdapterManifest;
 use crate::schema_materialization::{
     schema_properties, schema_property_to_context_type, schema_required_fields,
 };
-
-/// Placeholder constant for runtime version comparison (ADP-3).
-/// TODO: Replace with actual runtime version from ergo-runtime crate.
-const RUNTIME_VERSION: &str = "0.1.0";
 
 pub fn validate_adapter(manifest: &AdapterManifest) -> Result<(), InvalidAdapter> {
     check_adp_1(manifest)?;
@@ -457,5 +454,76 @@ fn schema_is_object(schema: &serde_json::Map<String, Value>) -> bool {
             .iter()
             .any(|entry| matches!(entry, Value::String(ty) if ty == "object")),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_adapter;
+    use ergo_runtime::RUNTIME_VERSION;
+    use serde_json::json;
+
+    use crate::errors::InvalidAdapter;
+    use crate::manifest::{
+        AdapterManifest, CaptureSpec, ContextKeySpec, EventKindSpec,
+    };
+
+    fn baseline_manifest() -> AdapterManifest {
+        AdapterManifest {
+            kind: "adapter".to_string(),
+            id: "demo".to_string(),
+            version: "1.0.0".to_string(),
+            runtime_compatibility: RUNTIME_VERSION.to_string(),
+            context_keys: vec![ContextKeySpec {
+                name: "x".to_string(),
+                ty: "Number".to_string(),
+                required: false,
+                writable: Some(false),
+                description: None,
+            }],
+            event_kinds: vec![EventKindSpec {
+                name: "tick".to_string(),
+                payload_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "x": { "type": "number" }
+                    },
+                    "required": ["x"],
+                    "additionalProperties": false
+                }),
+            }],
+            accepts: None,
+            capture: CaptureSpec {
+                format_version: "1".to_string(),
+                fields: vec![
+                    "event.tick".to_string(),
+                    "meta.adapter_id".to_string(),
+                    "meta.adapter_version".to_string(),
+                    "meta.timestamp".to_string(),
+                ],
+            },
+        }
+    }
+
+    #[test]
+    fn adp_3_accepts_current_runtime_version() {
+        let manifest = baseline_manifest();
+
+        validate_adapter(&manifest).expect("current runtime version should validate");
+    }
+
+    #[test]
+    fn adp_3_reports_runtime_owned_version_on_incompatibility() {
+        let mut manifest = baseline_manifest();
+        manifest.runtime_compatibility = "999.0.0".to_string();
+
+        let err = validate_adapter(&manifest).expect_err("future runtime should be rejected");
+        match err {
+            InvalidAdapter::IncompatibleRuntime { required, actual } => {
+                assert_eq!(required, "999.0.0");
+                assert_eq!(actual, RUNTIME_VERSION);
+            }
+            other => panic!("expected incompatible runtime error, got {other:?}"),
+        }
     }
 }
