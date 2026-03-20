@@ -1,4 +1,15 @@
-# Proposal: Host-Initiated Run Lifecycle Control
+---
+Authority: PROJECT
+Date: 2026-03-19
+Decision-Owner: Sebastian (Architect)
+Recorder: Claude (Structural Auditor) + Codex (Implementation)
+Status: DECIDED
+Scope: v1
+Parent-Decision: egress-failure-taxonomy.md
+Unblocks: feat/host-stop-lifecycle (HSL-1..HSL-8)
+---
+
+# Decision: Host-Initiated Run Lifecycle Control
 
 **Status:** Final — Codex compliant (2026-03-19)  
 **Codex Verdict:** compliant (after amendments)  
@@ -27,7 +38,7 @@ Both problems block production use. A live trading system that loses its capture
 
 **Run lifecycle is the host's responsibility, not the driver's.**
 
-The driver's job is to deliver events. The host's job is to decide when to stop processing them. Currently, the host delegates this decision entirely to the driver. This proposal adds a host-initiated stop path that coexists with the existing driver-initiated paths.
+The driver's job is to deliver events. The host's job is to decide when to stop processing them. Currently, the host delegates this decision entirely to the driver. This decision adds a host-initiated stop path that coexists with the existing driver-initiated paths.
 
 ---
 
@@ -39,7 +50,7 @@ The `into_capture_bundle` path on `HostedRunner` produces a valid bundle regardl
 
 ---
 
-## Proposed Design
+## Approved Design
 
 ### 1. `InterruptionReason::HostStopRequested`
 
@@ -221,7 +232,7 @@ Rationale: A run that is stopped before processing any events has no decision tr
 
 **AMENDMENT (Codex audit #3):** Current capture bundles do not have a run-level interruption-reason field. Per-decision `interruption: Option<String>` exists but a host stop between steps would not land there.
 
-**Policy:** This proposal does NOT claim capture-level cause distinction between signal-stop and duration-expiry. `HostStopRequested` is a single `InterruptionReason` variant. The `RunOutcome::Interrupted` return value carries the reason to the caller, but it is not persisted in the capture bundle.
+**Policy:** This decision does NOT claim capture-level cause distinction between signal-stop and duration-expiry. `HostStopRequested` is a single `InterruptionReason` variant. The `RunOutcome::Interrupted` return value carries the reason to the caller, but it is not persisted in the capture bundle.
 
 If run-level stop metadata is needed in captures later, that is a separate product-layer proposal requiring its own capture format amendment.
 
@@ -332,3 +343,9 @@ Yes, thread stop/bounds through `run_fixture_driver()` too.
 3. **Hot-stream stop:** driver floods events quickly. Prove stop still works without waiting for timeout (loop-top check).
 4. **Fixture stop:** long fixture, stop after some events. Expect interrupted capture.
 5. **Egress shutdown on host stop:** egress test script writes a sentinel when it receives `{"type":"end"}`. Assert sentinel exists to prove shutdown happened cleanly.
+
+---
+
+## Impacted Ledger Files
+
+- [host-stop-lifecycle.md](../dev-work/open/host-stop-lifecycle.md)

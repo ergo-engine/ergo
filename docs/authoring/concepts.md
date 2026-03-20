@@ -189,22 +189,10 @@ Floating references (`@latest`, `@^1`) are opt-in and require explicit user choi
 
 ### 7.2 Breaking Change Detection
 
-<!-- TODO: inspect claims — signature_hash is not implemented (zero hits in crates/). The Signature struct fields are: kind, inputs, outputs, has_side_effects, is_origin — no parameter field. The hash components listed below are wrong (includes parameters, uses wrong flag names, omits kind and cardinality). See cluster-spec.md §8.1 for the correct specification. -->
-
-A **signature hash** is computed from:
-
-- Input port names and types
-- Output port names, types, and wireability
-- Parameter interface (names, types, required/optional)
-- Boundary flags (terminal, origin)
-
-If the signature hash changes between versions, the change is breaking.
-
-Breaking changes:
-
-- Block automatic upgrades
-- Require explicit user action
-- Are surfaced by tooling with upgrade assistance
+Breaking-change detection via signature hashing is specified in
+[cluster-spec.md §8](cluster-spec.md#8-signature-hash). This document does not
+redefine the hash algorithm or its field set. Current implementation
+status should not be inferred from this section.
 
 ---
 
@@ -250,19 +238,8 @@ For user-authored clusters:
 
 This validation is fast and provides immediate feedback.
 
-### 9.2 Rust DSL (Compile Time, Optional)
-
-<!-- TODO: inspect claims — no Rust DSL exists. Grep for "marker type", "trait bound", "Rust DSL" across crates/kernel/runtime/src/ returns nothing. This section describes a feature that was never built. -->
-
-For power users writing strategies in Rust:
-
-- Boundary kinds can be encoded as marker types
-- Wiring legality enforced by trait bounds
-- Invalid connections are compile errors
-
-This provides "can't even write it" safety for those who want it.
-
-Both phases enforce the same invariants. They differ only in when enforcement occurs.
+IR validation is the enforcement path. A compile-time Rust DSL
+encoding boundary kinds as marker types is not implemented.
 
 ---
 

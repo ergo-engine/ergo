@@ -33,7 +33,7 @@
 
 ### Notes
 
-- **ADP-15/ADP-16:** Deferred until REP-SCOPE expansion beyond Scope A to cover cross-ingestion normalization guarantees (`INGEST-TIME-1`).
+- **ADP-15/ADP-16:** Deferred as adapter-manifest completeness items. Same-ingestion Scope A replay already verifies host-owned effect integrity including `set_context` writes (see `08-replay.md`). These rules would require the manifest to explicitly declare capturability of writable context keys and `set_context` effects in `capture.fields`. They are not blockers to current same-ingestion replay correctness. If this work is revived, open a dedicated gap-work file first to decide whether manifests canonically declare context/effect capture coverage and what guarantee that implies across ingestion modes.
 - **Enforcement location:** `crates/kernel/adapter/src/validate.rs`
 - **Test location:** `crates/kernel/adapter/tests/validation.rs`
 

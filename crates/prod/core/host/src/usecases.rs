@@ -7,8 +7,8 @@ use ergo_runtime::catalog::{
     build_core_catalog, core_registries, CorePrimitiveCatalog, CoreRegistries,
 };
 use ergo_runtime::cluster::{
-    expand, ClusterDefinition, ClusterLoader, ClusterVersionIndex, ExpandedGraph, PrimitiveCatalog,
-    PrimitiveKind, Version,
+    expand, ClusterDefinition, ClusterLoader, ClusterVersionIndex, ExpandError, ExpandedGraph,
+    PrimitiveCatalog, PrimitiveKind, Version, VersionTargetKind,
 };
 use ergo_runtime::common::ErrorInfo;
 use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceScheme};
@@ -177,6 +177,40 @@ pub fn validate_adapter_composition(
 
 fn summarize_error_info(err: &impl ErrorInfo) -> String {
     format!("{} ({})", err.summary(), err.rule_id())
+}
+
+fn summarize_expand_error(
+    err: &ExpandError,
+    cluster_sources: &HashMap<(String, Version), PathBuf>,
+) -> String {
+    let base = summarize_error_info(err);
+    match err {
+        ExpandError::UnsatisfiedVersionConstraint {
+            target_kind: VersionTargetKind::Cluster,
+            id,
+            available_versions,
+            ..
+        } => {
+            let available = available_versions
+                .iter()
+                .filter_map(|version| {
+                    cluster_sources
+                        .get(&(id.clone(), version.clone()))
+                        .map(|path| format!("- {}@{} at {}", id, version, path.display()))
+                })
+                .collect::<Vec<_>>();
+            if available.is_empty() {
+                base
+            } else {
+                format!(
+                    "{}\navailable cluster files:\n{}",
+                    base,
+                    available.join("\n")
+                )
+            }
+        }
+        _ => base,
+    }
 }
 
 #[derive(Debug)]
@@ -530,13 +564,19 @@ fn prepare_graph_runtime(
     runtime_surfaces: Option<RuntimeSurfaces>,
 ) -> Result<PreparedGraphRuntime, String> {
     let root = ergo_loader::parse_graph_file(graph_path).map_err(|err| err.to_string())?;
-    let clusters = ergo_loader::load_cluster_tree(graph_path, &root, cluster_paths)
+    let discovery = ergo_loader::discovery::discover_cluster_tree(graph_path, &root, cluster_paths)
         .map_err(|err| err.to_string())?;
+    let cluster_sources = discovery.cluster_sources;
+    let clusters = discovery.clusters;
     let loader = PreloadedClusterLoader::new(clusters);
 
     let (catalog, registries) = materialize_runtime_surfaces(runtime_surfaces)?;
-    let expanded = expand(&root, &loader, &catalog)
-        .map_err(|err| format!("graph expansion failed: {}", summarize_error_info(&err)))?;
+    let expanded = expand(&root, &loader, &catalog).map_err(|err| {
+        format!(
+            "graph expansion failed: {}",
+            summarize_expand_error(&err, &cluster_sources)
+        )
+    })?;
     let runtime_provenance =
         compute_runtime_provenance(RuntimeProvenanceScheme::Rpv1, &root.id, &expanded, &catalog)
             .map_err(|err| format!("runtime provenance compute failed: {err}"))?;
@@ -2104,6 +2144,101 @@ outputs:
         assert_eq!(result.events, 1);
         assert_eq!(result.capture_path, capture);
         assert!(capture.exists());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn run_graph_from_paths_surfaces_runtime_owned_cluster_version_details(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-cluster-version-miss-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(temp_dir.join("clusters"))?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_cluster_version_miss
+version: "0.1.0"
+nodes:
+  nested:
+    cluster: shared_value@^2.0
+edges: []
+outputs:
+  result: nested.value
+"#,
+        )?;
+        write_temp_file(
+            &temp_dir,
+            "shared_value.yaml",
+            r#"
+kind: cluster
+id: shared_value
+version: "1.5.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 4.0
+edges: []
+outputs:
+  value: src.value
+"#,
+        )?;
+        write_temp_file(
+            &temp_dir.join("clusters"),
+            "shared_value.yaml",
+            r#"
+kind: cluster
+id: shared_value
+version: "1.0.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 3.0
+edges: []
+outputs:
+  value: src.value
+"#,
+        )?;
+        let fixture = write_temp_file(
+            &temp_dir,
+            "fixture.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        )?;
+
+        let err = run_graph_from_paths(RunGraphFromPathsRequest {
+            graph_path: graph,
+            cluster_paths: Vec::new(),
+            driver: DriverConfig::Fixture { path: fixture },
+            adapter_path: None,
+            egress_config: None,
+            capture_output: None,
+            pretty_capture: false,
+        })
+        .expect_err("version-miss cluster graph must fail before run");
+
+        match err {
+            HostRunError::InvalidInput(detail) => {
+                assert!(detail.contains("graph expansion failed"));
+                assert!(detail.contains("shared_value"));
+                assert!(detail.contains("^2.0"));
+                assert!(detail.contains("available: 1.0.0, 1.5.0"));
+                assert!(detail.contains("available cluster files"));
+                assert!(detail.contains("shared_value@1.0.0"));
+                assert!(detail.contains("shared_value@1.5.0"));
+                assert!(!detail.contains("discovery error"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())

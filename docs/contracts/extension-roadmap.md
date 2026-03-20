@@ -375,7 +375,7 @@ capture:
 - `context.<key_name>` for each `context_keys[].name`
 - `effect.<effect_name>` for each `accepts.effects[].name`
 
-**Note (planned, Phase 8):** Adapters do NOT need to pre-seed initial values for writable keys. The `ctx_get_or_default` Source implementation will handle missing keys with a default.
+**Note:** Adapters do NOT need to pre-seed initial values for writable keys. Shipped context sources provide deterministic missing-key defaults on the same-ingestion path (`context_number_source`, `context_bool_source`, `context_series_source`). `context_string_source` remains deferred.
 
 **Deliverables:**
 
@@ -406,9 +406,9 @@ capture:
 | ADP-16 | Write effect must be capturable (planned; REP-SCOPE update required) | `any(writable == true) => "effect.set_context" ∈ capture.fields` |
 | ADP-17 | Writable keys cannot be required | `∀k where writable == true: k.required == false` |
 
-**Note on ADP-17:** Writable keys may not exist initially (no prior write). Setting `required: true` on a writable key would cause validation failures on first episode. Sources will handle missing keys via defaults once `ctx_get_or_default` lands (Phase 8).
+**Note on ADP-17:** Writable keys may not exist initially (no prior write). Setting `required: true` on a writable key would cause validation failures on first episode. Shipped context sources already handle missing keys via deterministic defaults on the same-ingestion path; `context_string_source` remains deferred.
 
-**Note on ADP-15/ADP-16:** Planned extension. These rules depend on capture including context/effect, which conflicts with REP-SCOPE until it is explicitly expanded.
+**Note on ADP-15/ADP-16:** Planned manifest extension. Same-ingestion Scope A replay already verifies host-owned effect integrity, including `set_context` writes. The deferred work is making that coverage declarative in adapter `capture.fields` and defining any broader cross-ingestion parity requirements.
 
 **Deliverables:**
 
@@ -1278,7 +1278,7 @@ input check.
 - [x] All E-* (expansion) invariants mapped to code
 - [x] All V-* (validation) invariants mapped to code
 
-**Phase 6 closure note:** Mapping completeness is satisfied even where a rule has no dedicated runtime error variant (for example, type-level or assertion-level enforcement). `I.6` remains explicitly mapped as **not implemented** in `cluster-spec.md` and `invariants/INDEX.md`.
+**Phase 6 closure note:** Mapping completeness is satisfied even where a rule has no dedicated runtime error variant (for example, type-level or assertion-level enforcement). `I.6` is explicitly mapped as implemented in `cluster-spec.md` and `docs/invariants/02-instantiation.md`, with enforcement in `crates/kernel/runtime/src/cluster.rs`.
 
 ---
 
@@ -1480,21 +1480,13 @@ fn adp_5_duplicate_context_key_rejected() {
 
 ## Phase 8: Stdlib State Implementations
 
-**Why:** Close the state threading loop with two canonical implementations.
+**Status:** Substantially complete. All core context source and action implementations are shipped except `context_string_source`.
 
 ### Core Freeze Clarification
 
 **invariants/INDEX.md now declares:** "Infrastructure actions (ack, annotate, context_set_*) live in core; domain-specific capability actions live in verticals."
 
-**This phase remains doctrine-sensitive** because:
-
-1. **Vertical proof:** State threading is required for any vertical that implements temporal patterns (once, count, latch, debounce). Without `context_set_*`, every vertical must implement its own context-write action, creating duplication and consistency risks.
-
-2. **Domain neutrality:** `context_set_*` is domain-agnostic (writes typed values to keyed context). It has no trading/vertical-specific semantics. It is infrastructure, not capability.
-
-3. **Minimal surface:** Three type-specific implementations (number, bool, string) with no behavioral parameters.
-
-**To proceed:** Requires doctrine review and Sebastian authorization before merge/landing in core history.
+Doctrine review completed. State threading implementations are domain-agnostic infrastructure, not capability.
 
 ### 8.1 Context Sources (Source Implementation Family)
 
@@ -1502,9 +1494,10 @@ fn adp_5_duplicate_context_key_rejected() {
 
 These are a family of implementations, one per supported type:
 
-- `context_number_source@0.1.0` (parameterized key, default `"x"`)
-- `context_bool_source@0.1.0`
-- `context_string_source` (future extension)
+- `context_number_source@0.1.0` (parameterized key, default `"x"`) — **shipped**
+- `context_bool_source@0.1.0` — **shipped**
+- `context_series_source@0.1.0` — **shipped**
+- `context_string_source` — deferred
 
 A context source reads a value from the execution context — a key-value map provided by the adapter at each event. The source does not know or care whether the adapter populated that key from external data (market feed, user command) or from a prior episode's `context_set_*` write. Both paths are identical from the source's perspective.
 

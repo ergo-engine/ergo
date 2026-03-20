@@ -18,15 +18,15 @@ use ergo_host::{
     RuntimeSurfaces,
 };
 use ergo_loader::{
-    load_cluster_tree, load_project, parse_graph_file, ProjectError as LoaderProjectError,
-    ResolvedProject, ResolvedProjectIngress, ResolvedProjectProfile,
+    load_project, parse_graph_file, ProjectError as LoaderProjectError, ResolvedProject,
+    ResolvedProjectIngress, ResolvedProjectProfile,
 };
 use ergo_runtime::catalog::{
     CatalogBuilder, CorePrimitiveCatalog, CoreRegistrationError, CoreRegistries,
 };
 use ergo_runtime::cluster::{
-    expand, ClusterDefinition, ClusterLoader, ClusterVersionIndex, ExpandedGraph, PrimitiveCatalog,
-    PrimitiveKind, Version,
+    expand, ClusterDefinition, ClusterLoader, ClusterVersionIndex, ExpandError, ExpandedGraph,
+    PrimitiveCatalog, PrimitiveKind, Version, VersionTargetKind,
 };
 use ergo_runtime::common::ErrorInfo;
 
@@ -34,8 +34,8 @@ pub use ergo_host::{
     EgressChannelConfig, EgressRoute, InterruptedRun, InterruptionReason, RunSummary,
 };
 pub use ergo_runtime::catalog::{build_core, build_core_catalog, core_registries};
-pub use ergo_runtime::{action, common, compute, source, trigger};
 pub use ergo_runtime::runtime::ExecutionContext;
+pub use ergo_runtime::{action, common, compute, source, trigger};
 
 #[derive(Debug)]
 pub enum ErgoBuildError {
@@ -460,6 +460,40 @@ fn run_config_from_resolved_profile(profile: ResolvedProjectProfile) -> RunConfi
     }
 }
 
+fn summarize_expand_error(
+    err: &ExpandError,
+    cluster_sources: &HashMap<(String, Version), PathBuf>,
+) -> String {
+    let base = format!("{} ({})", err.summary(), err.rule_id());
+    match err {
+        ExpandError::UnsatisfiedVersionConstraint {
+            target_kind: VersionTargetKind::Cluster,
+            id,
+            available_versions,
+            ..
+        } => {
+            let available = available_versions
+                .iter()
+                .filter_map(|version| {
+                    cluster_sources
+                        .get(&(id.clone(), version.clone()))
+                        .map(|path| format!("- {}@{} at {}", id, version, path.display()))
+                })
+                .collect::<Vec<_>>();
+            if available.is_empty() {
+                base
+            } else {
+                format!(
+                    "{}\navailable cluster files:\n{}",
+                    base,
+                    available.join("\n")
+                )
+            }
+        }
+        _ => base,
+    }
+}
+
 fn replay_config_from_resolved_profile(
     profile: ResolvedProjectProfile,
     capture_path: impl AsRef<Path>,
@@ -575,21 +609,24 @@ fn validate_profile(
             profile: profile_name.to_string(),
             detail: format!("graph parse failed: {err}"),
         })?;
-    let clusters =
-        load_cluster_tree(&profile.graph_path, &root, &profile.cluster_paths).map_err(|err| {
-            ErgoValidateError::Validation {
-                profile: profile_name.to_string(),
-                detail: format!("cluster discovery failed: {err}"),
-            }
-        })?;
+    let discovery = ergo_loader::discovery::discover_cluster_tree(
+        &profile.graph_path,
+        &root,
+        &profile.cluster_paths,
+    )
+    .map_err(|err| ErgoValidateError::Validation {
+        profile: profile_name.to_string(),
+        detail: format!("cluster discovery failed: {err}"),
+    })?;
+    let cluster_sources = discovery.cluster_sources;
+    let clusters = discovery.clusters;
     let loader = PreloadedClusterLoader::new(clusters);
     let expanded =
         expand(&root, &loader, catalog).map_err(|err| ErgoValidateError::Validation {
             profile: profile_name.to_string(),
             detail: format!(
-                "graph expansion failed: {} ({})",
-                err.summary(),
-                err.rule_id()
+                "graph expansion failed: {}",
+                summarize_expand_error(&err, &cluster_sources)
             ),
         })?;
 
@@ -1033,7 +1070,9 @@ outputs:
         );
 
         let capture = root.join("captures/historical.capture.json");
-        let _ = Ergo::from_project(&root).build()?.run_profile("historical")?;
+        let _ = Ergo::from_project(&root)
+            .build()?
+            .run_profile("historical")?;
 
         let replay = Ergo::from_project(&root)
             .build()?
@@ -1228,6 +1267,103 @@ ack_timeout = "10s"
 
         assert_eq!(summary.name, "sdk-project");
         assert_eq!(summary.profiles, vec!["live".to_string()]);
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn validate_project_surfaces_runtime_owned_cluster_version_details(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("validate_cluster_version_miss");
+        fs::create_dir_all(root.join("clusters")).expect("create clusters dir");
+
+        write_file(
+            &root,
+            "ergo.toml",
+            r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.historical]
+graph = "graphs/strategy.yaml"
+fixture = "fixtures/historical.jsonl"
+"#,
+        );
+        write_file(
+            &root,
+            "graphs/strategy.yaml",
+            r#"
+kind: cluster
+id: sdk_cluster_version_miss
+version: "0.1.0"
+nodes:
+  shared:
+    cluster: shared_value@^2.0
+edges: []
+outputs:
+  result: shared.value
+"#,
+        );
+        write_file(
+            &root,
+            "graphs/shared_value.yaml",
+            r#"
+kind: cluster
+id: shared_value
+version: "1.5.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 4.0
+edges: []
+outputs:
+  value: src.value
+"#,
+        );
+        write_file(
+            &root,
+            "clusters/shared_value.yaml",
+            r#"
+kind: cluster
+id: shared_value
+version: "1.0.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 3.0
+edges: []
+outputs:
+  value: src.value
+"#,
+        );
+        write_file(
+            &root,
+            "fixtures/historical.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+
+        let err = Ergo::from_project(&root)
+            .build()?
+            .validate_project()
+            .expect_err("version-miss cluster profile must fail validation");
+
+        match err {
+            ErgoValidateError::Validation { profile, detail } => {
+                assert_eq!(profile, "historical");
+                assert!(detail.contains("graph expansion failed"));
+                assert!(!detail.contains("cluster discovery failed"));
+                assert!(detail.contains("shared_value"));
+                assert!(detail.contains("^2.0"));
+                assert!(detail.contains("available: 1.0.0, 1.5.0"));
+                assert!(detail.contains("available cluster files"));
+                assert!(detail.contains("shared_value@1.0.0"));
+                assert!(detail.contains("shared_value@1.5.0"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
 
         let _ = fs::remove_dir_all(root);
         Ok(())

@@ -154,17 +154,22 @@ Rules:
 - `capture.format_version` must be a non-empty string
 - `capture.fields[]` must reference valid CaptureFieldSet selectors
 
-**CaptureFieldSet (current, per REP-SCOPE):**
+**CaptureFieldSet (current):**
 
 - `event.<event_kind_name>` for each declared `event_kinds[].name`
 - `meta.adapter_id`
 - `meta.adapter_version`
 - `meta.timestamp`
 
-**Planned extension (requires REP-SCOPE update):**
+**Planned manifest extension (ADP-15/ADP-16):**
 
 - `context.<key_name>` for each `context_keys[].name`
 - `effect.<effect_name>` for each `accepts.effects[].name`
+
+Note: same-ingestion Scope A replay already captures and verifies full
+`set_context` effects via host-owned enrichment (see `08-replay.md`).
+The manifest extension would make that coverage declarative in the
+adapter contract.
 
 ---
 
@@ -209,9 +214,15 @@ These rules are checked during adapter registration (manifest-only validation).
 
 **ADP-18 scope note:** This rule intentionally validates only fields listed in `payload_schema.required`. If `required` is omitted, ADP-18 vacuously passes.
 
-### 4.2 Deferred Rules (REP-SCOPE)
+### 4.2 Deferred Rules (Adapter Manifest Completeness)
 
-The following rules are deferred until REP-SCOPE is expanded to include context/effect capture:
+The following rules are deferred as adapter-manifest completeness items.
+Same-ingestion Scope A replay already verifies host-owned effect
+integrity including `set_context` writes. These rules would require the
+manifest to explicitly declare that coverage in `capture.fields`. If
+this work is revived, open a dedicated gap-work file first to decide
+whether manifests canonically declare context/effect capture coverage
+and what guarantee that implies across ingestion modes:
 
 | Rule ID | Rule | Status |
 |---------|------|--------|

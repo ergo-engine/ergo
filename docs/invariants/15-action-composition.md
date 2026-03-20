@@ -27,7 +27,7 @@
 - **COMP-9 (split Action inputs):** STABLE contract distinguishes Trigger-gated `event` inputs from scalar payload inputs (`Source`/`Compute`), and runtime validation now enforces this destination-input-type-aware split within **V.2**.
 - **COMP-14:** `mirror_writes` participate in the same host-internal `set_context` projection as top-level writes, so any Action that declares writes or mirror writes must compose against adapter acceptance of `set_context`.
 - **COMP-18/COMP-19:** Adapter composition now validates that each declared intent kind has a payload schema and that the manifest field set is structurally compatible with that schema before execution begins.
-- **COMP-15:** Deferred until REP-SCOPE expansion beyond Scope A (cross-ingestion normalization).
+- **COMP-15:** Deferred as a composition-level counterpart to ADP-15/ADP-16 (adapter-manifest completeness). Same-ingestion Scope A replay already verifies host-owned effect integrity including `set_context` writes. See `08-replay.md` and `09-adapter-registration.md` notes. If this work is revived, open a dedicated gap-work file first to decide whether manifests canonically declare context/effect capture coverage and what guarantee that implies across ingestion modes.
 - **Enforcement location:** `crates/kernel/adapter/src/composition.rs` (invoked by `ergo_adapter::RuntimeHandle::run`).
 - **Test location:** `crates/kernel/adapter/tests/composition_tests.rs`
 

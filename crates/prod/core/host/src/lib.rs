@@ -14,8 +14,8 @@ mod usecases;
 
 pub use demo_fixture_usecase::{run_demo_fixture_from_path, RunDemoFixtureRequest};
 pub use egress::{
-    parse_egress_config_toml, EgressChannelConfig, EgressConfig, EgressProcessError, EgressRoute,
-    EgressRuntime, EgressValidationError, EgressValidationWarning, validate_egress_config,
+    parse_egress_config_toml, validate_egress_config, EgressChannelConfig, EgressConfig,
+    EgressProcessError, EgressRoute, EgressRuntime, EgressValidationError, EgressValidationWarning,
 };
 pub use error::{EgressDispatchFailure, HostedStepError};
 pub use gen_docs_usecase::gen_docs_command;

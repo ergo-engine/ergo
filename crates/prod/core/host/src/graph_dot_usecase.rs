@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use ergo_runtime::catalog::{build_core_catalog, CorePrimitiveCatalog};
 use ergo_runtime::cluster::{
-    expand, ClusterDefinition, ClusterLoader, ClusterVersionIndex, ExpandedEndpoint, ExpandedGraph,
-    PrimitiveCatalog, PrimitiveKind, Version,
+    expand, ClusterDefinition, ClusterLoader, ClusterVersionIndex, ExpandError, ExpandedEndpoint,
+    ExpandedGraph, PrimitiveCatalog, PrimitiveKind, Version, VersionTargetKind,
 };
 use ergo_runtime::common::ErrorInfo;
 
@@ -26,8 +26,11 @@ pub fn graph_to_dot_from_paths(request: GraphToDotFromPathsRequest) -> Result<St
     } = request;
 
     let root = ergo_loader::parse_graph_file(&graph_path).map_err(|err| err.to_string())?;
-    let clusters = ergo_loader::load_cluster_tree(&graph_path, &root, &cluster_paths)
-        .map_err(|err| err.to_string())?;
+    let discovery =
+        ergo_loader::discovery::discover_cluster_tree(&graph_path, &root, &cluster_paths)
+            .map_err(|err| err.to_string())?;
+    let cluster_sources = discovery.cluster_sources;
+    let clusters = discovery.clusters;
     let loader = PreloadedClusterLoader::new(clusters);
 
     let catalog = build_core_catalog();
@@ -35,7 +38,7 @@ pub fn graph_to_dot_from_paths(request: GraphToDotFromPathsRequest) -> Result<St
         format!(
             "graph expansion failed: [{}] {}",
             err.rule_id(),
-            err.summary()
+            summarize_expand_error(&err, &cluster_sources)
         )
     })?;
 
@@ -83,6 +86,40 @@ impl ClusterVersionIndex for PreloadedClusterLoader {
             .collect::<Vec<_>>();
         versions.sort();
         versions
+    }
+}
+
+fn summarize_expand_error(
+    err: &ExpandError,
+    cluster_sources: &HashMap<(String, Version), PathBuf>,
+) -> String {
+    let base = err.summary().to_string();
+    match err {
+        ExpandError::UnsatisfiedVersionConstraint {
+            target_kind: VersionTargetKind::Cluster,
+            id,
+            available_versions,
+            ..
+        } => {
+            let available = available_versions
+                .iter()
+                .filter_map(|version| {
+                    cluster_sources
+                        .get(&(id.clone(), version.clone()))
+                        .map(|path| format!("- {}@{} at {}", id, version, path.display()))
+                })
+                .collect::<Vec<_>>();
+            if available.is_empty() {
+                base
+            } else {
+                format!(
+                    "{}\navailable cluster files:\n{}",
+                    base,
+                    available.join("\n")
+                )
+            }
+        }
+        _ => base,
     }
 }
 

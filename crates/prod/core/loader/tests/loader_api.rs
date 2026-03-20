@@ -96,3 +96,138 @@ fn resolve_cluster_candidates_finds_existing_paths_and_dedupes() {
 
     let _ = fs::remove_dir_all(&temp_root);
 }
+
+#[test]
+fn load_graph_sources_missing_cluster_lists_searched_paths() {
+    let temp_root = make_temp_dir("missing_cluster_paths");
+    let search_dir = temp_root.join("search");
+    fs::create_dir_all(&search_dir).expect("create search dir");
+
+    let graph_path = temp_root.join("graph.yaml");
+    fs::write(
+        &graph_path,
+        r#"
+kind: cluster
+id: root_graph
+version: "1.0.0"
+nodes:
+  nested:
+    cluster: missing_cluster@1.0.0
+edges: []
+"#,
+    )
+    .expect("write graph");
+
+    let err = load_graph_sources(&graph_path, &[search_dir.clone()]).expect_err("missing cluster");
+    let message = err.to_string();
+    assert!(message.contains("looked for 'missing_cluster.yaml'"));
+    assert!(message.contains(&temp_root.join("missing_cluster.yaml").display().to_string()));
+    assert!(message.contains(
+        &temp_root
+            .join("clusters")
+            .join("missing_cluster.yaml")
+            .display()
+            .to_string()
+    ));
+    assert!(message.contains(
+        &search_dir
+            .join("missing_cluster.yaml")
+            .display()
+            .to_string()
+    ));
+    assert!(message.contains(
+        &search_dir
+            .join("clusters")
+            .join("missing_cluster.yaml")
+            .display()
+            .to_string()
+    ));
+    assert!(message.contains("cluster resolution is filename-based"));
+    assert!(message.contains("referenced by node 'nested'"));
+
+    let _ = fs::remove_dir_all(&temp_root);
+}
+
+#[test]
+fn load_graph_sources_missing_cluster_avoids_redundant_nested_clusters_search_path() {
+    let temp_root = make_temp_dir("missing_cluster_no_nested_clusters");
+    let search_dir = temp_root.join("clusters");
+    fs::create_dir_all(&search_dir).expect("create clusters search dir");
+
+    let graph_path = temp_root.join("graph.yaml");
+    fs::write(
+        &graph_path,
+        r#"
+kind: cluster
+id: root_graph
+version: "1.0.0"
+nodes:
+  nested:
+    cluster: missing_cluster@1.0.0
+edges: []
+"#,
+    )
+    .expect("write graph");
+
+    let err = load_graph_sources(&graph_path, &[search_dir.clone()]).expect_err("missing cluster");
+    let message = err.to_string();
+    assert!(message.contains(
+        &search_dir
+            .join("missing_cluster.yaml")
+            .display()
+            .to_string()
+    ));
+    assert!(!message.contains(
+        &search_dir
+            .join("clusters")
+            .join("missing_cluster.yaml")
+            .display()
+            .to_string()
+    ));
+
+    let _ = fs::remove_dir_all(&temp_root);
+}
+
+#[test]
+fn load_graph_sources_cluster_id_mismatch_explains_filename_rule() {
+    let temp_root = make_temp_dir("cluster_id_mismatch");
+    let cluster_dir = temp_root.join("clusters");
+    fs::create_dir_all(&cluster_dir).expect("create cluster dir");
+
+    let graph_path = temp_root.join("graph.yaml");
+    fs::write(
+        &graph_path,
+        r#"
+kind: cluster
+id: root_graph
+version: "1.0.0"
+nodes:
+  nested:
+    cluster: expected_cluster@1.0.0
+edges: []
+"#,
+    )
+    .expect("write graph");
+    fs::write(
+        cluster_dir.join("expected_cluster.yaml"),
+        r#"
+kind: cluster
+id: actual_cluster
+version: "1.0.0"
+nodes: {}
+edges: []
+"#,
+    )
+    .expect("write cluster");
+
+    let err = load_graph_sources(&graph_path, &[]).expect_err("id mismatch must error");
+    let message = err.to_string();
+    assert!(message.contains("opened"));
+    assert!(message.contains("expected_cluster@1.0.0"));
+    assert!(message.contains("YAML id is 'actual_cluster'"));
+    assert!(message.contains("filename must match the YAML id field"));
+    assert!(message.contains("rename the file to 'expected_cluster.yaml'"));
+    assert!(message.contains("referenced by node 'nested'"));
+
+    let _ = fs::remove_dir_all(&temp_root);
+}
