@@ -19,8 +19,9 @@ use crate::compute::{
     ComputePrimitive, ComputePrimitiveManifest, PrimitiveRegistry as ComputeRegistry,
 };
 use crate::source::{
-    BooleanSource, ContextBoolSource, ContextNumberSource, ContextSeriesSource, NumberSource,
-    SourcePrimitive, SourceRegistry, SourceValidationError, StringSource,
+    BooleanSource, ContextBoolSource, ContextNumberSource, ContextSeriesSource,
+    ContextStringSource, NumberSource, SourcePrimitive, SourceRegistry, SourceValidationError,
+    StringSource,
 };
 use crate::trigger::{
     EmitIfEventAndTrue, EmitIfTrue, TriggerPrimitive, TriggerRegistry, TriggerValidationError,
@@ -64,6 +65,7 @@ fn core_source_primitives() -> Vec<Box<dyn SourcePrimitive>> {
         Box::new(ContextNumberSource::new()),
         Box::new(ContextSeriesSource::new()),
         Box::new(ContextBoolSource::new()),
+        Box::new(ContextStringSource::new()),
         Box::new(BooleanSource::new()),
         Box::new(StringSource::new()),
     ]

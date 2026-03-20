@@ -2,7 +2,7 @@
 Authority: PROJECT
 Date: 2026-03-19
 Author: Codex (Implementation)
-Status: OPEN
+Status: CLOSED
 Branch: feat/context-string-source
 Tier: 1 (Stdlib Completeness)
 Depends-On: >-
@@ -52,12 +52,12 @@ Today:
 
 | ID | Task | Closure Condition | Owner | Status |
 |----|------|-------------------|-------|--------|
-| CSS-1 | Add manifest + implementation | `context_string_source@0.1.0` exists under `crates/kernel/runtime/src/source/implementations/context_string/` and follows the existing context-source pattern. | Codex | OPEN |
-| CSS-2 | Register in core stdlib | The source is admitted through the shared catalog/registry build path and available in runtime tests and downstream surfaces. | Codex | OPEN |
-| CSS-3 | Implement deterministic defaults | Missing key and wrong-type reads deterministically return empty string, matching the existing typed context-source family design. | Codex | OPEN |
-| CSS-4 | Validate `$key` contract | Manifest uses the same parameter-bound `$key` requirement pattern and passes existing source registration/composition rules. | Codex | OPEN |
-| CSS-5 | Add tests | Source tests and runtime tests prove default-key read, custom-key read, missing-key fallback, wrong-type fallback, and manifest validation. | Codex | OPEN |
-| CSS-6 | Align docs | Runtime README and any remaining roadmap/reference docs reflect `context_string_source` as shipped once code lands. | Codex | OPEN |
+| CSS-1 | Add manifest + implementation | `context_string_source@0.1.0` exists under `crates/kernel/runtime/src/source/implementations/context_string/` and follows the existing context-source pattern. | Codex | CLOSED |
+| CSS-2 | Register in core stdlib | The source is admitted through the shared catalog/registry build path and available in runtime tests and downstream surfaces. | Codex | CLOSED |
+| CSS-3 | Implement deterministic defaults | Missing key and wrong-type reads deterministically return empty string, matching the existing typed context-source family design. | Codex | CLOSED |
+| CSS-4 | Validate `$key` contract | Manifest uses the same parameter-bound `$key` requirement pattern and passes existing source registration/composition rules. | Codex | CLOSED |
+| CSS-5 | Add tests | Source tests and runtime tests prove default-key read, custom-key read, missing-key fallback, wrong-type fallback, and manifest validation. | Codex | CLOSED |
+| CSS-6 | Align docs | Runtime README and any remaining roadmap/reference docs reflect `context_string_source` as shipped once code lands. | Codex | CLOSED |
 
 ## Design Constraints
 

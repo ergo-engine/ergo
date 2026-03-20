@@ -7,12 +7,12 @@ use crate::runtime::ExecutionContext;
 use crate::source::{
     implementations::{
         context_bool_source_manifest, context_number_source_manifest,
-        context_series_source_manifest,
+        context_series_source_manifest, context_string_source_manifest,
     },
     BooleanSource, Cadence, ContextBoolSource, ContextNumberSource, ContextSeriesSource,
-    ExecutionSpec, InputSpec, NumberSource, OutputSpec, ParameterSpec, ParameterType, SourceKind,
-    SourcePrimitive, SourcePrimitiveManifest, SourceRegistry, SourceRequires,
-    SourceValidationError, StateSpec, StringSource,
+    ContextStringSource, ExecutionSpec, InputSpec, NumberSource, OutputSpec, ParameterSpec,
+    ParameterType, SourceKind, SourcePrimitive, SourcePrimitiveManifest, SourceRegistry,
+    SourceRequires, SourceValidationError, StateSpec, StringSource,
 };
 
 fn expect_panic<F: FnOnce() -> R + std::panic::UnwindSafe, R>(f: F) {
@@ -340,6 +340,122 @@ fn context_series_source_manifest_with_dollar_key_validates() {
     assert_eq!(manifest.requires.context.len(), 1);
     assert_eq!(manifest.requires.context[0].name, "$key");
     assert_eq!(manifest.requires.context[0].ty, ValueType::Series);
+    assert!(!manifest.requires.context[0].required);
+}
+
+#[test]
+fn context_string_source_reads_context_value_default_key() {
+    let source = ContextStringSource::new();
+    let ctx = ExecutionContext::from_values(HashMap::from([(
+        "x".to_string(),
+        Value::String("ready".to_string()),
+    )]));
+
+    let outputs = source.produce(&HashMap::new(), &ctx);
+    assert_eq!(
+        outputs.get("value"),
+        Some(&Value::String("ready".to_string()))
+    );
+}
+
+#[test]
+fn context_string_source_reads_context_value_custom_key() {
+    let source = ContextStringSource::new();
+    let ctx = ExecutionContext::from_values(HashMap::from([(
+        "sample_key".to_string(),
+        Value::String("armed".to_string()),
+    )]));
+
+    let outputs = source.produce(
+        &HashMap::from([(
+            "key".to_string(),
+            crate::source::ParameterValue::String("sample_key".to_string()),
+        )]),
+        &ctx,
+    );
+    assert_eq!(
+        outputs.get("value"),
+        Some(&Value::String("armed".to_string()))
+    );
+}
+
+#[test]
+fn context_string_source_missing_key_returns_default_empty_string() {
+    let source = ContextStringSource::new();
+    let ctx = ExecutionContext::from_values(HashMap::from([(
+        "other_key".to_string(),
+        Value::String("ignored".to_string()),
+    )]));
+
+    let outputs = source.produce(&HashMap::new(), &ctx);
+    assert_eq!(outputs.get("value"), Some(&Value::String(String::new())));
+}
+
+#[test]
+fn context_string_source_wrong_type_returns_default_empty_string() {
+    let source = ContextStringSource::new();
+    let ctx =
+        ExecutionContext::from_values(HashMap::from([("x".to_string(), Value::Number(42.0))]));
+
+    let outputs = source.produce(&HashMap::new(), &ctx);
+    assert_eq!(outputs.get("value"), Some(&Value::String(String::new())));
+}
+
+#[test]
+fn context_string_source_custom_key_missing_returns_default_empty_string() {
+    let source = ContextStringSource::new();
+    let ctx = ExecutionContext::from_values(HashMap::from([(
+        "other_key".to_string(),
+        Value::String("ignored".to_string()),
+    )]));
+
+    let outputs = source.produce(
+        &HashMap::from([(
+            "key".to_string(),
+            crate::source::ParameterValue::String("sample_key".to_string()),
+        )]),
+        &ctx,
+    );
+    assert_eq!(outputs.get("value"), Some(&Value::String(String::new())));
+}
+
+#[test]
+fn context_string_source_custom_key_wrong_type_returns_default_empty_string() {
+    let source = ContextStringSource::new();
+    let ctx = ExecutionContext::from_values(HashMap::from([(
+        "sample_key".to_string(),
+        Value::Bool(true),
+    )]));
+
+    let outputs = source.produce(
+        &HashMap::from([(
+            "key".to_string(),
+            crate::source::ParameterValue::String("sample_key".to_string()),
+        )]),
+        &ctx,
+    );
+    assert_eq!(outputs.get("value"), Some(&Value::String(String::new())));
+}
+
+#[test]
+fn context_string_source_manifest_with_dollar_key_validates() {
+    let manifest = context_string_source_manifest();
+    assert!(SourceRegistry::validate_manifest(&manifest).is_ok());
+
+    let key_param = manifest
+        .parameters
+        .iter()
+        .find(|p| p.name == "key")
+        .expect("context_string_source must declare 'key' parameter");
+    assert_eq!(key_param.value_type, ParameterType::String);
+    assert_eq!(
+        key_param.default,
+        Some(crate::source::ParameterValue::String("x".to_string()))
+    );
+
+    assert_eq!(manifest.requires.context.len(), 1);
+    assert_eq!(manifest.requires.context[0].name, "$key");
+    assert_eq!(manifest.requires.context[0].ty, ValueType::String);
     assert!(!manifest.requires.context[0].required);
 }
 

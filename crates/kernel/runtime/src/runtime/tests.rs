@@ -5256,6 +5256,105 @@ fn context_bool_source_runtime_uses_default_key_when_parameter_omitted() {
 }
 
 #[test]
+fn context_string_source_runtime_reads_custom_key_parameter() {
+    let expanded = ExpandedGraph {
+        nodes: HashMap::from([(
+            "src".to_string(),
+            ExpandedNode {
+                runtime_id: "src".to_string(),
+                authoring_path: vec![],
+                implementation: crate::cluster::ImplementationInstance {
+                    impl_id: "context_string_source".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::from([(
+                    "key".to_string(),
+                    crate::cluster::ParameterValue::String("sample_key".to_string()),
+                )]),
+            },
+        )]),
+        edges: vec![],
+        boundary_inputs: Vec::new(),
+        boundary_outputs: vec![crate::cluster::OutputPortSpec {
+            name: "out".to_string(),
+            maps_to: crate::cluster::OutputRef {
+                node_id: "src".to_string(),
+                port_name: "value".to_string(),
+            },
+        }],
+    };
+
+    let catalog = build_core_catalog();
+    let core = core_registries().unwrap();
+    let registries = Registries {
+        sources: &core.sources,
+        computes: &core.computes,
+        triggers: &core.triggers,
+        actions: &core.actions,
+    };
+
+    let ctx = ExecutionContext::from_values(HashMap::from([(
+        "sample_key".to_string(),
+        crate::common::Value::String("ready".to_string()),
+    )]));
+
+    let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
+    assert_eq!(
+        report.outputs.get("out"),
+        Some(&RuntimeValue::String("ready".to_string()))
+    );
+}
+
+#[test]
+fn context_string_source_runtime_uses_default_key_when_parameter_omitted() {
+    let expanded = ExpandedGraph {
+        nodes: HashMap::from([(
+            "src".to_string(),
+            ExpandedNode {
+                runtime_id: "src".to_string(),
+                authoring_path: vec![],
+                implementation: crate::cluster::ImplementationInstance {
+                    impl_id: "context_string_source".to_string(),
+                    requested_version: "0.1.0".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                parameters: HashMap::new(),
+            },
+        )]),
+        edges: vec![],
+        boundary_inputs: Vec::new(),
+        boundary_outputs: vec![crate::cluster::OutputPortSpec {
+            name: "out".to_string(),
+            maps_to: crate::cluster::OutputRef {
+                node_id: "src".to_string(),
+                port_name: "value".to_string(),
+            },
+        }],
+    };
+
+    let catalog = build_core_catalog();
+    let core = core_registries().unwrap();
+    let registries = Registries {
+        sources: &core.sources,
+        computes: &core.computes,
+        triggers: &core.triggers,
+        actions: &core.actions,
+    };
+
+    let ctx = ExecutionContext::from_values(HashMap::from([(
+        "x".to_string(),
+        crate::common::Value::String("armed".to_string()),
+    )]));
+
+    let report = run(&expanded, &catalog, &registries, &ctx).unwrap();
+    assert_eq!(
+        report.outputs.get("out"),
+        Some(&RuntimeValue::String("armed".to_string()))
+    );
+}
+
+#[test]
 fn context_series_source_runtime_reads_custom_key_parameter() {
     let expanded = ExpandedGraph {
         nodes: HashMap::from([(

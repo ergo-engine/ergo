@@ -63,15 +63,16 @@ Context keys are strings. Current context-reading implementations:
 
 - `context_number_source`: reads key from parameter `key` (default `"x"`)
 - `context_bool_source`: reads key from parameter `key` (default `"x"`)
+- `context_string_source`: reads key from parameter `key` (default `"x"`)
 - `context_series_source`: reads key from parameter `key` (default `"x"`)
 
 ### Determinism
 
 All default behaviors are deterministic. Missing or malformed payload data produces consistent outputs across replay.
 
-## Core stdlib wiring (41 implementations)
+## Core stdlib wiring (42 implementations)
 
-- **Sources (6):** `number_source`, `boolean_source`, `string_source`, `context_number_source`, `context_bool_source`, `context_series_source`
+- **Sources (7):** `number_source`, `boolean_source`, `string_source`, `context_number_source`, `context_bool_source`, `context_string_source`, `context_series_source`
 - **Computes (27):** `const_number`, `const_bool`, `add`, `subtract`, `multiply`, `divide`, `safe_divide`, `abs`, `negate`, `gt`, `gte`, `lt`, `lte`, `eq`, `neq`, `min`, `max`, `and`, `or`, `not`, `select`, `select_bool`, `append`, `window`, `mean`, `len`, `sum`
 - **Triggers (2):** `emit_if_true`, `emit_if_event_and_true`
 - **Actions (6):** `ack_action`, `annotate_action`, `context_set_number`, `context_set_bool`, `context_set_string`, `context_set_series`
