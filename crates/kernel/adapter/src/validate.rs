@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use ergo_runtime::runtime_version;
 use jsonschema::draft202012;
-use ergo_runtime::RUNTIME_VERSION;
 use regex::Regex;
 use semver::Version;
 use serde_json::Value;
@@ -137,12 +137,13 @@ fn check_adp_3(m: &AdapterManifest) -> Result<(), InvalidAdapter> {
         }
     })?;
 
-    let actual = Version::parse(RUNTIME_VERSION).expect("valid constant");
+    let actual_version = runtime_version();
+    let actual = Version::parse(actual_version).expect("valid constant");
 
     if actual < required {
         return Err(InvalidAdapter::IncompatibleRuntime {
             required: m.runtime_compatibility.clone(),
-            actual: RUNTIME_VERSION.to_string(),
+            actual: actual_version.to_string(),
         });
     }
     Ok(())
@@ -460,20 +461,18 @@ fn schema_is_object(schema: &serde_json::Map<String, Value>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::validate_adapter;
-    use ergo_runtime::RUNTIME_VERSION;
+    use ergo_runtime::runtime_version;
     use serde_json::json;
 
     use crate::errors::InvalidAdapter;
-    use crate::manifest::{
-        AdapterManifest, CaptureSpec, ContextKeySpec, EventKindSpec,
-    };
+    use crate::manifest::{AdapterManifest, CaptureSpec, ContextKeySpec, EventKindSpec};
 
     fn baseline_manifest() -> AdapterManifest {
         AdapterManifest {
             kind: "adapter".to_string(),
             id: "demo".to_string(),
             version: "1.0.0".to_string(),
-            runtime_compatibility: RUNTIME_VERSION.to_string(),
+            runtime_compatibility: runtime_version().to_string(),
             context_keys: vec![ContextKeySpec {
                 name: "x".to_string(),
                 ty: "Number".to_string(),
@@ -521,7 +520,7 @@ mod tests {
         match err {
             InvalidAdapter::IncompatibleRuntime { required, actual } => {
                 assert_eq!(required, "999.0.0");
-                assert_eq!(actual, RUNTIME_VERSION);
+                assert_eq!(actual, runtime_version());
             }
             other => panic!("expected incompatible runtime error, got {other:?}"),
         }
