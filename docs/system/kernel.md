@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-15
+Last Updated: 2026-03-21
 Owner: Claude (Structural Auditor)
 Scope: v0 baseline declaration, v1 workstream rules
 Change Rule: Operational log
@@ -80,16 +80,17 @@ The catalog-access boundary (yaml-format.md §8.3) defines the loader/kernel div
 
 The host (`prod/core/host`) owns:
 
-- Adapter dependency scan and composition validation
-- Usecase API surface: `run_graph_from_paths`, `replay_graph_from_paths` (canonical client entrypoints); `run_graph`, `replay_graph`, `run_fixture` (lower-level)
+- Adapter dependency scan, composition validation, and live egress/handler validation
+- Usecase API surface: `run_graph_from_paths`, `replay_graph_from_paths`, `validate_graph_from_paths`, `prepare_hosted_runner_from_paths`, `finalize_hosted_runner_capture` (canonical client entrypoints); `run_graph`, `replay_graph`, `run_fixture` (lower-level)
 - Canonical run ingress selection through host-owned `DriverConfig`
   (current implementation term for ingress-channel configuration);
   replay remains capture-driven and takes no live channel config
 - Post-episode effect dispatch at host boundary (HST-1 through HST-9);
   host-internal effects may be realized locally while true external I/O
   belongs to prod boundary channels
+- Hosted-runner finalization ordering and lifecycle truth for manual stepping (`ensure_no_pending_egress_acks` → `stop_egress_channels` → `CaptureBundle`, with zero-step/non-finalizable rejection before finalization)
 - Canonical run outcome reporting for product callers (`Completed` vs `Interrupted` when the host can return a trustworthy artifact)
-- Canonical composition of loader + kernel semantics for product entrypoints; kernel remains semantic authority
+- Canonical composition of loader + kernel semantics for product entrypoints, including validation and manual-stepping surfaces; kernel remains semantic authority
 
 See [Kernel/Prod Separation and Host Intent](kernel-prod-separation.md).
 

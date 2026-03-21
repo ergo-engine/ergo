@@ -182,7 +182,7 @@ integration snag while evolving a sample strategy into a real one.
 - Outside the Ergo checkout, `ergo init` still needs `--sdk-path`
   until `ergo-sdk-rust` is published.
 - Scaffolded live sample channels assume `python3` is available.
-- The built `Ergo` handle is currently one-shot.
+- The built `Ergo` handle is same-thread reusable.
 
 ## 6. Related Docs
 

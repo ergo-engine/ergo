@@ -38,13 +38,13 @@ These invariants hold across all phases. Violation at any point is a system-leve
 |----|-----------|-------------|
 | LAYER-1 | Kernel crates must not depend on `prod/*` or `shared/*` at runtime | CI script: dependency direction check |
 | LAYER-2 | `RuleViolation` is kernel-owned; loader and clients must not define or return rule violations | CI script: `RuleViolation` import guard |
-| LAYER-3 | Clients must not import loader/parser internals | CI script: parser-internal import guard |
+| LAYER-3 | Clients must not import loader/parser internals or perform canonical host orchestration directly | CI script: parser-internal + orchestration delegation guards |
 
 **Rationale:**
 
 - LAYER-1 ensures kernel semantics cannot be contaminated by client or tooling concerns. Kernel looks down to nothing; everything looks up to kernel.
 - LAYER-2 ensures validation error types remain a kernel-owned contract. Loader errors are transport/decode failures, not rule violations.
-- LAYER-3 ensures clients remain thin adapters. If a client needs parser access, it goes through the loader API, not internal modules.
+- LAYER-3 ensures clients remain thin adapters. If a client needs canonical run, replay, validation, or manual stepping, it goes through the host API; if it needs parser access, it goes through the loader API rather than internal modules.
 
 `shared/*` crates are allowed in kernel `[dev-dependencies]` for test infrastructure. This does not weaken runtime trust boundaries.
 

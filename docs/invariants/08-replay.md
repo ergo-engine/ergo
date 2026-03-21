@@ -68,7 +68,7 @@ Client libraries may demonstrate how to construct and emit `ExpandedGraph` paylo
 - An enforcement boundary
 - A required dependency for runtime execution
 
-Contract authority remains with Rust types + `ui-runtime.md`; clients delegate canonical run/replay execution to host entrypoints.
+Contract authority remains with Rust types + `ui-runtime.md`; clients delegate canonical run/replay/validation/manual-stepping orchestration to host entrypoints.
 
 ---
 

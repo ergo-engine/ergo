@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-15
+Last Updated: 2026-03-21
 Owner: Claude (Structural Auditor)
 Scope: Kernel/prod boundary, host ownership, and boundary channel roles
 Change Rule: Operational log
@@ -56,18 +56,19 @@ Prod may compose kernel APIs, but must not redefine kernel meaning.
 
 Host responsibilities:
 
-- Provide canonical entrypoints for run/replay (`run_graph_from_paths`, `replay_graph_from_paths`)
-- Own loader + kernel composition for client paths
+- Provide canonical entrypoints for run, replay, validation, manual-runner preparation, and hosted-runner finalization (`run_graph_from_paths`, `replay_graph_from_paths`, `validate_graph_from_paths`, `prepare_hosted_runner_from_paths`, `finalize_hosted_runner_capture`)
+- Own loader + kernel composition for client run, replay, validation, and manual-stepping paths
 - Own canonical run ingress selection at the host boundary
   (`DriverConfig` in current code; ingress-channel selection in
   doctrine)
-- Own adapter dependency scan and adapter composition setup for canonical runs
+- Own adapter dependency scan and adapter composition / live egress validation for canonical live paths
 - Keep replay capture-driven and free of live ingress/egress channel
   config
 - Own post-episode effect dispatch at the host boundary (buffer
   drain/dispatch/enrich capture). Host may realize host-internal
   effects locally, but true external I/O belongs to prod boundary
   channels
+- Own hosted-runner finalization integrity (zero-step/non-finalizable rejection, pending-ack check, egress shutdown, capture-bundle production)
 - Enforce host lifecycle integrity guarantees (for example duplicate `event_id` rejection at host step boundary)
 - Expose truthful canonical run outcomes for product callers (`Completed` vs `Interrupted` when a trustworthy artifact exists; host errors otherwise)
 

@@ -66,15 +66,18 @@ The host (`crates/prod/core/host`) exposes the canonical execution surface:
 
 | Function | Level | Responsibility |
 |----------|-------|---------------|
-| `run_graph_from_paths` | Client entrypoint | Canonical run: loader decode/discovery, expansion, provenance, adapter validation/binder, host-owned ingress selection via `DriverConfig` (current code term for ingress-channel config), runner setup, truthful `Completed` / `Interrupted` outcome reporting |
-| `replay_graph_from_paths` | Client entrypoint | Canonical replay: loader decode, strict preflight, rehydration, effect-integrity comparison; replay remains capture-driven and accepts no live channel config |
+| `run_graph_from_paths` | Client entrypoint | Canonical run: loader decode/discovery, expansion, provenance, adapter validation/binder, host-owned ingress selection via `DriverConfig` (current code term for ingress-channel config), runner setup, eager egress startup/finalization, truthful `Completed` / `Interrupted` outcome reporting |
+| `replay_graph_from_paths` | Client entrypoint | Canonical replay: loader decode, strict preflight, rehydration, and host-owned effect-integrity comparison; replay remains capture-driven and accepts no live channel config |
+| `validate_graph_from_paths` | Client entrypoint | Canonical live-path validation: loader decode/discovery, expansion, dependency scan, adapter/egress/handler validation without constructing a hosted session or starting egress channels |
+| `prepare_hosted_runner_from_paths` | Client entrypoint | Canonical manual-runner preparation: loader decode/discovery, expansion, adapter preflight/binder, hosted-runner construction, eager egress startup, returns `HostedRunner` for caller-driven stepping |
+| `finalize_hosted_runner_capture` | Client entrypoint | Canonical manual-runner finalization: reject zero-step/non-finalizable runners, assert no pending acks, stop egress channels, return `CaptureBundle` |
 | `run_graph` | Lower-level | Execute from pre-loaded graph with adapter and host-owned ingress-channel config |
 | `replay_graph` | Lower-level | Strict replay from pre-loaded bundle |
 | `run_fixture` | Utility | Direct execution from fixture events (built-in reference ingress path) |
 | `scan_adapter_dependencies` | Lower-level | Detect adapter-dependent graphs from source/action manifests |
 | `validate_adapter_composition` | Lower-level | Enforce COMP-* rules before execution |
 
-Clients (CLI, SDK) call the **client entrypoint** APIs. They do not own loader composition, adapter binding, or dependency scanning logic. The lower-level APIs remain available for non-client host callers.
+Clients (CLI, SDK) call the **client entrypoint** APIs for canonical run, replay, validation, and manual stepping. They do not own loader composition, adapter binding, dependency scanning, or host finalization ordering. The lower-level APIs remain available for non-client host callers.
 
 Notes:
 
@@ -85,9 +88,9 @@ Notes:
 - Metadata-less runtime execution rejects intent-emitting graphs. Canonical host paths therefore use metadata-aware execution whenever Actions declare external intents.
 - **HST-4:** Enforced by `BufferingRuntimeInvoker` replace semantics: each `run()` call replaces the pending effect buffer, so retried runs cannot accumulate effects from prior attempts.
 - Host capture enrichment associates applied effects by decision order (`decisions[i]`), not by `event_id`, so duplicate fixture/event IDs cannot overwrite prior decision effects.
-- HST-9: duplicate `event_id` rejection is enforced at `HostedRunner`, so non-CLI host callers cannot bypass identity guarantees. Host replay execution flows through `HostedRunner::replay_step(...)` which performs strict preflight, event rehydration with hash checks, and effect-integrity comparison against host-enriched capture decisions.
+- HST-9: duplicate `event_id` rejection is enforced at `HostedRunner`, so non-CLI host callers cannot bypass identity guarantees. Host replay execution flows through the host replay path, which performs strict preflight, event rehydration with hash checks, and effect-integrity comparison around the `HostedRunner::replay_step(...)` primitive.
 - HST-7 commit rule follows SUP-6 partial execution semantics: commit if drained buffer is non-empty regardless of final termination; no transactional rollback.
 - DOC-GATE-1 enforcement script: `tools/verify_doctrine_gate.sh`; integrated via `tools/verify_runtime_surface.sh`.
-- SDK-CANON-1: now exercised by `ergo-sdk-rust`. SDK run/replay/validate delegate to host entrypoint APIs; `ergo init` scaffolds against that real surface rather than a placeholder.
+- SDK-CANON-1: now exercised by `ergo-sdk-rust`. SDK `run_profile`, `replay_profile`, `validate_project`, and `runner_for_profile` delegate canonical orchestration to host entrypoint APIs, and `ProfileRunner::finish()` delegates finalization through `finalize_hosted_runner_capture(...)`; `ergo init` scaffolds against that real surface rather than a placeholder.
 
 ---

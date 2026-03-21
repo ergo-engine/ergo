@@ -371,7 +371,7 @@ cargo run -- replay historical captures/historical.capture.json
 
 - The scaffolded sample channels use `python3`.
 - The `run` command installs a Ctrl-C handler so long-running profiles can stop cleanly and still write capture artifacts.
-- The built `Ergo` handle is currently one-shot; the sample `main.rs` builds a fresh handle per command.
+- The built `Ergo` handle is same-thread reusable; the sample `main.rs` still keeps one handle per command for clarity.
 - Use `cargo run -- doctor` after your first edits if you want a quick project health check.
 "#,
         project_name = names.project_name

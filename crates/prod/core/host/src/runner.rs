@@ -83,6 +83,91 @@ enum StepMode {
     Replay,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CaptureFinalizationState {
+    NoCommittedSteps,
+    Eligible,
+    FinalizeOnly,
+    Fatal,
+}
+
+fn default_handlers() -> BTreeMap<String, Arc<dyn EffectHandler>> {
+    let mut handlers: BTreeMap<String, Arc<dyn EffectHandler>> = BTreeMap::new();
+    handlers.insert("set_context".to_string(), Arc::new(SetContextHandler));
+    handlers
+}
+
+fn default_handler_kinds() -> BTreeSet<String> {
+    BTreeSet::from(["set_context".to_string()])
+}
+
+pub(crate) fn validate_hosted_runner_configuration(
+    adapter: Option<&HostedAdapterConfig>,
+    egress_config: Option<&EgressConfig>,
+    egress_provenance: Option<&str>,
+    replay_external_kinds: &HashSet<String>,
+    graph_emittable_effect_kinds: &HashSet<String>,
+) -> Result<(), HostedStepError> {
+    let handler_kinds = default_handler_kinds();
+
+    if egress_config.is_some() && !replay_external_kinds.is_empty() {
+        return Err(HostedStepError::EgressValidation(
+            "replay ownership cannot be supplied when live egress configuration is present"
+                .to_string(),
+        ));
+    }
+
+    if let Some(conflict) = replay_external_kinds
+        .iter()
+        .find(|kind| handler_kinds.contains(*kind))
+    {
+        return Err(HostedStepError::EgressValidation(format!(
+            "replay-owned effect kind '{}' conflicts with handler-owned kind",
+            conflict
+        )));
+    }
+
+    if let Some(config) = adapter {
+        if let Some(egress_config) = egress_config {
+            let warnings = validate_egress_config(
+                egress_config,
+                &config.provides,
+                graph_emittable_effect_kinds,
+                &handler_kinds,
+            )?;
+            log_egress_warnings(&warnings);
+        } else {
+            ensure_handler_coverage(
+                &config.provides,
+                graph_emittable_effect_kinds,
+                &handler_kinds,
+                replay_external_kinds,
+            )?;
+        }
+    } else if egress_config.is_some() {
+        return Err(HostedStepError::EgressValidation(
+            "egress configuration requires adapter-bound mode".to_string(),
+        ));
+    } else if !replay_external_kinds.is_empty() {
+        return Err(HostedStepError::EgressValidation(
+            "replay ownership requires adapter-bound mode".to_string(),
+        ));
+    }
+
+    if egress_config.is_none() && egress_provenance.is_some() {
+        return Err(HostedStepError::EgressValidation(
+            "egress provenance requires egress configuration".to_string(),
+        ));
+    }
+    if egress_config.is_some() && egress_provenance.is_none() {
+        return Err(HostedStepError::EgressValidation(
+            "egress provenance is required when egress configuration is present".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
 pub struct HostedRunner {
     session: CapturingSession<HostDecisionLog, BufferingRuntimeInvoker>,
     decision_log: HostDecisionLog,
@@ -97,6 +182,7 @@ pub struct HostedRunner {
     egress: Option<EgressRuntime>,
     egress_provenance: Option<String>,
     replay_external_kinds: HashSet<String>,
+    capture_finalization_state: CaptureFinalizationState,
     #[cfg(test)]
     last_step_mode: Option<StepMode>,
 }
@@ -113,66 +199,39 @@ impl HostedRunner {
         replay_external_kinds: Option<HashSet<String>>,
     ) -> Result<Self, HostedStepError> {
         let graph_emittable_effect_kinds = runtime.graph_emittable_effect_kinds();
-        let mut handlers: BTreeMap<String, Arc<dyn EffectHandler>> = BTreeMap::new();
-        handlers.insert("set_context".to_string(), Arc::new(SetContextHandler));
-        let handler_kinds: BTreeSet<String> = handlers.keys().cloned().collect();
-
-        if egress_config.is_some() && replay_external_kinds.is_some() {
-            return Err(HostedStepError::EgressValidation(
-                "replay ownership cannot be supplied when live egress configuration is present"
-                    .to_string(),
-            ));
-        }
-
         let replay_external_kinds = replay_external_kinds.unwrap_or_default();
-        if let Some(conflict) = replay_external_kinds
-            .iter()
-            .find(|kind| handler_kinds.contains(*kind))
-        {
-            return Err(HostedStepError::EgressValidation(format!(
-                "replay-owned effect kind '{}' conflicts with handler-owned kind",
-                conflict
-            )));
-        }
+        validate_hosted_runner_configuration(
+            adapter.as_ref(),
+            egress_config.as_ref(),
+            egress_provenance.as_deref(),
+            &replay_external_kinds,
+            &graph_emittable_effect_kinds,
+        )?;
 
+        Ok(Self::new_validated(
+            graph_id,
+            constraints,
+            runtime,
+            runtime_provenance,
+            adapter,
+            egress_config,
+            egress_provenance,
+            replay_external_kinds,
+        ))
+    }
+
+    pub(crate) fn new_validated(
+        graph_id: GraphId,
+        constraints: Constraints,
+        runtime: RuntimeHandle,
+        runtime_provenance: String,
+        adapter: Option<HostedAdapterConfig>,
+        egress_config: Option<EgressConfig>,
+        egress_provenance: Option<String>,
+        replay_external_kinds: HashSet<String>,
+    ) -> Self {
+        let handlers = default_handlers();
         let egress = egress_config.map(EgressRuntime::new);
-        if let Some(config) = &adapter {
-            if let Some(egress_runtime) = &egress {
-                let warnings = validate_egress_config(
-                    egress_runtime.config(),
-                    &config.provides,
-                    &graph_emittable_effect_kinds,
-                    &handler_kinds,
-                )?;
-                log_egress_warnings(&warnings);
-            } else {
-                ensure_handler_coverage(
-                    &config.provides,
-                    &graph_emittable_effect_kinds,
-                    &handler_kinds,
-                    &replay_external_kinds,
-                )?;
-            }
-        } else if egress.is_some() {
-            return Err(HostedStepError::EgressValidation(
-                "egress configuration requires adapter-bound mode".to_string(),
-            ));
-        } else if !replay_external_kinds.is_empty() {
-            return Err(HostedStepError::EgressValidation(
-                "replay ownership requires adapter-bound mode".to_string(),
-            ));
-        }
-        if egress.is_none() && egress_provenance.is_some() {
-            return Err(HostedStepError::EgressValidation(
-                "egress provenance requires egress configuration".to_string(),
-            ));
-        }
-        if egress.is_some() && egress_provenance.is_none() {
-            return Err(HostedStepError::EgressValidation(
-                "egress provenance is required when egress configuration is present".to_string(),
-            ));
-        }
-
         let runtime = BufferingRuntimeInvoker::new(runtime);
         let decision_log = HostDecisionLog::default();
 
@@ -195,7 +254,7 @@ impl HostedRunner {
             binder: config.binder,
         });
 
-        Ok(Self {
+        Self {
             session,
             decision_log,
             runtime,
@@ -209,21 +268,45 @@ impl HostedRunner {
             egress,
             egress_provenance,
             replay_external_kinds,
+            capture_finalization_state: CaptureFinalizationState::NoCommittedSteps,
             #[cfg(test)]
             last_step_mode: None,
-        })
+        }
     }
 
     pub fn step(&mut self, event: HostedEvent) -> Result<HostedStepOutcome, HostedStepError> {
-        let external_event = self.build_external_event(event)?;
-        self.execute_step(external_event, StepMode::Live)
+        self.ensure_step_allowed()?;
+        let external_event = match self.build_external_event(event) {
+            Ok(external_event) => external_event,
+            Err(err) => {
+                self.record_step_error(&err);
+                return Err(err);
+            }
+        };
+        self.execute_public_step(external_event, StepMode::Live)
     }
 
     pub fn replay_step(
         &mut self,
         external_event: ExternalEvent,
     ) -> Result<HostedStepOutcome, HostedStepError> {
-        self.execute_step(external_event, StepMode::Replay)
+        self.ensure_step_allowed()?;
+        self.execute_public_step(external_event, StepMode::Replay)
+    }
+
+    fn execute_public_step(
+        &mut self,
+        external_event: ExternalEvent,
+        mode: StepMode,
+    ) -> Result<HostedStepOutcome, HostedStepError> {
+        let outcome = self.execute_step(external_event, mode);
+        match &outcome {
+            Ok(_) => {
+                self.capture_finalization_state = CaptureFinalizationState::Eligible;
+            }
+            Err(err) => self.record_step_error(err),
+        }
+        outcome
     }
 
     fn execute_step(
@@ -534,9 +617,56 @@ impl HostedRunner {
         self.context_store.snapshot()
     }
 
+    pub(crate) fn ensure_capture_finalizable(&self) -> Result<(), HostedStepError> {
+        match self.capture_finalization_state {
+            CaptureFinalizationState::NoCommittedSteps => {
+                Err(HostedStepError::LifecycleViolation {
+                    detail: "hosted runner cannot finalize before the first committed step"
+                        .to_string(),
+                })
+            }
+            CaptureFinalizationState::Fatal => Err(HostedStepError::LifecycleViolation {
+                detail: "hosted runner cannot finalize after a non-finalizable step error"
+                    .to_string(),
+            }),
+            CaptureFinalizationState::Eligible | CaptureFinalizationState::FinalizeOnly => Ok(()),
+        }
+    }
+
+    fn ensure_step_allowed(&self) -> Result<(), HostedStepError> {
+        match self.capture_finalization_state {
+            CaptureFinalizationState::FinalizeOnly => {
+                Err(HostedStepError::LifecycleViolation {
+                    detail:
+                        "hosted runner must be finalized after egress dispatch failure before stepping again"
+                            .to_string(),
+                })
+            }
+            CaptureFinalizationState::Fatal => Err(HostedStepError::LifecycleViolation {
+                detail: "hosted runner cannot continue after a non-finalizable step error"
+                    .to_string(),
+            }),
+            CaptureFinalizationState::NoCommittedSteps | CaptureFinalizationState::Eligible => {
+                Ok(())
+            }
+        }
+    }
+
     #[cfg(test)]
     fn last_step_mode(&self) -> Option<StepMode> {
         self.last_step_mode
+    }
+
+    fn record_step_error(&mut self, err: &HostedStepError) {
+        match err {
+            HostedStepError::EgressDispatchFailure(_) => {
+                self.capture_finalization_state = CaptureFinalizationState::FinalizeOnly;
+            }
+            err if is_recoverable_step_error(err) => {}
+            _ => {
+                self.capture_finalization_state = CaptureFinalizationState::Fatal;
+            }
+        }
     }
 
     fn build_external_event(&self, event: HostedEvent) -> Result<ExternalEvent, HostedStepError> {
@@ -597,6 +727,19 @@ impl HostedRunner {
             )),
         }
     }
+}
+
+fn is_recoverable_step_error(err: &HostedStepError) -> bool {
+    matches!(
+        err,
+        HostedStepError::DuplicateEventId { .. }
+            | HostedStepError::MissingSemanticKind
+            | HostedStepError::MissingPayload
+            | HostedStepError::PayloadMustBeObject
+            | HostedStepError::UnknownSemanticKind { .. }
+            | HostedStepError::BindingError(_)
+            | HostedStepError::EventBuildError(_)
+    )
 }
 
 fn allowed_schema_keys(
@@ -1703,6 +1846,71 @@ mod tests {
         assert!(matches!(
             err,
             HostedStepError::DuplicateEventId { event_id } if event_id == "dup_evt"
+        ));
+    }
+
+    #[test]
+    fn fatal_step_error_is_sticky_for_future_steps_and_finalization() {
+        let provides = adapter_provides_with_effects(&[]);
+        let runtime = runtime_for_graph(build_context_set_bool_graph(), provides.clone());
+        let adapter = adapter_config(provides);
+        let mut runner = HostedRunner::new(
+            GraphId::new("g"),
+            Constraints::default(),
+            runtime,
+            "runtime:test".to_string(),
+            Some(adapter),
+            None,
+            None,
+            None,
+        )
+        .expect("hosted runner should initialize");
+
+        let bypass = ergo_adapter::ExternalEvent::with_payload(
+            EventId::new("bypass"),
+            ExternalEventKind::Command,
+            EventTime::default(),
+            ergo_adapter::EventPayload {
+                data: br#"{"price":101.5}"#.to_vec(),
+            },
+        )
+        .expect("bypass event should construct");
+        runner.session.on_event(bypass);
+
+        let first_err = runner
+            .step(HostedEvent {
+                event_id: "e1".to_string(),
+                kind: ExternalEventKind::Command,
+                at: EventTime::default(),
+                semantic_kind: Some("price_bar".to_string()),
+                payload: Some(serde_json::json!({"price": 101.5})),
+            })
+            .expect_err("pending-effect lifecycle violation should be fatal");
+        assert!(matches!(
+            first_err,
+            HostedStepError::LifecycleViolation { .. }
+        ));
+
+        let second_err = runner
+            .step(HostedEvent {
+                event_id: "e2".to_string(),
+                kind: ExternalEventKind::Command,
+                at: EventTime::default(),
+                semantic_kind: Some("price_bar".to_string()),
+                payload: Some(serde_json::json!({"price": 102.0})),
+            })
+            .expect_err("fatal state should block future steps");
+        assert!(matches!(
+            second_err,
+            HostedStepError::LifecycleViolation { .. }
+        ));
+
+        let finalize_err = runner
+            .ensure_capture_finalizable()
+            .expect_err("fatal state should block finalization");
+        assert!(matches!(
+            finalize_err,
+            HostedStepError::LifecycleViolation { .. }
         ));
     }
 }

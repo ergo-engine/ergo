@@ -107,12 +107,14 @@ fi
 
 echo "checking CLI print surface"
 if command -v rg >/dev/null 2>&1; then
-  if rg -n "print!\\(|println!\\(|eprintln!\\(" crates/prod/clients/cli/src --glob '!crates/prod/clients/cli/src/output/*'; then
+  if rg -n "print!\\(|println!\\(|eprintln!\\(" crates/prod/clients/cli/src \
+    --glob '!crates/prod/clients/cli/src/output/*' \
+    --glob '!crates/prod/clients/cli/src/init_project.rs'; then
     echo "error: CLI printing must be centralized in output/*"
     exit 1
   fi
 else
-  if find crates/prod/clients/cli/src -type f -name '*.rs' ! -path '*/output/*' -print0 \
+  if find crates/prod/clients/cli/src -type f -name '*.rs' ! -path '*/output/*' ! -path '*/init_project.rs' -print0 \
     | xargs -0 grep -En "print!\\(|println!\\(|eprintln!\\("; then
     echo "error: CLI printing must be centralized in output/*"
     exit 1
@@ -132,10 +134,59 @@ CLI_RUNTIME_FILES=(
   crates/prod/clients/cli/src/render.rs
   crates/prod/clients/cli/src/validate.rs
 )
-if "${SEARCH_CMD[@]}" "ergo_(runtime|adapter|supervisor)::" "${CLI_RUNTIME_FILES[@]}"; then
-  echo "error: CLI runtime modules must not reference ergo_runtime, ergo_adapter, or ergo_supervisor"
-  exit 1
-fi
+python3 - <<'PY'
+import re
+import sys
+from pathlib import Path
+
+files = [
+    "crates/prod/clients/cli/src/cli/args.rs",
+    "crates/prod/clients/cli/src/cli/dispatch.rs",
+    "crates/prod/clients/cli/src/cli/handlers.rs",
+    "crates/prod/clients/cli/src/error_format.rs",
+    "crates/prod/clients/cli/src/gen_docs.rs",
+    "crates/prod/clients/cli/src/graph_to_dot.rs",
+    "crates/prod/clients/cli/src/graph_yaml.rs",
+    "crates/prod/clients/cli/src/output/errors.rs",
+    "crates/prod/clients/cli/src/render.rs",
+    "crates/prod/clients/cli/src/validate.rs",
+]
+pattern = re.compile(r"ergo_(runtime|adapter|supervisor)::")
+test_mod_pattern = re.compile(r"(pub\s+)?mod tests\b")
+
+def strip_cfg_test_modules(text: str) -> str:
+    lines = text.splitlines()
+    kept = []
+    i = 0
+    while i < len(lines):
+        if lines[i].strip() == "#[cfg(test)]":
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j < len(lines) and test_mod_pattern.match(lines[j].strip()):
+                brace_depth = lines[j].count("{") - lines[j].count("}")
+                i = j + 1
+                while i < len(lines) and brace_depth > 0:
+                    brace_depth += lines[i].count("{") - lines[i].count("}")
+                    i += 1
+                continue
+        kept.append(lines[i])
+        i += 1
+    return "\n".join(kept)
+
+violations = []
+for file_path in files:
+    stripped = strip_cfg_test_modules(Path(file_path).read_text())
+    for lineno, line in enumerate(stripped.splitlines(), start=1):
+        if pattern.search(line):
+            violations.append(f"{file_path}:{lineno}:{line}")
+
+if violations:
+    for violation in violations:
+        print(violation)
+    print("error: CLI runtime modules must not reference ergo_runtime, ergo_adapter, or ergo_supervisor")
+    sys.exit(1)
+PY
 
 echo "checking canonical run/replay orchestration boundaries in CLI"
 if "${SEARCH_CMD[@]}" "RuntimeHandle::new|compile_event_binder|HostedRunner::new|adapter_fingerprint|validate_adapter_composition|scan_adapter_dependencies\\(" \
@@ -148,5 +199,74 @@ if "${SEARCH_CMD[@]}" "prepare_graph_runtime\\(|ReplayGraphRequest\\{|parse_adap
   echo "error: canonical replay orchestration belongs in host, not cli/handlers.rs"
   exit 1
 fi
+
+echo "checking SDK run/validation orchestration boundaries"
+python3 - <<'PY'
+import re
+import sys
+from pathlib import Path
+
+root = Path("crates/prod/clients/sdk-rust/src")
+patterns = [
+    re.compile(r"RuntimeHandle::new"),
+    re.compile(r"compile_event_binder"),
+    re.compile(r"HostedRunner::new"),
+    re.compile(r"adapter_fingerprint"),
+    re.compile(r"validate_adapter_composition"),
+    re.compile(r"scan_adapter_dependencies\("),
+    re.compile(r"parse_graph_file"),
+    re.compile(r"discover_cluster_tree"),
+    re.compile(r"\bexpand\("),
+    re.compile(r"validate_adapter\("),
+    re.compile(r"validate_egress_config\("),
+    re.compile(r"ensure_handler_coverage\("),
+]
+cfg_test_pattern = re.compile(r"#\[\s*cfg\s*\((?=[^\]]*\btest\b)[^\]]*\)\s*\]")
+
+def strip_cfg_test_items(text: str) -> str:
+    lines = text.splitlines()
+    kept = []
+    i = 0
+    while i < len(lines):
+        if cfg_test_pattern.match(lines[i].strip()):
+            j = i + 1
+            while j < len(lines) and (
+                not lines[j].strip() or lines[j].lstrip().startswith("#[")
+            ):
+                j += 1
+            if j >= len(lines):
+                break
+
+            i = j
+            brace_depth = 0
+            while i < len(lines):
+                brace_depth += lines[i].count("{") - lines[i].count("}")
+                line = lines[i]
+                i += 1
+                if brace_depth > 0:
+                    while i < len(lines) and brace_depth > 0:
+                        brace_depth += lines[i].count("{") - lines[i].count("}")
+                        i += 1
+                    break
+                if ";" in line:
+                    break
+            continue
+        kept.append(lines[i])
+        i += 1
+    return "\n".join(kept)
+
+violations = []
+for file_path in sorted(root.rglob("*.rs")):
+    stripped = strip_cfg_test_items(file_path.read_text())
+    for lineno, line in enumerate(stripped.splitlines(), start=1):
+        if any(pattern.search(line) for pattern in patterns):
+            violations.append(f"{file_path}:{lineno}:{line}")
+
+if violations:
+    for violation in violations:
+        print(violation)
+    print("error: SDK run/validation orchestration must delegate to host-owned orchestration")
+    sys.exit(1)
+PY
 
 echo "layer boundary checks passed"

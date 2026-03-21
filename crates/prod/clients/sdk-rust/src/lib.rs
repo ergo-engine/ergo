@@ -4,35 +4,28 @@
 //! inside a Rust crate. It wraps the existing canonical host run and
 //! replay paths without introducing a second execution model.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use ergo_adapter::host::ensure_handler_coverage;
-use ergo_adapter::{validate_adapter, AdapterManifest, AdapterProvides};
 use ergo_host::{
-    parse_egress_config_toml, replay_graph_from_paths_with_surfaces,
-    run_graph_from_paths_with_surfaces_and_control, scan_adapter_dependencies,
-    validate_adapter_composition, validate_egress_config, DriverConfig, EgressConfig,
-    HostReplayError, HostRunError, HostStopHandle, ReplayGraphFromPathsRequest,
-    ReplayGraphResult, RunControl, RunGraphFromPathsRequest, RunOutcome, RuntimeSurfaces,
+    finalize_hosted_runner_capture, parse_egress_config_toml,
+    prepare_hosted_runner_from_paths_with_surfaces, replay_graph_from_paths_with_surfaces,
+    run_graph_from_paths_with_surfaces_and_control, validate_graph_from_paths_with_surfaces,
+    DriverConfig, EgressConfig, HostReplayError, HostRunError, HostStopHandle, HostedRunner,
+    PrepareHostedRunnerFromPathsRequest, ReplayGraphFromPathsRequest, ReplayGraphResult,
+    RunControl, RunGraphFromPathsRequest, RunOutcome, RuntimeSurfaces,
 };
 use ergo_loader::{
-    load_project, parse_graph_file, ProjectError as LoaderProjectError, ResolvedProject,
-    ResolvedProjectIngress, ResolvedProjectProfile,
+    load_project, ProjectError as LoaderProjectError, ResolvedProject, ResolvedProjectIngress,
+    ResolvedProjectProfile,
 };
-use ergo_runtime::catalog::{
-    CatalogBuilder, CorePrimitiveCatalog, CoreRegistrationError, CoreRegistries,
-};
-use ergo_runtime::cluster::{
-    expand, ClusterDefinition, ClusterLoader, ClusterVersionIndex, ExpandError, ExpandedGraph,
-    PrimitiveCatalog, PrimitiveKind, Version, VersionTargetKind,
-};
-use ergo_runtime::common::ErrorInfo;
+use ergo_runtime::catalog::{CatalogBuilder, CoreRegistrationError};
 
 pub use ergo_host::{
-    EgressChannelConfig, EgressRoute, InterruptedRun, InterruptionReason, RunSummary,
+    write_capture_bundle, CaptureBundle, CaptureJsonStyle, EgressChannelConfig,
+    EgressDispatchFailure, EgressRoute, HostedEvent, HostedStepError, HostedStepOutcome,
+    InterruptedRun, InterruptionReason, RunSummary,
 };
 pub use ergo_runtime::catalog::{build_core, build_core_catalog, core_registries};
 pub use ergo_runtime::runtime::ExecutionContext;
@@ -180,6 +173,60 @@ impl std::error::Error for ErgoValidateError {
             Self::Validation { .. } => None,
         }
     }
+}
+
+/// Manual-runner setup currently reports the same project/host error surface as
+/// profile execution. Keep the alias so callers can name the runner-specific
+/// result today; if the surfaces diverge later this can become a distinct type
+/// without renaming the API.
+pub type ErgoRunnerError = ErgoRunError;
+
+#[derive(Debug)]
+pub enum ProfileRunnerCaptureError {
+    Finish(HostedStepError),
+    CaptureOutputNotConfigured,
+    Write {
+        detail: String,
+        bundle: CaptureBundle,
+    },
+}
+
+impl std::fmt::Display for ProfileRunnerCaptureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Finish(err) => write!(f, "{err}"),
+            Self::CaptureOutputNotConfigured => {
+                write!(f, "profile does not declare capture_output")
+            }
+            Self::Write { detail, .. } => write!(f, "{detail}"),
+        }
+    }
+}
+
+impl std::error::Error for ProfileRunnerCaptureError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Finish(err) => Some(err),
+            Self::CaptureOutputNotConfigured | Self::Write { .. } => None,
+        }
+    }
+}
+
+impl ProfileRunnerCaptureError {
+    pub fn capture_bundle(&self) -> Option<&CaptureBundle> {
+        match self {
+            Self::Write { bundle, .. } => Some(bundle),
+            Self::Finish(_) | Self::CaptureOutputNotConfigured => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProfileRunnerState {
+    Active,
+    FinalizableAfterDispatchFailure,
+    Failed,
+    Finished,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -369,8 +416,7 @@ impl ErgoBuilder {
             .build()
             .map_err(format_registration_error)?;
         Ok(Ergo {
-            registries,
-            catalog,
+            runtime_surfaces: RuntimeSurfaces::new(registries, catalog),
             project_root: self.project_root,
         })
     }
@@ -378,16 +424,11 @@ impl ErgoBuilder {
 
 /// Built Ergo engine handle.
 ///
-/// The current SDK exposes `Ergo` as a one-shot handle: `run`,
-/// `run_profile`, `replay`, `replay_profile`, and `validate_project`
-/// consume `self`.
-///
-/// Build a fresh handle for each operation. A reusable engine handle is
-/// planned as a future ergonomics improvement once the underlying
-/// ownership model is factored cleanly for it.
+/// One built `Ergo` handle may be reused for multiple operations on the
+/// same thread. Reuse preserves the existing primitive instances behind
+/// the handle under the current in-process trust model.
 pub struct Ergo {
-    registries: CoreRegistries,
-    catalog: CorePrimitiveCatalog,
+    runtime_surfaces: RuntimeSurfaces,
     project_root: Option<PathBuf>,
 }
 
@@ -400,12 +441,12 @@ impl Ergo {
         ErgoBuilder::new().project_root(path)
     }
 
-    pub fn run(self, config: RunConfig) -> Result<RunOutcome, ErgoRunError> {
+    pub fn run(&self, config: RunConfig) -> Result<RunOutcome, ErgoRunError> {
         self.run_with_control(config, RunControl::default())
     }
 
     pub fn run_with_stop(
-        self,
+        &self,
         config: RunConfig,
         stop: StopHandle,
     ) -> Result<RunOutcome, ErgoRunError> {
@@ -416,7 +457,7 @@ impl Ergo {
     }
 
     fn run_with_control(
-        self,
+        &self,
         config: RunConfig,
         control: RunControl,
     ) -> Result<RunOutcome, ErgoRunError> {
@@ -428,18 +469,18 @@ impl Ergo {
 
         run_graph_from_paths_with_surfaces_and_control(
             request,
-            RuntimeSurfaces::new(self.registries, self.catalog),
+            self.runtime_surfaces.clone(),
             run_control_from_config(&config, control),
         )
         .map_err(ErgoRunError::Host)
     }
 
-    pub fn run_profile(self, profile_name: &str) -> Result<RunOutcome, ErgoRunError> {
+    pub fn run_profile(&self, profile_name: &str) -> Result<RunOutcome, ErgoRunError> {
         self.run_profile_with_control(profile_name, RunControl::default())
     }
 
     pub fn run_profile_with_stop(
-        self,
+        &self,
         profile_name: &str,
         stop: StopHandle,
     ) -> Result<RunOutcome, ErgoRunError> {
@@ -450,19 +491,17 @@ impl Ergo {
     }
 
     fn run_profile_with_control(
-        self,
+        &self,
         profile_name: &str,
         control: RunControl,
     ) -> Result<RunOutcome, ErgoRunError> {
-        let project = self.load_project().map_err(ErgoRunError::Project)?;
-        let resolved = project
+        let resolved = self
             .resolve_run_profile(profile_name)
-            .map_err(ProjectError::from)
             .map_err(ErgoRunError::Project)?;
         self.run_with_control(run_config_from_resolved_profile(resolved), control)
     }
 
-    pub fn replay(self, config: ReplayConfig) -> Result<ReplayGraphResult, ErgoReplayError> {
+    pub fn replay(&self, config: ReplayConfig) -> Result<ReplayGraphResult, ErgoReplayError> {
         replay_graph_from_paths_with_surfaces(
             ReplayGraphFromPathsRequest {
                 capture_path: config.capture_path,
@@ -470,35 +509,41 @@ impl Ergo {
                 cluster_paths: config.cluster_paths,
                 adapter_path: config.adapter_path,
             },
-            RuntimeSurfaces::new(self.registries, self.catalog),
+            self.runtime_surfaces.clone(),
         )
         .map_err(ErgoReplayError::Host)
     }
 
     pub fn replay_profile(
-        self,
+        &self,
         profile_name: &str,
         capture_path: impl AsRef<Path>,
     ) -> Result<ReplayGraphResult, ErgoReplayError> {
-        let project = self.load_project().map_err(ErgoReplayError::Project)?;
-        let resolved = project
+        let resolved = self
             .resolve_run_profile(profile_name)
-            .map_err(ProjectError::from)
             .map_err(ErgoReplayError::Project)?;
         self.replay(replay_config_from_resolved_profile(resolved, capture_path))
     }
 
-    pub fn validate_project(self) -> Result<ProjectSummary, ErgoValidateError> {
+    pub fn validate_project(&self) -> Result<ProjectSummary, ErgoValidateError> {
         let project = self.load_project().map_err(ErgoValidateError::Project)?;
-        for profile_name in project.profile_names() {
-            let resolved = project
-                .resolve_run_profile(&profile_name)
-                .map_err(ProjectError::from)
+        let profiles = project.profile_names();
+        for profile_name in &profiles {
+            let resolved = Self::resolve_run_profile_from_project(&project, profile_name)
                 .map_err(ErgoValidateError::Project)?;
-            validate_profile(&profile_name, &resolved, &self.catalog, &self.registries)?;
+            let request = self
+                .prepare_host_request_from_profile(&resolved)
+                .map_err(|err| ErgoValidateError::Validation {
+                    profile: profile_name.clone(),
+                    detail: err.to_string(),
+                })?;
+            validate_graph_from_paths_with_surfaces(request, self.runtime_surfaces.clone())
+                .map_err(|err| ErgoValidateError::Validation {
+                    profile: profile_name.clone(),
+                    detail: err.to_string(),
+                })?;
         }
 
-        let profiles = project.profile_names();
         Ok(ProjectSummary {
             root: project.root.clone(),
             name: project.manifest.name,
@@ -513,6 +558,171 @@ impl Ergo {
             .as_deref()
             .ok_or(ProjectError::ProjectRootRequired)?;
         load_project(project_root).map_err(ProjectError::from)
+    }
+
+    fn resolve_run_profile(
+        &self,
+        profile_name: &str,
+    ) -> Result<ResolvedProjectProfile, ProjectError> {
+        let project = self.load_project()?;
+        Self::resolve_run_profile_from_project(&project, profile_name)
+    }
+
+    fn resolve_run_profile_from_project(
+        project: &ResolvedProject,
+        profile_name: &str,
+    ) -> Result<ResolvedProjectProfile, ProjectError> {
+        project
+            .resolve_run_profile(profile_name)
+            .map_err(ProjectError::from)
+    }
+
+    fn prepare_host_request_from_profile(
+        &self,
+        profile: &ResolvedProjectProfile,
+    ) -> Result<PrepareHostedRunnerFromPathsRequest, ProjectError> {
+        let egress_config = profile
+            .egress_config_path
+            .as_deref()
+            .map(load_egress_config)
+            .transpose()
+            .map_err(|detail| ProjectError::ConfigInvalid { detail })?;
+        Ok(PrepareHostedRunnerFromPathsRequest {
+            graph_path: profile.graph_path.clone(),
+            cluster_paths: profile.cluster_paths.clone(),
+            adapter_path: profile.adapter_path.clone(),
+            egress_config,
+        })
+    }
+
+    pub fn runner_for_profile(&self, profile_name: &str) -> Result<ProfileRunner, ErgoRunnerError> {
+        let resolved = self
+            .resolve_run_profile(profile_name)
+            .map_err(ErgoRunnerError::Project)?;
+        let request = self
+            .prepare_host_request_from_profile(&resolved)
+            .map_err(ErgoRunnerError::Project)?;
+        let runner =
+            prepare_hosted_runner_from_paths_with_surfaces(request, self.runtime_surfaces.clone())
+                .map_err(ErgoRunnerError::Host)?;
+
+        Ok(ProfileRunner {
+            runner: Some(runner),
+            capture_output: resolved.capture_output.clone(),
+            pretty_capture: resolved.pretty_capture,
+            state: ProfileRunnerState::Active,
+            successful_steps: 0,
+        })
+    }
+}
+
+pub struct ProfileRunner {
+    runner: Option<HostedRunner>,
+    capture_output: Option<PathBuf>,
+    pretty_capture: bool,
+    state: ProfileRunnerState,
+    successful_steps: usize,
+}
+
+impl ProfileRunner {
+    pub fn step(&mut self, event: HostedEvent) -> Result<HostedStepOutcome, HostedStepError> {
+        match self.state {
+            ProfileRunnerState::Active => {}
+            ProfileRunnerState::FinalizableAfterDispatchFailure => {
+                return Err(lifecycle_violation(
+                    "profile runner must be finalized after egress dispatch failure before stepping again",
+                ));
+            }
+            ProfileRunnerState::Failed => {
+                return Err(lifecycle_violation(
+                    "profile runner cannot continue after a non-finalizable step error",
+                ));
+            }
+            ProfileRunnerState::Finished => {
+                return Err(lifecycle_violation("profile runner is already finished"));
+            }
+        }
+
+        let runner = self
+            .runner
+            .as_mut()
+            .expect("active profile runner must hold hosted runner");
+        match runner.step(event) {
+            Ok(outcome) => {
+                self.successful_steps += 1;
+                Ok(outcome)
+            }
+            Err(HostedStepError::EgressDispatchFailure(failure)) => {
+                self.state = ProfileRunnerState::FinalizableAfterDispatchFailure;
+                Err(HostedStepError::EgressDispatchFailure(failure))
+            }
+            Err(err) => {
+                if !is_recoverable_step_error(&err) {
+                    self.state = ProfileRunnerState::Failed;
+                }
+                Err(err)
+            }
+        }
+    }
+
+    pub fn context_snapshot(
+        &self,
+    ) -> Result<&std::collections::BTreeMap<String, serde_json::Value>, HostedStepError> {
+        let Some(runner) = self.runner.as_ref() else {
+            return Err(lifecycle_violation("profile runner is already finished"));
+        };
+        Ok(runner.context_snapshot())
+    }
+
+    pub fn capture_output_path(&self) -> Option<&Path> {
+        self.capture_output.as_deref()
+    }
+
+    pub fn pretty_capture(&self) -> bool {
+        self.pretty_capture
+    }
+
+    pub fn finish(&mut self) -> Result<CaptureBundle, HostedStepError> {
+        match self.state {
+            ProfileRunnerState::Finished => {
+                return Err(lifecycle_violation("profile runner is already finished"));
+            }
+            ProfileRunnerState::Failed => {
+                return Err(lifecycle_violation(
+                    "profile runner cannot finalize after a non-finalizable step error",
+                ));
+            }
+            ProfileRunnerState::Active if self.successful_steps == 0 => {
+                return Err(lifecycle_violation(
+                    "profile runner cannot finalize before the first successful step",
+                ));
+            }
+            ProfileRunnerState::Active | ProfileRunnerState::FinalizableAfterDispatchFailure => {}
+        }
+
+        self.state = ProfileRunnerState::Finished;
+        let runner = self
+            .runner
+            .take()
+            .expect("unfinished profile runner must hold hosted runner");
+        finalize_hosted_runner_capture(runner, false)
+    }
+
+    pub fn finish_and_write_capture(&mut self) -> Result<CaptureBundle, ProfileRunnerCaptureError> {
+        let capture_path = self
+            .capture_output
+            .clone()
+            .ok_or(ProfileRunnerCaptureError::CaptureOutputNotConfigured)?;
+        let bundle = self.finish().map_err(ProfileRunnerCaptureError::Finish)?;
+        let style = if self.pretty_capture {
+            CaptureJsonStyle::Pretty
+        } else {
+            CaptureJsonStyle::Compact
+        };
+        match write_capture_bundle(&capture_path, &bundle, style) {
+            Ok(()) => Ok(bundle),
+            Err(detail) => Err(ProfileRunnerCaptureError::Write { detail, bundle }),
+        }
     }
 }
 
@@ -537,40 +747,6 @@ fn run_config_from_resolved_profile(profile: ResolvedProjectProfile) -> RunConfi
     }
 }
 
-fn summarize_expand_error(
-    err: &ExpandError,
-    cluster_sources: &HashMap<(String, Version), PathBuf>,
-) -> String {
-    let base = format!("{} ({})", err.summary(), err.rule_id());
-    match err {
-        ExpandError::UnsatisfiedVersionConstraint {
-            target_kind: VersionTargetKind::Cluster,
-            id,
-            available_versions,
-            ..
-        } => {
-            let available = available_versions
-                .iter()
-                .filter_map(|version| {
-                    cluster_sources
-                        .get(&(id.clone(), version.clone()))
-                        .map(|path| format!("- {}@{} at {}", id, version, path.display()))
-                })
-                .collect::<Vec<_>>();
-            if available.is_empty() {
-                base
-            } else {
-                format!(
-                    "{}\navailable cluster files:\n{}",
-                    base,
-                    available.join("\n")
-                )
-            }
-        }
-        _ => base,
-    }
-}
-
 fn replay_config_from_resolved_profile(
     profile: ResolvedProjectProfile,
     capture_path: impl AsRef<Path>,
@@ -583,39 +759,29 @@ fn replay_config_from_resolved_profile(
     }
 }
 
-#[derive(Clone)]
-struct PreloadedClusterLoader {
-    clusters: HashMap<(String, Version), ClusterDefinition>,
-}
-
-impl PreloadedClusterLoader {
-    fn new(clusters: HashMap<(String, Version), ClusterDefinition>) -> Self {
-        Self { clusters }
-    }
-}
-
-impl ClusterLoader for PreloadedClusterLoader {
-    fn load(&self, id: &str, version: &Version) -> Option<ClusterDefinition> {
-        self.clusters
-            .get(&(id.to_string(), version.clone()))
-            .cloned()
-    }
-}
-
-impl ClusterVersionIndex for PreloadedClusterLoader {
-    fn available_versions(&self, id: &str) -> Vec<Version> {
-        let mut versions = self
-            .clusters
-            .keys()
-            .filter_map(|(candidate_id, version)| (candidate_id == id).then(|| version.clone()))
-            .collect::<Vec<_>>();
-        versions.sort();
-        versions
-    }
-}
-
 fn format_registration_error(err: CoreRegistrationError) -> ErgoBuildError {
     ErgoBuildError::Registration(format!("primitive registration failed: {err:?}"))
+}
+
+fn lifecycle_violation(detail: impl Into<String>) -> HostedStepError {
+    HostedStepError::LifecycleViolation {
+        detail: detail.into(),
+    }
+}
+
+// Caller-input validation failures happen before the host runner commits a step,
+// so the manual-stepping wrapper should let callers correct and continue.
+fn is_recoverable_step_error(err: &HostedStepError) -> bool {
+    matches!(
+        err,
+        HostedStepError::DuplicateEventId { .. }
+            | HostedStepError::MissingSemanticKind
+            | HostedStepError::MissingPayload
+            | HostedStepError::PayloadMustBeObject
+            | HostedStepError::UnknownSemanticKind { .. }
+            | HostedStepError::BindingError(_)
+            | HostedStepError::EventBuildError(_)
+    )
 }
 
 fn run_request_from_config(config: &RunConfig) -> Result<RunGraphFromPathsRequest, String> {
@@ -668,185 +834,10 @@ fn load_egress_config(path: &Path) -> Result<EgressConfig, String> {
         .map_err(|err| format!("failed to parse egress config '{}': {err}", path.display()))
 }
 
-fn parse_adapter_manifest(path: &Path) -> Result<AdapterManifest, String> {
-    let data = fs::read_to_string(path).map_err(|err| {
-        format!(
-            "failed to read adapter manifest '{}': {err}",
-            path.display()
-        )
-    })?;
-    let value = serde_yaml::from_str::<serde_json::Value>(&data).map_err(|err| {
-        format!(
-            "failed to parse adapter manifest '{}': {err}",
-            path.display()
-        )
-    })?;
-    serde_json::from_value::<AdapterManifest>(value).map_err(|err| {
-        format!(
-            "failed to decode adapter manifest '{}': {err}",
-            path.display()
-        )
-    })
-}
-
-fn validate_profile(
-    profile_name: &str,
-    profile: &ResolvedProjectProfile,
-    catalog: &CorePrimitiveCatalog,
-    registries: &CoreRegistries,
-) -> Result<(), ErgoValidateError> {
-    let root =
-        parse_graph_file(&profile.graph_path).map_err(|err| ErgoValidateError::Validation {
-            profile: profile_name.to_string(),
-            detail: format!("graph parse failed: {err}"),
-        })?;
-    let discovery = ergo_loader::discovery::discover_cluster_tree(
-        &profile.graph_path,
-        &root,
-        &profile.cluster_paths,
-    )
-    .map_err(|err| ErgoValidateError::Validation {
-        profile: profile_name.to_string(),
-        detail: format!("cluster discovery failed: {err}"),
-    })?;
-    let cluster_sources = discovery.cluster_sources;
-    let clusters = discovery.clusters;
-    let loader = PreloadedClusterLoader::new(clusters);
-    let expanded =
-        expand(&root, &loader, catalog).map_err(|err| ErgoValidateError::Validation {
-            profile: profile_name.to_string(),
-            detail: format!(
-                "graph expansion failed: {}",
-                summarize_expand_error(&err, &cluster_sources)
-            ),
-        })?;
-
-    let dependency_summary =
-        scan_adapter_dependencies(&expanded, catalog, registries).map_err(|detail| {
-            ErgoValidateError::Validation {
-                profile: profile_name.to_string(),
-                detail: format!("adapter dependency scan failed: {detail}"),
-            }
-        })?;
-
-    let (adapter_provides, adapter_bound) = match &profile.adapter_path {
-        Some(path) => {
-            let manifest =
-                parse_adapter_manifest(path).map_err(|detail| ErgoValidateError::Validation {
-                    profile: profile_name.to_string(),
-                    detail,
-                })?;
-            validate_adapter(&manifest).map_err(|err| ErgoValidateError::Validation {
-                profile: profile_name.to_string(),
-                detail: format!(
-                    "adapter validation failed: {} ({})",
-                    err.summary(),
-                    err.rule_id()
-                ),
-            })?;
-            let provides = AdapterProvides::from_manifest(&manifest);
-            validate_adapter_composition(&expanded, catalog, registries, &provides).map_err(
-                |detail| ErgoValidateError::Validation {
-                    profile: profile_name.to_string(),
-                    detail: format!("adapter composition failed: {detail}"),
-                },
-            )?;
-            (provides, true)
-        }
-        None => {
-            if dependency_summary.requires_adapter {
-                return Err(ErgoValidateError::Validation {
-                    profile: profile_name.to_string(),
-                    detail:
-                        "graph requires adapter capabilities but profile does not declare adapter"
-                            .to_string(),
-                });
-            }
-            (AdapterProvides::default(), false)
-        }
-    };
-
-    if profile.egress_config_path.is_some() && !adapter_bound {
-        return Err(ErgoValidateError::Validation {
-            profile: profile_name.to_string(),
-            detail: "egress configuration requires adapter-bound mode".to_string(),
-        });
-    }
-
-    let emittable_effect_kinds = graph_emittable_effect_kinds(&expanded, catalog, registries);
-    let handler_kinds = BTreeSet::from(["set_context".to_string()]);
-
-    if let Some(path) = &profile.egress_config_path {
-        let config = load_egress_config(path).map_err(|detail| ErgoValidateError::Validation {
-            profile: profile_name.to_string(),
-            detail,
-        })?;
-        let _warnings = validate_egress_config(
-            &config,
-            &adapter_provides,
-            &emittable_effect_kinds,
-            &handler_kinds,
-        )
-        .map_err(|detail| ErgoValidateError::Validation {
-            profile: profile_name.to_string(),
-            detail: format!("egress validation failed: {detail}"),
-        })?;
-    } else if adapter_bound {
-        ensure_handler_coverage(
-            &adapter_provides,
-            &emittable_effect_kinds,
-            &handler_kinds,
-            &HashSet::new(),
-        )
-        .map_err(|err| ErgoValidateError::Validation {
-            profile: profile_name.to_string(),
-            detail: format!("handler coverage failed: {err}"),
-        })?;
-    }
-
-    Ok(())
-}
-
-fn graph_emittable_effect_kinds(
-    expanded: &ExpandedGraph,
-    catalog: &CorePrimitiveCatalog,
-    registries: &CoreRegistries,
-) -> HashSet<String> {
-    let mut kinds = HashSet::new();
-
-    for node in expanded.nodes.values() {
-        let Some(meta) = catalog.get(&node.implementation.impl_id, &node.implementation.version)
-        else {
-            continue;
-        };
-        if meta.kind != PrimitiveKind::Action {
-            continue;
-        }
-        let Some(action) = registries.actions.get(&node.implementation.impl_id) else {
-            continue;
-        };
-
-        let emits_set_context = !action.manifest().effects.writes.is_empty()
-            || action
-                .manifest()
-                .effects
-                .intents
-                .iter()
-                .any(|intent| !intent.mirror_writes.is_empty());
-        if emits_set_context {
-            kinds.insert("set_context".to_string());
-        }
-        for intent in &action.manifest().effects.intents {
-            kinds.insert(intent.name.clone());
-        }
-    }
-
-    kinds
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ergo_adapter::{EventTime, ExternalEventKind, RunTermination};
     use ergo_runtime::action::{
         ActionEffects, ActionKind, ActionOutcome, ActionPrimitive, ActionPrimitiveManifest,
         ActionValue, ActionValueType, Cardinality as ActionCardinality,
@@ -860,6 +851,7 @@ mod tests {
         OutputSpec as SourceOutputSpec, SourceKind, SourcePrimitive, SourcePrimitiveManifest,
         SourceRequires, StateSpec as SourceStateSpec,
     };
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -1009,6 +1001,182 @@ mod tests {
         path
     }
 
+    fn write_intent_graph(base: &Path, graph_id: &str) -> PathBuf {
+        write_file(
+            base,
+            "graphs/strategy.yaml",
+            &format!(
+                r#"
+kind: cluster
+id: {graph_id}
+version: "0.1.0"
+nodes:
+  gate:
+    impl: const_bool@0.1.0
+    params:
+      value: true
+  emit:
+    impl: emit_if_true@0.1.0
+  qty:
+    impl: injected_number_source@0.1.0
+  place:
+    impl: injected_intent_action@0.1.0
+edges:
+  - "gate.value -> emit.input"
+  - "emit.event -> place.event"
+  - "qty.value -> place.qty"
+outputs:
+  outcome: place.outcome
+"#
+            ),
+        )
+    }
+
+    fn write_intent_adapter_manifest(base: &Path) -> PathBuf {
+        write_file(
+            base,
+            "adapters/trading.yaml",
+            r#"
+kind: adapter
+id: sdk_trading_adapter
+version: 1.0.0
+runtime_compatibility: 0.1.0
+context_keys:
+  - name: last_qty
+    type: Number
+    required: false
+    writable: true
+event_kinds:
+  - name: price_bar
+    payload_schema:
+      type: object
+      properties:
+        price: { type: number }
+      additionalProperties: false
+accepts:
+  effects:
+    - name: set_context
+      payload_schema:
+        type: object
+        additionalProperties: false
+    - name: place_order
+      payload_schema:
+        type: object
+        properties:
+          qty: { type: number }
+        required: [qty]
+        additionalProperties: false
+capture:
+  format_version: "1"
+  fields:
+    - event.price_bar
+    - meta.adapter_id
+    - meta.adapter_version
+    - meta.timestamp
+"#,
+        )
+    }
+
+    fn write_process_ingress_sentinel(base: &Path, sentinel_path: &Path) -> PathBuf {
+        write_file(
+            base,
+            "scripts/ingress.sh",
+            &format!(
+                r#"#!/bin/sh
+printf '%s\n' started > "{sentinel}"
+printf '%s\n' '{{"type":"hello","protocol":"ergo-driver.v0"}}'
+printf '%s\n' '{{"type":"end"}}'
+"#,
+                sentinel = sentinel_path.display()
+            ),
+        )
+    }
+
+    fn write_egress_ack_script(base: &Path) -> PathBuf {
+        write_file(
+            base,
+            "channels/egress/broker.sh",
+            r#"#!/bin/sh
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"intent"'*)
+      intent_id=$(printf '%s' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
+      printf '{"type":"intent_ack","intent_id":"%s","status":"accepted","acceptance":"durable"}\n' "$intent_id"
+      ;;
+    *'"type":"end"'*)
+      exit 0
+      ;;
+  esac
+done
+"#,
+        )
+    }
+
+    fn write_egress_io_script(base: &Path) -> PathBuf {
+        write_file(
+            base,
+            "channels/egress/broker.sh",
+            r#"#!/bin/sh
+printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"intent"'*)
+      exit 1
+      ;;
+    *'"type":"end"'*)
+      exit 0
+      ;;
+  esac
+done
+"#,
+        )
+    }
+
+    fn write_egress_config(base: &Path, command: Vec<String>) -> PathBuf {
+        write_file(
+            base,
+            "egress/live.toml",
+            &format!(
+                r#"
+default_ack_timeout = "100ms"
+
+[channels.broker]
+type = "process"
+command = [{command}]
+
+[routes.place_order]
+channel = "broker"
+"#,
+                command = command
+                    .into_iter()
+                    .map(|part| format!("{part:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )
+    }
+
+    fn manual_step_event(event_id: &str) -> HostedEvent {
+        HostedEvent {
+            event_id: event_id.to_string(),
+            kind: ExternalEventKind::Command,
+            at: EventTime::default(),
+            semantic_kind: None,
+            payload: Some(serde_json::json!({})),
+        }
+    }
+
+    fn adapter_bound_event(event_id: &str, price: f64) -> HostedEvent {
+        HostedEvent {
+            event_id: event_id.to_string(),
+            kind: ExternalEventKind::Command,
+            at: EventTime::default(),
+            semantic_kind: Some("price_bar".to_string()),
+            payload: Some(serde_json::json!({ "price": price })),
+        }
+    }
+
     #[test]
     fn explicit_run_uses_registered_custom_source() -> Result<(), Box<dyn std::error::Error>> {
         let root = make_temp_dir("explicit_run");
@@ -1093,10 +1261,7 @@ outputs:
             .run_with_stop(
                 RunConfig::new(
                     graph,
-                    IngressConfig::process([
-                        "/bin/sh".to_string(),
-                        driver.display().to_string(),
-                    ]),
+                    IngressConfig::process(["/bin/sh".to_string(), driver.display().to_string()]),
                 )
                 .capture_output(&capture),
                 stop,
@@ -1194,8 +1359,7 @@ outputs:
     }
 
     #[test]
-    fn run_profile_with_stop_honors_profile_max_events() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn run_profile_with_stop_honors_profile_max_events() -> Result<(), Box<dyn std::error::Error>> {
         let root = make_temp_dir("project_profile_bounds");
         write_file(
             &root,
@@ -1495,6 +1659,74 @@ ack_timeout = "10s"
     }
 
     #[test]
+    fn validate_project_reports_invalid_egress_config_as_profile_validation(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("validate_invalid_egress_config");
+        write_file(
+            &root,
+            "ergo.toml",
+            r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.live]
+graph = "graphs/strategy.yaml"
+fixture = "fixtures/live.jsonl"
+egress = "egress/live.toml"
+"#,
+        );
+        write_file(
+            &root,
+            "graphs/strategy.yaml",
+            r#"
+kind: cluster
+id: sdk_validate_invalid_egress
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 4.0
+edges: []
+outputs:
+  result: src.value
+"#,
+        );
+        write_file(
+            &root,
+            "egress/live.toml",
+            r#"
+default_ack_timeout = "5s"
+
+[channels.broker]
+type = "process"
+command = ["oops"
+"#,
+        );
+        write_file(
+            &root,
+            "fixtures/live.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+
+        let err = Ergo::from_project(&root)
+            .build()?
+            .validate_project()
+            .expect_err("invalid egress config must fail profile validation");
+
+        match err {
+            ErgoValidateError::Validation { profile, detail } => {
+                assert_eq!(profile, "live");
+                assert!(detail.contains("failed to parse egress config"));
+            }
+            other => panic!("unexpected invalid-egress validation error: {other}"),
+        }
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
     fn validate_project_surfaces_runtime_owned_cluster_version_details(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let root = make_temp_dir("validate_cluster_version_miss");
@@ -1586,6 +1818,701 @@ outputs:
             }
             other => panic!("unexpected error: {other}"),
         }
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn ergo_handle_can_run_the_same_profile_twice() -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("reuse_run_profile");
+        write_file(
+            &root,
+            "ergo.toml",
+            r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.historical]
+graph = "graphs/strategy.yaml"
+fixture = "fixtures/historical.jsonl"
+capture_output = "captures/historical.capture.json"
+"#,
+        );
+        write_file(
+            &root,
+            "graphs/strategy.yaml",
+            r#"
+kind: cluster
+id: sdk_reuse_run_profile
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 4.0
+edges: []
+outputs:
+  result: src.value
+"#,
+        );
+        write_file(
+            &root,
+            "fixtures/historical.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+
+        let ergo = Ergo::from_project(&root).build()?;
+        let first = ergo.run_profile("historical")?;
+        let second = ergo.run_profile("historical")?;
+
+        match (first, second) {
+            (RunOutcome::Completed(first), RunOutcome::Completed(second)) => {
+                assert_eq!(first.events, 1);
+                assert_eq!(second.events, 1);
+                assert_eq!(first.capture_path, second.capture_path);
+            }
+            other => panic!("expected two completed runs, got {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn ergo_handle_survives_errors_and_can_validate_run_and_replay(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("reuse_validate_run_replay");
+        write_file(
+            &root,
+            "ergo.toml",
+            r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.historical]
+graph = "graphs/strategy.yaml"
+fixture = "fixtures/historical.jsonl"
+capture_output = "captures/historical.capture.json"
+"#,
+        );
+        write_file(
+            &root,
+            "graphs/strategy.yaml",
+            r#"
+kind: cluster
+id: sdk_reuse_validate_run_replay
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 5.0
+edges: []
+outputs:
+  result: src.value
+"#,
+        );
+        write_file(
+            &root,
+            "fixtures/historical.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+
+        let ergo = Ergo::from_project(&root).build()?;
+        let err = ergo
+            .run_profile("missing")
+            .expect_err("missing profile should not consume the handle");
+        assert!(
+            matches!(err, ErgoRunError::Project(ProjectError::Load(_))),
+            "unexpected missing-profile error: {err:?}"
+        );
+
+        let summary = ergo.validate_project()?;
+        assert_eq!(summary.profiles, vec!["historical".to_string()]);
+
+        let outcome = ergo.run_profile("historical")?;
+        let capture = root.join("captures/historical.capture.json");
+        match outcome {
+            RunOutcome::Completed(summary) => {
+                assert_eq!(summary.capture_path, capture);
+                assert_eq!(summary.events, 1);
+            }
+            other => panic!("expected completed run, got {other:?}"),
+        }
+
+        let replay = ergo.replay_profile("historical", &capture)?;
+        assert_eq!(replay.graph_id.as_str(), "sdk_reuse_validate_run_replay");
+        assert_eq!(replay.events, 1);
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn runner_for_profile_supports_multiple_steps_without_launching_ingress_or_auto_writing_capture(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("manual_runner_no_ingress");
+        let ingress_sentinel = root.join("ingress-started.txt");
+        let ingress_script = write_process_ingress_sentinel(&root, &ingress_sentinel);
+        write_file(
+            &root,
+            "ergo.toml",
+            &format!(
+                r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.manual]
+graph = "graphs/strategy.yaml"
+capture_output = "captures/manual.capture.json"
+max_duration = "1ms"
+max_events = 1
+
+[profiles.manual.ingress]
+type = "process"
+command = ["/bin/sh", "{ingress_script}"]
+"#,
+                ingress_script = ingress_script.display()
+            ),
+        );
+        write_file(
+            &root,
+            "graphs/strategy.yaml",
+            r#"
+kind: cluster
+id: sdk_manual_runner_no_ingress
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 6.0
+edges: []
+outputs:
+  result: src.value
+"#,
+        );
+
+        let ergo = Ergo::from_project(&root).build()?;
+        let mut runner = ergo.runner_for_profile("manual")?;
+        let capture = root.join("captures/manual.capture.json");
+        assert!(
+            !ingress_sentinel.exists(),
+            "manual runner must not launch ingress"
+        );
+
+        let first = runner.step(manual_step_event("e1"))?;
+        assert_eq!(first.termination, Some(RunTermination::Completed));
+        thread::sleep(Duration::from_millis(10));
+        let second = runner.step(manual_step_event("e2"))?;
+        assert_eq!(second.termination, Some(RunTermination::Completed));
+
+        let bundle = runner.finish()?;
+        assert_eq!(bundle.events.len(), 2);
+        assert_eq!(bundle.decisions.len(), 2);
+        assert!(
+            !capture.exists(),
+            "manual finish should return a bundle without auto-writing capture_output"
+        );
+        assert!(
+            !ingress_sentinel.exists(),
+            "manual runner must not launch ingress"
+        );
+
+        let err = runner
+            .step(manual_step_event("e3"))
+            .expect_err("step after finish must fail");
+        assert!(
+            matches!(err, HostedStepError::LifecycleViolation { .. }),
+            "unexpected step-after-finish error: {err:?}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn runner_for_profile_can_finish_and_write_capture_with_profile_settings(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("manual_runner_write_capture");
+        write_file(
+            &root,
+            "ergo.toml",
+            r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.manual]
+graph = "graphs/strategy.yaml"
+fixture = "fixtures/historical.jsonl"
+capture_output = "captures/manual.capture.json"
+pretty_capture = true
+"#,
+        );
+        write_file(
+            &root,
+            "graphs/strategy.yaml",
+            r#"
+kind: cluster
+id: sdk_manual_runner_write_capture
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 7.0
+edges: []
+outputs:
+  result: src.value
+"#,
+        );
+        write_file(
+            &root,
+            "fixtures/historical.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+
+        let ergo = Ergo::from_project(&root).build()?;
+        let mut runner = ergo.runner_for_profile("manual")?;
+        let capture = root.join("captures/manual.capture.json");
+        let outcome = runner.step(manual_step_event("e1"))?;
+        assert_eq!(outcome.termination, Some(RunTermination::Completed));
+        let bundle = runner.finish_and_write_capture()?;
+        let persisted: CaptureBundle = serde_json::from_str(&fs::read_to_string(&capture)?)?;
+
+        assert!(
+            capture.exists(),
+            "finish_and_write_capture should write capture_output"
+        );
+        assert_eq!(bundle.decisions.len(), 1);
+        assert_eq!(persisted.decisions.len(), 1);
+        assert!(fs::read_to_string(&capture)?.contains("\n  "));
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn runner_for_profile_preserves_bundle_when_capture_write_fails(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("manual_runner_write_capture_failure");
+        write_file(
+            &root,
+            "ergo.toml",
+            r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.manual]
+graph = "graphs/strategy.yaml"
+fixture = "fixtures/historical.jsonl"
+capture_output = "captures/manual.capture.json"
+"#,
+        );
+        write_file(
+            &root,
+            "graphs/strategy.yaml",
+            r#"
+kind: cluster
+id: sdk_manual_runner_write_capture_failure
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 7.0
+edges: []
+outputs:
+  result: src.value
+"#,
+        );
+        write_file(
+            &root,
+            "fixtures/historical.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+        write_file(&root, "captures", "not-a-directory");
+
+        let ergo = Ergo::from_project(&root).build()?;
+        let mut runner = ergo.runner_for_profile("manual")?;
+        let outcome = runner.step(manual_step_event("e1"))?;
+        assert_eq!(outcome.termination, Some(RunTermination::Completed));
+
+        let err = runner
+            .finish_and_write_capture()
+            .expect_err("capture write failure should preserve bundle in the error");
+
+        match &err {
+            ProfileRunnerCaptureError::Write { detail, bundle } => {
+                assert!(detail.contains("create capture output directory"));
+                assert_eq!(bundle.decisions.len(), 1);
+            }
+            other => panic!("unexpected write-failure error: {other}"),
+        }
+        assert_eq!(
+            err.capture_bundle()
+                .expect("write failure should expose recovered bundle")
+                .decisions
+                .len(),
+            1
+        );
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn runner_for_profile_still_requires_a_declared_ingress_source(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("manual_runner_requires_ingress");
+        write_file(
+            &root,
+            "ergo.toml",
+            r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.manual]
+graph = "graphs/strategy.yaml"
+"#,
+        );
+        write_file(
+            &root,
+            "graphs/strategy.yaml",
+            r#"
+kind: cluster
+id: sdk_manual_runner_requires_ingress
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 8.0
+edges: []
+outputs:
+  result: src.value
+"#,
+        );
+
+        let ergo = Ergo::from_project(&root).build()?;
+        let err = match ergo.runner_for_profile("manual") {
+            Ok(_) => panic!("profile resolution should still require ingress"),
+            Err(err) => err,
+        };
+        match err {
+            ErgoRunnerError::Project(ProjectError::Load(LoaderProjectError::ProfileInvalid {
+                detail,
+                ..
+            })) => assert!(detail.contains("exactly one ingress source")),
+            other => panic!("unexpected runner_for_profile ingress error: {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn runner_for_profile_preserves_adapter_required_preflight(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("manual_runner_adapter_preflight");
+        write_file(
+            &root,
+            "ergo.toml",
+            r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.live]
+graph = "graphs/strategy.yaml"
+fixture = "fixtures/live.jsonl"
+"#,
+        );
+        write_intent_graph(&root, "sdk_manual_runner_adapter_preflight");
+        write_file(
+            &root,
+            "fixtures/live.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+
+        let ergo = Ergo::from_project(&root)
+            .add_source(InjectedNumberSource::new(4.0))
+            .add_action(InjectedIntentAction::new())
+            .build()?;
+        let err = match ergo.runner_for_profile("live") {
+            Ok(_) => panic!("adapter-required profile should fail before returning runner"),
+            Err(err) => err,
+        };
+        match err {
+            ErgoRunnerError::Host(HostRunError::AdapterRequired(summary)) => {
+                assert!(summary.requires_adapter);
+            }
+            other => panic!("unexpected adapter-preflight error: {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn runner_for_profile_surfaces_egress_startup_failure_at_creation(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("manual_runner_egress_startup");
+        let missing_binary = "/definitely/missing-egress-binary".to_string();
+        write_file(
+            &root,
+            "ergo.toml",
+            r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.live]
+graph = "graphs/strategy.yaml"
+adapter = "adapters/trading.yaml"
+fixture = "fixtures/live.jsonl"
+egress = "egress/live.toml"
+"#,
+        );
+        write_intent_graph(&root, "sdk_manual_runner_egress_startup");
+        write_intent_adapter_manifest(&root);
+        write_egress_config(&root, vec![missing_binary]);
+        write_file(
+            &root,
+            "fixtures/live.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+
+        let ergo = Ergo::from_project(&root)
+            .add_source(InjectedNumberSource::new(4.0))
+            .add_action(InjectedIntentAction::new())
+            .build()?;
+        let err = match ergo.runner_for_profile("live") {
+            Ok(_) => panic!("egress startup failure should surface during runner creation"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(err, ErgoRunnerError::Host(HostRunError::DriverIo(_))),
+            "unexpected startup error: {err:?}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn profile_runner_zero_step_finish_fails_but_recoverable_input_errors_do_not_poison_session(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let zero_root = make_temp_dir("manual_runner_zero_step");
+        write_file(
+            &zero_root,
+            "ergo.toml",
+            r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.manual]
+graph = "graphs/strategy.yaml"
+fixture = "fixtures/live.jsonl"
+"#,
+        );
+        write_file(
+            &zero_root,
+            "graphs/strategy.yaml",
+            r#"
+kind: cluster
+id: sdk_manual_runner_zero_step
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 9.0
+edges: []
+outputs:
+  result: src.value
+"#,
+        );
+        write_file(
+            &zero_root,
+            "fixtures/live.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+
+        let ergo = Ergo::from_project(&zero_root).build()?;
+        let mut zero_runner = ergo.runner_for_profile("manual")?;
+        let zero_err = zero_runner
+            .finish()
+            .expect_err("zero-step finish must fail");
+        assert!(
+            matches!(zero_err, HostedStepError::LifecycleViolation { .. }),
+            "unexpected zero-step finish error: {zero_err:?}"
+        );
+        let _ = fs::remove_dir_all(&zero_root);
+
+        let failure_root = make_temp_dir("manual_runner_recoverable_input_error");
+        write_file(
+            &failure_root,
+            "ergo.toml",
+            r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.live]
+graph = "graphs/strategy.yaml"
+adapter = "adapters/trading.yaml"
+fixture = "fixtures/live.jsonl"
+egress = "egress/live.toml"
+"#,
+        );
+        write_intent_graph(&failure_root, "sdk_manual_runner_nonfinalizable");
+        write_intent_adapter_manifest(&failure_root);
+        let egress_script = write_egress_ack_script(&failure_root);
+        write_egress_config(
+            &failure_root,
+            vec!["/bin/sh".to_string(), egress_script.display().to_string()],
+        );
+        write_file(
+            &failure_root,
+            "fixtures/live.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+
+        let ergo = Ergo::from_project(&failure_root)
+            .add_source(InjectedNumberSource::new(4.0))
+            .add_action(InjectedIntentAction::new())
+            .build()?;
+        let mut runner = ergo.runner_for_profile("live")?;
+        let step_err = runner
+            .step(HostedEvent {
+                event_id: "evt_bad".to_string(),
+                kind: ExternalEventKind::Command,
+                at: EventTime::default(),
+                semantic_kind: None,
+                payload: Some(serde_json::json!({"price": 100.0})),
+            })
+            .expect_err("missing semantic kind should surface a recoverable input error");
+        assert!(matches!(step_err, HostedStepError::MissingSemanticKind));
+
+        let recovered = runner.step(adapter_bound_event("evt_good", 101.5))?;
+        assert_eq!(recovered.termination, Some(RunTermination::Completed));
+
+        let bundle = runner.finish()?;
+        assert_eq!(bundle.events.len(), 1);
+        assert_eq!(bundle.decisions.len(), 1);
+
+        let _ = fs::remove_dir_all(failure_root);
+        Ok(())
+    }
+
+    #[test]
+    fn profile_runner_can_finalize_after_egress_dispatch_failure(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("manual_runner_dispatch_failure");
+        let egress_script = write_egress_io_script(&root);
+        write_file(
+            &root,
+            "ergo.toml",
+            r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.live]
+graph = "graphs/strategy.yaml"
+adapter = "adapters/trading.yaml"
+fixture = "fixtures/live.jsonl"
+egress = "egress/live.toml"
+"#,
+        );
+        write_intent_graph(&root, "sdk_manual_runner_dispatch_failure");
+        write_intent_adapter_manifest(&root);
+        write_egress_config(
+            &root,
+            vec!["/bin/sh".to_string(), egress_script.display().to_string()],
+        );
+        write_file(
+            &root,
+            "fixtures/live.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+
+        let ergo = Ergo::from_project(&root)
+            .add_source(InjectedNumberSource::new(4.0))
+            .add_action(InjectedIntentAction::new())
+            .build()?;
+        let mut runner = ergo.runner_for_profile("live")?;
+        let step_err = runner
+            .step(adapter_bound_event("evt1", 101.5))
+            .expect_err("egress dispatch failure should interrupt manual stepping");
+        assert!(
+            matches!(step_err, HostedStepError::EgressDispatchFailure(_)),
+            "unexpected dispatch failure: {step_err:?}"
+        );
+
+        let step_again = runner
+            .step(adapter_bound_event("evt2", 101.6))
+            .expect_err("runner should require finalization after dispatch failure");
+        assert!(
+            matches!(step_again, HostedStepError::LifecycleViolation { .. }),
+            "unexpected post-dispatch step result: {step_again:?}"
+        );
+
+        let bundle = runner.finish()?;
+        assert_eq!(bundle.events.len(), 1);
+        assert_eq!(bundle.decisions.len(), 1);
+        assert!(bundle.decisions[0].interruption.is_some());
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn profile_runner_dispatches_egress_and_finishes_with_a_bundle(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("manual_runner_egress_success");
+        let egress_script = write_egress_ack_script(&root);
+        write_file(
+            &root,
+            "ergo.toml",
+            r#"
+name = "sdk-project"
+version = "0.1.0"
+
+[profiles.live]
+graph = "graphs/strategy.yaml"
+adapter = "adapters/trading.yaml"
+fixture = "fixtures/live.jsonl"
+egress = "egress/live.toml"
+capture_output = "captures/live.capture.json"
+"#,
+        );
+        write_intent_graph(&root, "sdk_manual_runner_egress_success");
+        write_intent_adapter_manifest(&root);
+        write_egress_config(
+            &root,
+            vec!["/bin/sh".to_string(), egress_script.display().to_string()],
+        );
+        write_file(
+            &root,
+            "fixtures/live.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        );
+
+        let ergo = Ergo::from_project(&root)
+            .add_source(InjectedNumberSource::new(4.0))
+            .add_action(InjectedIntentAction::new())
+            .build()?;
+        let mut runner = ergo.runner_for_profile("live")?;
+        let outcome = runner.step(adapter_bound_event("evt1", 101.5))?;
+        assert_eq!(outcome.termination, Some(RunTermination::Completed));
+
+        let bundle = runner.finish()?;
+        assert_eq!(bundle.events.len(), 1);
+        assert_eq!(bundle.decisions.len(), 1);
+        assert_eq!(bundle.decisions[0].intent_acks.len(), 1);
+        assert!(
+            !root.join("captures/live.capture.json").exists(),
+            "manual finish should not auto-write capture_output"
+        );
 
         let _ = fs::remove_dir_all(root);
         Ok(())

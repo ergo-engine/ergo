@@ -44,9 +44,9 @@ The driver's job is to deliver events. The host's job is to decide when to stop 
 
 ## Existing Precedent
 
-`HostStopRequested` is already listed as an interruption reason in `egress-failure-taxonomy.md` (line 67) but was never implemented. The code currently has 6 `InterruptionReason` variants; the taxonomy describes 7.
+`HostStopRequested` was already listed in doctrine before this work. This decision standardized and implemented the missing variant so the runtime taxonomy and docs now agree.
 
-The `into_capture_bundle` path on `HostedRunner` produces a valid bundle regardless of how many events were processed. The finalization infrastructure exists, with one caveat addressed in Amendment 2.
+The hosted-runner finalization path already existed. Public finalization now enforces the no-zero-step / finalizable-state policy before a bundle is produced, so host stop and manual stepping share the same truth boundary.
 
 ---
 
@@ -139,20 +139,20 @@ impl StopHandle {
 
 impl Ergo {
     /// Existing simple blocking API — unchanged.
-    pub fn run_profile(self, profile_name: &str) -> Result<RunOutcome, ErgoRunError>;
+    pub fn run_profile(&self, profile_name: &str) -> Result<RunOutcome, ErgoRunError>;
 
     /// Blocking run that checks the stop handle between steps.
     /// The caller creates the StopHandle and wires it to signal
     /// handlers or other stop sources before calling this.
     pub fn run_profile_with_stop(
-        self,
+        &self,
         profile_name: &str,
         stop: StopHandle,
     ) -> Result<RunOutcome, ErgoRunError>;
 
     /// Explicit-config equivalent.
     pub fn run_with_stop(
-        self,
+        &self,
         config: RunConfig,
         stop: StopHandle,
     ) -> Result<RunOutcome, ErgoRunError>;
@@ -222,7 +222,7 @@ The host does NOT need the driver's cooperation to stop. The driver is killed vi
 
 **AMENDMENT (Codex audit #2):** `finalize_run_summary()` explicitly rejects zero-event runs (usecases.rs line ~1491). The original proposal overclaimed that "the infrastructure for stop at any point exists."
 
-**Policy:** Host stop before first committed event remains a `HostRunError`, not an `Interrupted` outcome. No capture is written. This is consistent with the existing invariant that a capture bundle must contain at least one committed event.
+**Policy:** Host stop before first committed event remains a `HostRunError`, not an `Interrupted` outcome. No capture is written. This is consistent with the existing invariant that a capture bundle must contain at least one committed event. The same zero-step rule now applies to public hosted-runner finalization (`finalize_hosted_runner_capture`) and SDK `ProfileRunner::finish()`.
 
 Rationale: A run that is stopped before processing any events has no decision truth to preserve. The operator gets an error message; they do not get an empty artifact.
 

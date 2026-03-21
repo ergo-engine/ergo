@@ -31,8 +31,9 @@ use std::time::{Duration, Instant};
 
 use crate::egress::compute_egress_provenance;
 use crate::{
-    decision_counts, replay_bundle_strict, EgressConfig, EgressDispatchFailure,
-    HostedAdapterConfig, HostedEvent, HostedReplayError, HostedRunner,
+    decision_counts, replay_bundle_strict, runner::validate_hosted_runner_configuration,
+    EgressConfig, EgressDispatchFailure, HostedAdapterConfig, HostedEvent, HostedReplayError,
+    HostedRunner, HostedStepError,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -443,6 +444,30 @@ pub struct ReplayGraphFromPathsRequest {
     pub adapter_path: Option<PathBuf>,
 }
 
+pub struct PrepareHostedRunnerFromPathsRequest {
+    pub graph_path: PathBuf,
+    pub cluster_paths: Vec<PathBuf>,
+    pub adapter_path: Option<PathBuf>,
+    pub egress_config: Option<EgressConfig>,
+}
+
+struct PreparedLiveRunnerSetup {
+    adapter_bound: bool,
+    dependency_summary: AdapterDependencySummary,
+    runner: HostedRunner,
+}
+
+struct ValidatedLiveRunnerSetup {
+    graph_id: GraphId,
+    runtime_provenance: String,
+    runtime: RuntimeHandle,
+    adapter_config: Option<HostedAdapterConfig>,
+    egress_config: Option<EgressConfig>,
+    egress_provenance: Option<String>,
+    adapter_bound: bool,
+    dependency_summary: AdapterDependencySummary,
+}
+
 #[derive(Debug)]
 pub struct ReplayGraphResult {
     pub graph_id: GraphId,
@@ -467,21 +492,22 @@ pub struct RunFixtureResult {
     pub episode_event_counts: Vec<(String, usize)>,
 }
 
+#[derive(Clone)]
 pub struct RuntimeSurfaces {
-    registries: CoreRegistries,
-    catalog: CorePrimitiveCatalog,
+    registries: Arc<CoreRegistries>,
+    catalog: Arc<CorePrimitiveCatalog>,
 }
 
 impl RuntimeSurfaces {
     pub fn new(registries: CoreRegistries, catalog: CorePrimitiveCatalog) -> Self {
         Self {
-            registries,
-            catalog,
+            registries: Arc::new(registries),
+            catalog: Arc::new(catalog),
         }
     }
 
-    pub(crate) fn into_parts(self) -> (CoreRegistries, CorePrimitiveCatalog) {
-        (self.registries, self.catalog)
+    pub(crate) fn into_shared_parts(self) -> (Arc<CorePrimitiveCatalog>, Arc<CoreRegistries>) {
+        (self.catalog, self.registries)
     }
 }
 
@@ -526,8 +552,8 @@ struct PreparedGraphRuntime {
     graph_id: String,
     runtime_provenance: String,
     expanded: ExpandedGraph,
-    catalog: CorePrimitiveCatalog,
-    registries: CoreRegistries,
+    catalog: Arc<CorePrimitiveCatalog>,
+    registries: Arc<CoreRegistries>,
 }
 
 struct CanonicalAdapterSetup {
@@ -603,17 +629,14 @@ fn parse_adapter_manifest(path: &Path) -> Result<AdapterManifest, String> {
 
 fn materialize_runtime_surfaces(
     runtime_surfaces: Option<RuntimeSurfaces>,
-) -> Result<(CorePrimitiveCatalog, CoreRegistries), String> {
+) -> Result<(Arc<CorePrimitiveCatalog>, Arc<CoreRegistries>), String> {
     match runtime_surfaces {
-        Some(runtime_surfaces) => {
-            let (registries, catalog) = runtime_surfaces.into_parts();
-            Ok((catalog, registries))
-        }
+        Some(runtime_surfaces) => Ok(runtime_surfaces.into_shared_parts()),
         None => {
             let catalog = build_core_catalog();
             let registries =
                 core_registries().map_err(|err| format!("core registries: {err:?}"))?;
-            Ok((catalog, registries))
+            Ok((Arc::new(catalog), Arc::new(registries)))
         }
     }
 }
@@ -631,15 +654,19 @@ fn prepare_graph_runtime(
     let loader = PreloadedClusterLoader::new(clusters);
 
     let (catalog, registries) = materialize_runtime_surfaces(runtime_surfaces)?;
-    let expanded = expand(&root, &loader, &catalog).map_err(|err| {
+    let expanded = expand(&root, &loader, catalog.as_ref()).map_err(|err| {
         format!(
             "graph expansion failed: {}",
             summarize_expand_error(&err, &cluster_sources)
         )
     })?;
-    let runtime_provenance =
-        compute_runtime_provenance(RuntimeProvenanceScheme::Rpv1, &root.id, &expanded, &catalog)
-            .map_err(|err| format!("runtime provenance compute failed: {err}"))?;
+    let runtime_provenance = compute_runtime_provenance(
+        RuntimeProvenanceScheme::Rpv1,
+        &root.id,
+        &expanded,
+        catalog.as_ref(),
+    )
+    .map_err(|err| format!("runtime provenance compute failed: {err}"))?;
 
     Ok(PreparedGraphRuntime {
         graph_id: root.id,
@@ -693,8 +720,172 @@ fn prepare_adapter_setup(
     })
 }
 
+fn ensure_adapter_requirement_satisfied(
+    adapter_bound: bool,
+    dependency_summary: &AdapterDependencySummary,
+) -> Result<(), HostRunError> {
+    if !adapter_bound && dependency_summary.requires_adapter {
+        return Err(HostRunError::AdapterRequired(dependency_summary.clone()));
+    }
+
+    Ok(())
+}
+
+fn start_live_runner_egress(runner: &mut HostedRunner) -> Result<(), HostRunError> {
+    runner
+        .start_egress_channels()
+        .map_err(|err| HostRunError::DriverIo(format!("start egress channels: {err}")))
+}
+
+fn hosted_runner_setup_error(err: HostedStepError) -> HostRunError {
+    HostRunError::StepFailed(format!("host configuration validation failed: {err}"))
+}
+
+#[allow(clippy::arc_with_non_send_sync)]
+fn validate_live_runner_setup(
+    graph_path: &Path,
+    cluster_paths: &[PathBuf],
+    adapter_path: Option<&Path>,
+    egress_config: Option<EgressConfig>,
+    runtime_surfaces: Option<RuntimeSurfaces>,
+) -> Result<ValidatedLiveRunnerSetup, HostRunError> {
+    let prepared = prepare_graph_runtime(graph_path, cluster_paths, runtime_surfaces)
+        .map_err(HostRunError::InvalidInput)?;
+    let dependency_summary =
+        scan_adapter_dependencies(&prepared.expanded, &prepared.catalog, &prepared.registries)
+            .map_err(HostRunError::InvalidInput)?;
+    let adapter_setup =
+        prepare_adapter_setup(adapter_path, &prepared).map_err(HostRunError::InvalidInput)?;
+
+    ensure_adapter_requirement_satisfied(adapter_setup.adapter_bound, &dependency_summary)?;
+
+    let PreparedGraphRuntime {
+        graph_id,
+        runtime_provenance,
+        expanded,
+        catalog,
+        registries,
+    } = prepared;
+
+    let runtime = RuntimeHandle::new(
+        Arc::new(expanded),
+        catalog,
+        registries,
+        adapter_setup.adapter_provides,
+    );
+    let egress_provenance = egress_config.as_ref().map(compute_egress_provenance);
+    let graph_emittable_effect_kinds = runtime.graph_emittable_effect_kinds();
+    validate_hosted_runner_configuration(
+        adapter_setup.adapter_config.as_ref(),
+        egress_config.as_ref(),
+        egress_provenance.as_deref(),
+        &HashSet::new(),
+        &graph_emittable_effect_kinds,
+    )
+    .map_err(hosted_runner_setup_error)?;
+
+    Ok(ValidatedLiveRunnerSetup {
+        graph_id: GraphId::new(graph_id),
+        runtime_provenance,
+        runtime,
+        adapter_config: adapter_setup.adapter_config,
+        egress_config,
+        egress_provenance,
+        adapter_bound: adapter_setup.adapter_bound,
+        dependency_summary,
+    })
+}
+
+fn build_live_runner_from_validated(
+    validated: ValidatedLiveRunnerSetup,
+) -> PreparedLiveRunnerSetup {
+    let ValidatedLiveRunnerSetup {
+        graph_id,
+        runtime_provenance,
+        runtime,
+        adapter_config,
+        egress_config,
+        egress_provenance,
+        adapter_bound,
+        dependency_summary,
+    } = validated;
+    let runner = HostedRunner::new_validated(
+        graph_id,
+        Constraints::default(),
+        runtime,
+        runtime_provenance,
+        adapter_config,
+        egress_config,
+        egress_provenance,
+        HashSet::new(),
+    );
+
+    PreparedLiveRunnerSetup {
+        adapter_bound,
+        dependency_summary,
+        runner,
+    }
+}
+
+#[allow(clippy::arc_with_non_send_sync)]
+fn prepare_live_runner_setup(
+    graph_path: &Path,
+    cluster_paths: &[PathBuf],
+    adapter_path: Option<&Path>,
+    egress_config: Option<EgressConfig>,
+    runtime_surfaces: Option<RuntimeSurfaces>,
+) -> Result<PreparedLiveRunnerSetup, HostRunError> {
+    let validated = validate_live_runner_setup(
+        graph_path,
+        cluster_paths,
+        adapter_path,
+        egress_config,
+        runtime_surfaces,
+    )?;
+    Ok(build_live_runner_from_validated(validated))
+}
+
 fn host_replay_setup_error(message: impl Into<String>) -> HostReplayError {
     HostReplayError::Setup(message.into())
+}
+
+#[derive(Debug)]
+enum HostedRunnerFinalizeFailure {
+    PendingAcks(HostedStepError),
+    StopEgress(HostedStepError),
+}
+
+fn finalize_hosted_runner_capture_with_stage(
+    mut runner: HostedRunner,
+    host_stop_requested: bool,
+) -> Result<CaptureBundle, HostedRunnerFinalizeFailure> {
+    runner
+        .ensure_capture_finalizable()
+        .map_err(HostedRunnerFinalizeFailure::PendingAcks)?;
+
+    runner
+        .ensure_no_pending_egress_acks(host_stop_requested)
+        .map_err(HostedRunnerFinalizeFailure::PendingAcks)?;
+
+    // Freeze egress lifecycle before capture finalization so late channel activity
+    // cannot alter dispatch truth after artifact write.
+    runner
+        .stop_egress_channels()
+        .map_err(HostedRunnerFinalizeFailure::StopEgress)?;
+
+    Ok(runner.into_capture_bundle())
+}
+
+pub fn finalize_hosted_runner_capture(
+    runner: HostedRunner,
+    host_stop_requested: bool,
+) -> Result<CaptureBundle, HostedStepError> {
+    finalize_hosted_runner_capture_with_stage(runner, host_stop_requested).map_err(|failure| {
+        match failure {
+            HostedRunnerFinalizeFailure::PendingAcks(err)
+            | HostedRunnerFinalizeFailure::StopEgress(err) => err,
+        }
+    })
 }
 
 struct RunLifecycleState {
@@ -808,6 +999,26 @@ pub fn run_graph_from_paths_with_surfaces_and_control(
     )
 }
 
+/// Canonical validation API for clients. Host owns graph loading, expansion,
+/// adapter preflight, and live runner configuration validation without
+/// constructing a hosted session or starting egress channels.
+#[allow(clippy::arc_with_non_send_sync)]
+pub fn validate_graph_from_paths(
+    request: PrepareHostedRunnerFromPathsRequest,
+) -> Result<(), HostRunError> {
+    validate_graph_from_paths_internal(request, None)
+}
+
+/// Advanced validation API for callers that prebuild runtime surfaces before
+/// invoking the canonical host validation path.
+#[allow(clippy::arc_with_non_send_sync)]
+pub fn validate_graph_from_paths_with_surfaces(
+    request: PrepareHostedRunnerFromPathsRequest,
+    runtime_surfaces: RuntimeSurfaces,
+) -> Result<(), HostRunError> {
+    validate_graph_from_paths_internal(request, Some(runtime_surfaces))
+}
+
 #[allow(clippy::arc_with_non_send_sync)]
 fn run_graph_from_paths_internal(
     request: RunGraphFromPathsRequest,
@@ -825,42 +1036,17 @@ fn run_graph_from_paths_internal(
         pretty_capture,
     } = request;
 
-    let prepared = prepare_graph_runtime(&graph_path, &cluster_paths, runtime_surfaces)
-        .map_err(HostRunError::InvalidInput)?;
-    let dependency_summary =
-        scan_adapter_dependencies(&prepared.expanded, &prepared.catalog, &prepared.registries)
-            .map_err(HostRunError::InvalidInput)?;
-    let adapter_setup = prepare_adapter_setup(adapter_path.as_deref(), &prepared)
-        .map_err(HostRunError::InvalidInput)?;
-
-    let PreparedGraphRuntime {
-        graph_id,
-        runtime_provenance,
-        expanded,
-        catalog,
-        registries,
-    } = prepared;
-
-    let runtime = RuntimeHandle::new(
-        Arc::new(expanded),
-        Arc::new(catalog),
-        Arc::new(registries),
-        adapter_setup.adapter_provides,
-    );
-    let egress_provenance = egress_config.as_ref().map(compute_egress_provenance);
-    let runner = HostedRunner::new(
-        GraphId::new(graph_id),
-        Constraints::default(),
-        runtime,
-        runtime_provenance,
-        adapter_setup.adapter_config,
+    let PreparedLiveRunnerSetup {
+        adapter_bound,
+        dependency_summary,
+        runner,
+    } = prepare_live_runner_setup(
+        &graph_path,
+        &cluster_paths,
+        adapter_path.as_deref(),
         egress_config,
-        egress_provenance,
-        None,
-    )
-    .map_err(|err| {
-        HostRunError::StepFailed(format!("failed to initialize canonical host runner: {err}"))
-    })?;
+        runtime_surfaces,
+    )?;
 
     run_graph_with_policy(
         RunGraphRequest {
@@ -868,13 +1054,36 @@ fn run_graph_from_paths_internal(
             driver,
             capture_output,
             pretty_capture,
-            adapter_bound: adapter_setup.adapter_bound,
+            adapter_bound,
             dependency_summary,
             runner,
         },
         process_policy,
         control,
     )
+}
+
+#[allow(clippy::arc_with_non_send_sync)]
+fn validate_graph_from_paths_internal(
+    request: PrepareHostedRunnerFromPathsRequest,
+    runtime_surfaces: Option<RuntimeSurfaces>,
+) -> Result<(), HostRunError> {
+    let PrepareHostedRunnerFromPathsRequest {
+        graph_path,
+        cluster_paths,
+        adapter_path,
+        egress_config,
+    } = request;
+
+    let _ = validate_live_runner_setup(
+        &graph_path,
+        &cluster_paths,
+        adapter_path.as_deref(),
+        egress_config,
+        runtime_surfaces,
+    )?;
+
+    Ok(())
 }
 
 /// Canonical replay API for clients. Host owns capture load, graph loading, adapter composition, and runner setup.
@@ -893,6 +1102,25 @@ pub fn replay_graph_from_paths_with_surfaces(
     runtime_surfaces: RuntimeSurfaces,
 ) -> Result<ReplayGraphResult, HostReplayError> {
     replay_graph_from_paths_internal(request, Some(runtime_surfaces))
+}
+
+/// Canonical manual-step preparation API for clients. Host owns graph loading,
+/// expansion, adapter preflight, runner setup, and eager egress startup.
+#[allow(clippy::arc_with_non_send_sync)]
+pub fn prepare_hosted_runner_from_paths(
+    request: PrepareHostedRunnerFromPathsRequest,
+) -> Result<HostedRunner, HostRunError> {
+    prepare_hosted_runner_from_paths_internal(request, None)
+}
+
+/// Advanced manual-step preparation API for callers that prebuild runtime
+/// surfaces before invoking the canonical host setup path.
+#[allow(clippy::arc_with_non_send_sync)]
+pub fn prepare_hosted_runner_from_paths_with_surfaces(
+    request: PrepareHostedRunnerFromPathsRequest,
+    runtime_surfaces: RuntimeSurfaces,
+) -> Result<HostedRunner, HostRunError> {
+    prepare_hosted_runner_from_paths_internal(request, Some(runtime_surfaces))
 }
 
 #[allow(clippy::arc_with_non_send_sync)]
@@ -941,8 +1169,8 @@ fn replay_graph_from_paths_internal(
 
     let runtime = RuntimeHandle::new(
         Arc::new(expanded),
-        Arc::new(catalog),
-        Arc::new(registries),
+        catalog,
+        registries,
         adapter_setup.adapter_provides.clone(),
     );
     let handler_kinds = BTreeSet::from(["set_context".to_string()]);
@@ -981,9 +1209,38 @@ fn replay_graph_from_paths_internal(
     })
 }
 
+#[allow(clippy::arc_with_non_send_sync)]
+fn prepare_hosted_runner_from_paths_internal(
+    request: PrepareHostedRunnerFromPathsRequest,
+    runtime_surfaces: Option<RuntimeSurfaces>,
+) -> Result<HostedRunner, HostRunError> {
+    let PrepareHostedRunnerFromPathsRequest {
+        graph_path,
+        cluster_paths,
+        adapter_path,
+        egress_config,
+    } = request;
+
+    let PreparedLiveRunnerSetup { mut runner, .. } = prepare_live_runner_setup(
+        &graph_path,
+        &cluster_paths,
+        adapter_path.as_deref(),
+        egress_config,
+        runtime_surfaces,
+    )?;
+
+    start_live_runner_egress(&mut runner)?;
+
+    Ok(runner)
+}
+
 /// Lower-level canonical run API used once a fully configured `HostedRunner` exists.
 pub fn run_graph(request: RunGraphRequest) -> RunGraphResponse {
-    run_graph_with_policy(request, DEFAULT_PROCESS_DRIVER_POLICY, RunControl::default())
+    run_graph_with_policy(
+        request,
+        DEFAULT_PROCESS_DRIVER_POLICY,
+        RunControl::default(),
+    )
 }
 
 /// Lower-level canonical run API with host stop control and bounded-run limits.
@@ -1006,13 +1263,9 @@ fn run_graph_with_policy(
         mut runner,
     } = request;
 
-    if !adapter_bound && dependency_summary.requires_adapter {
-        return Err(HostRunError::AdapterRequired(dependency_summary));
-    }
+    ensure_adapter_requirement_satisfied(adapter_bound, &dependency_summary)?;
 
-    runner
-        .start_egress_channels()
-        .map_err(|err| HostRunError::DriverIo(format!("start egress channels: {err}")))?;
+    start_live_runner_egress(&mut runner)?;
 
     let lifecycle = RunLifecycleState::new(control);
 
@@ -1835,7 +2088,7 @@ fn finalize_run_summary(
     graph_path: &Path,
     capture_output: Option<PathBuf>,
     pretty_capture: bool,
-    mut runner: HostedRunner,
+    runner: HostedRunner,
     event_count: usize,
     episode_event_counts: Vec<(String, usize)>,
     host_stop_requested: bool,
@@ -1857,17 +2110,16 @@ fn finalize_run_summary(
         )));
     }
 
-    runner
-        .ensure_no_pending_egress_acks(host_stop_requested)
-        .map_err(|err| HostRunError::StepFailed(format!("egress pending-ack invariant: {err}")))?;
-
-    // Freeze egress lifecycle before capture finalization so late channel activity
-    // cannot alter dispatch truth after artifact write.
-    runner
-        .stop_egress_channels()
-        .map_err(|err| HostRunError::DriverIo(format!("stop egress channels: {err}")))?;
-
-    let bundle = runner.into_capture_bundle();
+    let bundle = finalize_hosted_runner_capture_with_stage(runner, host_stop_requested).map_err(
+        |failure| match failure {
+            HostedRunnerFinalizeFailure::PendingAcks(err) => {
+                HostRunError::StepFailed(format!("egress pending-ack invariant: {err}"))
+            }
+            HostedRunnerFinalizeFailure::StopEgress(err) => {
+                HostRunError::DriverIo(format!("stop egress channels: {err}"))
+            }
+        },
+    )?;
     let capture_path = capture_output.unwrap_or_else(|| {
         let stem = graph_path
             .file_stem()
@@ -1974,8 +2226,8 @@ mod tests {
     };
     use serde_json::json;
     use std::collections::{BTreeMap, HashMap};
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -2123,7 +2375,9 @@ mod tests {
 
     fn build_observed_runtime_surfaces(output: f64, counter: Arc<AtomicUsize>) -> RuntimeSurfaces {
         let mut builder = CatalogBuilder::new();
-        builder.add_source(Box::new(InjectedNumberSource::new_observed(output, counter)));
+        builder.add_source(Box::new(InjectedNumberSource::new_observed(
+            output, counter,
+        )));
         builder.add_action(Box::new(InjectedIntentAction::new()));
         let (registries, catalog) = builder
             .build()
@@ -2829,6 +3083,591 @@ outputs:
     }
 
     #[test]
+    fn prepare_hosted_runner_from_paths_with_surfaces_uses_injected_runtime_surfaces(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-prepare-runner-injected-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_prepare_runner_injected
+version: "0.1.0"
+nodes:
+  src:
+    impl: injected_number_source@0.1.0
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+
+        let mut runner = prepare_hosted_runner_from_paths_with_surfaces(
+            PrepareHostedRunnerFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: None,
+                egress_config: None,
+            },
+            build_injected_runtime_surfaces(7.5),
+        )?;
+
+        let outcome = runner.step(hosted_event("evt1"))?;
+        assert_eq!(outcome.decision, Decision::Invoke);
+        assert_eq!(
+            outcome.termination,
+            Some(ergo_adapter::RunTermination::Completed)
+        );
+
+        let bundle = finalize_hosted_runner_capture(runner, false)?;
+        assert_eq!(bundle.events.len(), 1);
+        assert_eq!(bundle.decisions.len(), 1);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_hosted_runner_from_paths_smoke_test() -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-prepare-runner-smoke-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_prepare_runner_smoke
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 5.0
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+
+        let mut runner = prepare_hosted_runner_from_paths(PrepareHostedRunnerFromPathsRequest {
+            graph_path: graph,
+            cluster_paths: Vec::new(),
+            adapter_path: None,
+            egress_config: None,
+        })?;
+
+        let outcome = runner.step(hosted_event("evt1"))?;
+        assert_eq!(outcome.decision, Decision::Invoke);
+        assert_eq!(
+            outcome.termination,
+            Some(ergo_adapter::RunTermination::Completed)
+        );
+
+        let bundle = finalize_hosted_runner_capture(runner, false)?;
+        assert_eq!(bundle.graph_id.as_str(), "host_prepare_runner_smoke");
+        assert_eq!(bundle.events.len(), 1);
+        assert_eq!(bundle.decisions.len(), 1);
+        assert_eq!(bundle.decisions[0].decision, Decision::Invoke);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn finalize_hosted_runner_capture_rejects_zero_step_runners(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-finalize-zero-step-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_finalize_zero_step
+version: "0.1.0"
+nodes:
+  src:
+    impl: injected_number_source@0.1.0
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+
+        let runner = prepare_hosted_runner_from_paths_with_surfaces(
+            PrepareHostedRunnerFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: None,
+                egress_config: None,
+            },
+            build_injected_runtime_surfaces(7.5),
+        )?;
+
+        let err = finalize_hosted_runner_capture(runner, false)
+            .expect_err("zero-step hosted runners must not finalize");
+        assert!(
+            matches!(err, HostedStepError::LifecycleViolation { .. }),
+            "unexpected zero-step finalize error: {err:?}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn validate_graph_from_paths_accepts_simple_adapterless_graph(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-validate-simple-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_validate_simple
+version: "0.1.0"
+nodes:
+  src:
+    impl: const_number@0.1.0
+    params:
+      value: 7.5
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+
+        validate_graph_from_paths(PrepareHostedRunnerFromPathsRequest {
+            graph_path: graph,
+            cluster_paths: Vec::new(),
+            adapter_path: None,
+            egress_config: None,
+        })?;
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn validate_graph_from_paths_reports_adapter_required_before_runner_validation(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-validate-adapter-required-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_validate_adapter_required")?;
+
+        let err = validate_graph_from_paths_with_surfaces(
+            PrepareHostedRunnerFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: None,
+                egress_config: None,
+            },
+            build_injected_runtime_surfaces(42.0),
+        )
+        .expect_err("adapter-required validation should fail before runner construction");
+
+        match err {
+            HostRunError::AdapterRequired(summary) => assert!(summary.requires_adapter),
+            other => panic!("unexpected adapter-required validation error: {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn validate_graph_from_paths_enforces_handler_coverage_without_egress(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-validate-handler-coverage-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_validate_handler_coverage")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+
+        let err = validate_graph_from_paths_with_surfaces(
+            PrepareHostedRunnerFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: Some(adapter),
+                egress_config: None,
+            },
+            build_injected_runtime_surfaces(42.0),
+        )
+        .expect_err("handler coverage should fail without egress for external intent graphs");
+
+        match err {
+            HostRunError::StepFailed(detail) => {
+                assert!(detail.contains("handler coverage failed"));
+                assert!(!detail.contains("failed to initialize canonical host runner"));
+            }
+            other => panic!("unexpected handler coverage validation error: {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn validate_graph_from_paths_accepts_adapter_and_egress_without_starting_channels(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-validate-egress-success-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_validate_egress_success")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let egress_script = write_egress_ack_script(&temp_dir, "egress.sh")?;
+
+        validate_graph_from_paths_with_surfaces(
+            PrepareHostedRunnerFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: Some(adapter),
+                egress_config: Some(make_intent_egress_config(&egress_script)),
+            },
+            build_injected_runtime_surfaces(42.0),
+        )?;
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn validate_graph_from_paths_does_not_start_egress_processes(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-validate-egress-no-start-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_validate_egress_no_start")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let config = EgressConfig {
+            default_ack_timeout: Duration::from_millis(50),
+            channels: BTreeMap::from([(
+                "broker".to_string(),
+                EgressChannelConfig::Process {
+                    command: vec!["/definitely/missing-egress-binary".to_string()],
+                },
+            )]),
+            routes: BTreeMap::from([(
+                "place_order".to_string(),
+                EgressRoute {
+                    channel: "broker".to_string(),
+                    ack_timeout: None,
+                },
+            )]),
+        };
+
+        validate_graph_from_paths_with_surfaces(
+            PrepareHostedRunnerFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: Some(adapter),
+                egress_config: Some(config),
+            },
+            build_injected_runtime_surfaces(42.0),
+        )?;
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_hosted_runner_from_paths_surfaces_egress_startup_failure_before_first_step(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-prepare-runner-startup-fail-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph =
+            write_intent_graph(&temp_dir, "graph.yaml", "host_prepare_runner_startup_fail")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let config = EgressConfig {
+            default_ack_timeout: Duration::from_millis(50),
+            channels: BTreeMap::from([(
+                "broker".to_string(),
+                EgressChannelConfig::Process {
+                    command: vec!["/definitely/missing-egress-binary".to_string()],
+                },
+            )]),
+            routes: BTreeMap::from([(
+                "place_order".to_string(),
+                EgressRoute {
+                    channel: "broker".to_string(),
+                    ack_timeout: None,
+                },
+            )]),
+        };
+
+        let err = match prepare_hosted_runner_from_paths_with_surfaces(
+            PrepareHostedRunnerFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: Some(adapter),
+                egress_config: Some(config),
+            },
+            build_injected_runtime_surfaces(42.0),
+        ) {
+            Ok(_) => panic!("startup failure should surface before manual stepping begins"),
+            Err(err) => err,
+        };
+
+        assert!(
+            matches!(err, HostRunError::DriverIo(_)),
+            "expected HostRunError::DriverIo, got {err:?}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_hosted_runner_from_paths_surfaces_dispatches_egress_and_finalizes_cleanly(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-prepare-runner-egress-success-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_prepare_runner_egress")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let sentinel = temp_dir.join("egress-ended.txt");
+        let egress_script = write_egress_end_sentinel_script(&temp_dir, "egress.sh", &sentinel)?;
+
+        let mut runner = prepare_hosted_runner_from_paths_with_surfaces(
+            PrepareHostedRunnerFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: Some(adapter),
+                egress_config: Some(make_intent_egress_config(&egress_script)),
+            },
+            build_injected_runtime_surfaces(42.0),
+        )?;
+
+        let outcome = runner.step(HostedEvent {
+            event_id: "evt1".to_string(),
+            kind: ExternalEventKind::Command,
+            at: EventTime::default(),
+            semantic_kind: Some("price_bar".to_string()),
+            payload: Some(json!({"price": 101.5})),
+        })?;
+        assert_eq!(
+            outcome.termination,
+            Some(ergo_adapter::RunTermination::Completed)
+        );
+
+        let bundle = finalize_hosted_runner_capture(runner, false)?;
+        assert_eq!(bundle.events.len(), 1);
+        assert_eq!(bundle.decisions.len(), 1);
+        assert_eq!(bundle.decisions[0].intent_acks.len(), 1);
+        assert!(bundle.decisions[0].interruption.is_none());
+        wait_for_path(&sentinel, Duration::from_secs(1))?;
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_hosted_runner_from_paths_can_finalize_after_egress_dispatch_failure(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-prepare-runner-dispatch-failure-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(
+            &temp_dir,
+            "graph.yaml",
+            "host_prepare_runner_dispatch_failure",
+        )?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let egress_script = write_egress_io_script(&temp_dir, "egress.sh")?;
+
+        let mut runner = prepare_hosted_runner_from_paths_with_surfaces(
+            PrepareHostedRunnerFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: Some(adapter),
+                egress_config: Some(make_intent_egress_config(&egress_script)),
+            },
+            build_injected_runtime_surfaces(42.0),
+        )?;
+
+        let step_err = runner
+            .step(HostedEvent {
+                event_id: "evt1".to_string(),
+                kind: ExternalEventKind::Command,
+                at: EventTime::default(),
+                semantic_kind: Some("price_bar".to_string()),
+                payload: Some(json!({"price": 101.5})),
+            })
+            .expect_err("dispatch failure should interrupt manual stepping");
+        assert!(
+            matches!(step_err, HostedStepError::EgressDispatchFailure(_)),
+            "unexpected dispatch failure: {step_err:?}"
+        );
+
+        let second_err = runner
+            .step(HostedEvent {
+                event_id: "evt2".to_string(),
+                kind: ExternalEventKind::Command,
+                at: EventTime::default(),
+                semantic_kind: Some("price_bar".to_string()),
+                payload: Some(json!({"price": 102.0})),
+            })
+            .expect_err("dispatch failure must force finalization before another step");
+        assert!(
+            matches!(second_err, HostedStepError::LifecycleViolation { .. }),
+            "unexpected post-dispatch lifecycle error: {second_err:?}"
+        );
+
+        let bundle = finalize_hosted_runner_capture(runner, false)?;
+        assert_eq!(bundle.events.len(), 1);
+        assert_eq!(bundle.decisions.len(), 1);
+        assert!(bundle.decisions[0].interruption.is_some());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn run_graph_from_paths_surfaces_reports_adapter_required_before_egress_validation(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-run-adapter-preflight-order-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_run_adapter_preflight")?;
+        let fixture = write_temp_file(
+            &temp_dir,
+            "fixture.jsonl",
+            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
+        )?;
+        let err = run_graph_from_paths_with_surfaces(
+            RunGraphFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                driver: DriverConfig::Fixture { path: fixture },
+                adapter_path: None,
+                egress_config: Some(make_intent_egress_config_with_timeout(
+                    &temp_dir.join("unused-egress.sh"),
+                    Duration::from_millis(50),
+                )),
+                capture_output: Some(temp_dir.join("capture.json")),
+                pretty_capture: false,
+            },
+            build_injected_runtime_surfaces(42.0),
+        )
+        .expect_err("adapter-required error should win before runner init egress validation");
+
+        match err {
+            HostRunError::AdapterRequired(summary) => assert!(summary.requires_adapter),
+            other => panic!("unexpected canonical adapter-preflight error: {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_hosted_runner_from_paths_surfaces_reports_adapter_required_before_egress_validation(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-prepare-adapter-preflight-order-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_prepare_adapter_preflight")?;
+        let err = match prepare_hosted_runner_from_paths_with_surfaces(
+            PrepareHostedRunnerFromPathsRequest {
+                graph_path: graph,
+                cluster_paths: Vec::new(),
+                adapter_path: None,
+                egress_config: Some(make_intent_egress_config_with_timeout(
+                    &temp_dir.join("unused-egress.sh"),
+                    Duration::from_millis(50),
+                )),
+            },
+            build_injected_runtime_surfaces(42.0),
+        ) {
+            Ok(_) => {
+                panic!("adapter-required error should win before manual runner init validation")
+            }
+            Err(err) => err,
+        };
+
+        match err {
+            HostRunError::AdapterRequired(summary) => assert!(summary.requires_adapter),
+            other => panic!("unexpected manual adapter-preflight error: {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
     fn live_run_with_external_intent_graph_requires_egress_config(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let index = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -2980,8 +3819,8 @@ outputs:
             .map_err(|err| format!("prepare replay adapter: {err}"))?;
         let runtime = RuntimeHandle::new(
             Arc::new(prepared.expanded),
-            Arc::new(prepared.catalog),
-            Arc::new(prepared.registries),
+            prepared.catalog,
+            prepared.registries,
             adapter_setup.adapter_provides.clone(),
         );
         let handler_kinds = BTreeSet::from(["set_context".to_string()]);
@@ -4169,8 +5008,7 @@ outputs:
             "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\",\"semantic_kind\":\"price_bar\",\"payload\":{\"price\":101.5}}}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\",\"semantic_kind\":\"price_bar\",\"payload\":{\"price\":101.6}}}\n",
         )?;
         let sentinel = temp_dir.join("egress-ended.txt");
-        let egress_script =
-            write_egress_end_sentinel_script(&temp_dir, "egress.sh", &sentinel)?;
+        let egress_script = write_egress_end_sentinel_script(&temp_dir, "egress.sh", &sentinel)?;
         let capture = temp_dir.join("capture.json");
 
         let outcome = run_graph_from_paths_with_surfaces_and_control(
@@ -4293,7 +5131,8 @@ outputs:
         let pid_path_clone = pid_path.clone();
         let emitted_path_clone = emitted_path.clone();
         let stopper = thread::spawn(move || -> Result<(), String> {
-            wait_for_path(&pid_path_clone, Duration::from_secs(1)).map_err(|err| err.to_string())?;
+            wait_for_path(&pid_path_clone, Duration::from_secs(1))
+                .map_err(|err| err.to_string())?;
             wait_for_path(&emitted_path_clone, Duration::from_secs(1))
                 .map_err(|err| err.to_string())?;
             thread::sleep(Duration::from_millis(50));

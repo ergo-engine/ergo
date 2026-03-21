@@ -47,12 +47,27 @@ let explicit = Ergo::builder()
 
 ## Current Handle Semantics
 
-`Ergo` is currently a one-shot engine handle. `run`, `run_profile`,
-`replay`, `replay_profile`, and `validate_project` consume the built
-handle, so build a fresh `Ergo` value for each operation.
+`Ergo` is a same-thread reusable engine handle. `run`, `run_profile`,
+`replay`, `replay_profile`, and `validate_project` borrow the built
+handle, so one `Ergo` value can execute multiple operations.
 
-A reusable engine handle is planned as a future ergonomics improvement,
-but it is not part of the initial SDK surface.
+Reusing one handle also reuses the same registered primitive instances
+behind it under the current in-process trust model.
+
+## Manual Stepping
+
+`runner_for_profile(...)` resolves a normal run profile and returns a
+low-level `ProfileRunner` for manual stepping.
+
+- It honors `graph`, cluster search paths, `adapter`, and `egress`.
+- Profile resolution still requires exactly one ingress source today,
+  even though manual stepping does not launch that ingress.
+- It ignores profile `ingress`, `max_duration`, and `max_events`
+  during manual stepping.
+- `finish()` returns a `CaptureBundle` and does not write
+  `capture_output`.
+- `finish_and_write_capture()` is the call that explicitly applies the
+  resolved `capture_output` / `pretty_capture` settings.
 
 ## Doctrine
 

@@ -148,15 +148,15 @@ and populates this field. SDK users construct it directly.
 If `egress_config` is `None` and the graph emits intent kinds, the
 coverage check fails at startup (existing behavior from Phase 1).
 
-### Provenance (future 3b)
+### Provenance (see 3b)
 
-This decision defines canonical normalization now so a stable
-route-table fingerprint can be added later. The `BTreeMap` ordering
-guarantees deterministic serialization. A future provenance hash can
-be computed from `serde_json::to_vec(&egress_config)` without
-re-shaping the config.
+This decision defines the canonical normalization that the later
+egress-provenance work now relies on. The `BTreeMap` ordering
+guarantees deterministic serialization, so the provenance hash can be
+computed from the normalized config without re-shaping the model.
 
-No capture changes are required by this decision.
+The provenance field itself is specified by
+`decisions/egress-provenance.md`, not by this decision.
 
 ---
 
@@ -171,12 +171,13 @@ No capture changes are required by this decision.
 
 ---
 
-## Impacted Files (future implementation)
+## Impacted Files
 
-- New types: `EgressConfig`, `EgressRoute`, `EgressChannelConfig`
-  (likely in `crates/prod/core/host/src/` or a new egress module)
-- `RunGraphFromPathsRequest` — gains `egress_config` field
-- CLI — `--egress-config` flag, TOML parsing
-- Host startup — validation against adapter + graph + handler registry
-- `ensure_handler_coverage` call site — passes routed kinds as
-  `egress_claimed_kinds`
+- Host egress types: `EgressConfig`, `EgressRoute`, `EgressChannelConfig`
+- Host/SDK request surfaces carrying `egress_config`
+- CLI / project resolution surfaces that parse TOML into the canonical
+  host model
+- Host validation/startup path — validation against adapter + graph +
+  handler registry
+- Hosted-runner validation / `ensure_handler_coverage` call sites —
+  routed kinds are treated as egress-claimed kinds

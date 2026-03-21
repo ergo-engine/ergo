@@ -15,10 +15,13 @@ Resolves: GW-EFX-3I
 
 The durable-accept ack model (GW-EFX-3H) and per-step blocking
 lifecycle (GW-EFX-3E) together define the normal-path behavior: host
-dispatches intents, waits for acks, proceeds to next step, writes
-capture at end of run. This decision defines what the system promises
-when things go wrong — specifically, when the host crashes at various
-points in the lifecycle.
+dispatches intents, waits for acks, proceeds to next step, and
+finalizes a capture bundle at end of run. If a higher-level path wants
+a capture artifact on disk, that file write happens after host
+finalization produces the bundle and before that path
+returns. This decision defines what the system promises when things go
+wrong — specifically, when the host crashes at various points in the
+lifecycle.
 
 ---
 
@@ -39,9 +42,10 @@ Run begins
   ├─ ...
   ├─ Step N: (same)
   ├─ Assert no pending acks
-  ├─ Write capture artifact         ← crash before here: all evidence lost
   ├─ Stop egress channels
-  └─ Return RunOutcome
+  ├─ Produce capture bundle         ← crash before here: all evidence lost
+  ├─ Optional write capture artifact
+  └─ Return final result to caller
 ```
 
 There are three crash categories:
@@ -59,24 +63,24 @@ process may or may not have read it:
 
 The host cannot distinguish these cases after a crash.
 
-### 2. Crash after all step acks but before capture write
+### 2. Crash after all step acks but before capture finalization
 
 All intents across all steps were dispatched and durably accepted by
 egress. The external effects will happen (or already happened). But
-the capture artifact was never written. There is no Ergo record of
-what the graph decided or what was dispatched. The egress processes
-hold the only evidence.
+the capture bundle was never produced, so no capture artifact could be
+written either. There is no Ergo record of what the graph decided or
+what was dispatched. The egress processes hold the only evidence.
 
 This is the **recording gap**: delivery succeeded but evidence was
 not persisted. This is a run-wide concern, not a per-step concern,
-because capture is written once at end-of-run.
+because capture is finalized once at end-of-run.
 
 ### 3. Crash before or after step execution (no dispatch in flight)
 
 Standard incomplete-run behavior. No delivery ambiguity. Either the
 step hadn't started (no effects) or it completed fully (effects
-recorded in host state, awaiting capture write — which falls into
-category 2).
+recorded in host state, awaiting capture finalization — which falls
+into category 2).
 
 ---
 
@@ -206,13 +210,14 @@ Crash recovery is out-of-band: there is no running process, no
 `RunOutcome`, no capture artifact. The crash-consistency semantics
 documented here are operational guidance, not runtime error handling.
 
-### Capture write ordering (2d)
+### Capture finalization ordering (2d)
 
-The timing decision specifies: all acks settled → write capture →
-stop egress. A crash between "all acks settled" and "write capture"
-is category 2 (recording gap). This is internally consistent — the
-delivery guarantee is not conditional on capture success. Delivery
-happened. Evidence didn't get recorded.
+The timing decision specifies: all acks settled → stop egress → build
+capture bundle → optional artifact write. A crash between "all acks
+settled" and "build capture bundle" is category 2 (recording gap).
+This is internally consistent — the delivery guarantee is not
+conditional on capture success. Delivery happened. Evidence didn't get
+recorded.
 
 ---
 
@@ -220,20 +225,23 @@ happened. Evidence didn't get recorded.
 
 | Scenario | Delivery | Evidence | User action |
 | --- | --- | --- | --- |
-| Normal completion | All intents durably accepted | Full capture artifact | None |
+| Normal completion | All intents durably accepted | Finalized capture bundle; artifact written if caller requests it | None |
 | Crash during dispatch | Unknown (may or may not have arrived) | No capture for interrupted step | Reconcile via intent_id |
-| Crash after all acks, before capture | All intents durably accepted | No capture artifact | Reconcile via intent_id |
-| Ack timeout (no crash) | Intent not confirmed | Capture with interruption marker | Retry run or reconcile |
+| Crash after all acks, before capture finalization | All intents durably accepted | No capture bundle or artifact | Reconcile via intent_id |
+| Ack timeout (no crash) | Intent not confirmed | Capture bundle/artifact with interruption marker | Retry run or reconcile |
 | Replay | No dispatch (StepMode gate) | Verified against original capture | None |
 
 ---
 
 ## Impacted Files
 
-No code changes required by this decision. It documents the
-guarantees and limitations of the existing implementation.
+This decision is now reflected in the host finalization path and the
+caller-owned capture write path:
 
-Future v2 work (WAL, recovery, checkpointing) would impact:
+- Host finalization (`ensure_no_pending_egress_acks` → `stop_egress_channels` → `into_capture_bundle`)
+- SDK/manual-runner artifact write path (optional file write from the finalized bundle)
+
+Future v2 work (WAL, recovery, checkpointing) would additionally impact:
 - Host startup path (WAL recovery)
 - `runner.rs` (pre-dispatch persistence)
 - Capture pipeline (incremental checkpointing)
