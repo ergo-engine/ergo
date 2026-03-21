@@ -202,8 +202,17 @@ Keep the two top-level manifests separate:
 ## 6. Current v1 Limits
 
 - One ingress channel per profile.
-- The SDK handle is currently one-shot; build a fresh `Ergo` value per
-  run, validation, or replay operation.
+- The SDK handle is same-thread reusable, including validation,
+  run, replay, and profile-stepping operations.
+- `runner_for_profile(...)` is a low-level manual stepping surface over
+  resolved profile assets. It still requires a normal profile with one
+  declared ingress source, but it does not launch that ingress.
+- `runner_for_profile(...)` honors `graph`, cluster paths, `adapter`,
+  and `egress`, but it ignores `ingress`, `max_duration`, and
+  `max_events` while stepping manually.
+- `finish()` returns a `CaptureBundle` and does not auto-write
+  `capture_output`; `finish_and_write_capture()` is the explicit path
+  that applies `capture_output` / `pretty_capture`.
 - CLI remains supporting tooling. The production surface is the Rust
   crate you scaffold and run with Cargo.
 

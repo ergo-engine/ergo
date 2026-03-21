@@ -139,11 +139,21 @@ the stop-aware path, while the lower-level raw call remains available
 for callers that want to own signal handling and stop policy
 themselves.
 
-For the initial SDK surface, the built `Ergo` handle is one-shot:
-`run`, `run_profile`, `replay`, and validation operations consume it.
-Projects should build a fresh handle per operation for now. A reusable
-engine handle is expected later as an ergonomics improvement, not a v1
-prerequisite.
+The built `Ergo` handle is same-thread reusable: `run`, `run_profile`,
+`replay`, and validation operations borrow it, so one handle can back
+multiple operations. That reuse also keeps the same registered
+primitive instances alive behind the handle under the current
+in-process trust model.
+
+The SDK also exposes `runner_for_profile(...)` as a low-level manual
+stepping surface over resolved profile assets. It still resolves a
+normal run profile, so the profile must declare exactly one ingress
+source even though manual stepping does not launch that ingress path.
+Manual stepping honors `graph`, cluster paths, `adapter`, and `egress`,
+but it ignores `ingress`, `max_duration`, and `max_events`.
+`finish()` returns a `CaptureBundle`; explicit capture-file writing is a
+separate SDK call, and only that explicit path applies
+`capture_output` / `pretty_capture`.
 
 ## 4. Profile Model
 

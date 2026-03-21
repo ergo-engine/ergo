@@ -17,7 +17,8 @@ The durable-accept ack model (GW-EFX-3H) establishes that the host
 waits for a bounded-latency durability acknowledgment from egress
 after dispatching each intent. This decision defines when egress
 processes start, when they stop, and how dispatch timing relates to
-the step pipeline and capture artifact write.
+the step pipeline, capture-bundle finalization, and any follow-on
+capture artifact write.
 
 ---
 
@@ -27,7 +28,9 @@ the step pipeline and capture artifact write.
 
 Egress processes launch when the run begins, before the first ingress
 event. After the last step, host verifies no pending acks remain,
-quiesces/stops egress with bounded shutdown, then writes capture.
+quiesces/stops egress with bounded shutdown, then finalizes a capture
+bundle. If a higher-level path wants a capture artifact on disk, that
+file is written from the finalized bundle afterward.
 
 ### Option (ii) — Lazy start on first intent (rejected)
 
@@ -48,7 +51,7 @@ are recorded as incomplete. No drain wait.
 
 **Rejected.** Under per-step blocking (see below), there are no
 un-acked intents at run end — each step waits for its acks. But even
-structurally, "no drain" would mean the capture artifact can't
+structurally, "no drain" would mean the finalized capture result can't
 guarantee all intents were durably accepted, which contradicts the
 ack model.
 
@@ -120,13 +123,16 @@ step's acks were resolved before the next step. End-of-run is:
    may mirror ingress `end` message). Bounded graceful shutdown with
    timeout. If egress doesn't exit within the shutdown timeout, force
    kill.
-3. **Write capture artifact.** All steps, all effects, all ack
+3. **Finalize capture bundle.** All steps, all effects, and all ack
    records are finalized after egress is quiesced, so late channel
-   frames cannot mutate truth after artifact write.
+   frames cannot mutate truth after bundle finalization.
+4. **Optional artifact write.** If the caller configured
+   `capture_output`, write the capture artifact from that finalized
+   bundle after host finalization returns.
 
-Capture write happens AFTER egress quiesce/stop. This freezes external
-channel activity before artifact finalization and prevents post-capture
-ack drift.
+Capture-bundle finalization happens AFTER egress quiesce/stop. This
+freezes external channel activity before artifact finalization and
+prevents post-capture ack drift.
 
 ### Replay behavior
 
@@ -150,8 +156,8 @@ This is already enforced by the `StepMode` gate from Phase 1
   only after egress is quiesced/stopped.
 - Per-step blocking: dispatch + wait for all acks before next step.
 - No pending acks at run end (invariant under per-step blocking).
-- Capture write order: all acks settled → quiesce/stop egress →
-  write capture.
+- Capture finalization order: all acks settled → quiesce/stop egress →
+  finalize capture bundle → optional artifact write.
 - Startup failure → run does not begin.
 - Ack timeout → dispatch failure → interrupted run.
 - Replay never contacts egress.
@@ -169,11 +175,13 @@ This is already enforced by the `StepMode` gate from Phase 1
 
 ---
 
-## Impacted Files (future implementation)
+## Impacted Files
 
 - `runner.rs` — per-step dispatch + ack wait in `execute_step()`
   (live mode only, gated by `StepMode`)
-- Host run path — egress startup before first event, quiesce/stop
-  before capture write
-- `usecases.rs` — egress lifecycle integration with `RunOutcome`
-- Capture artifact — ack records stored per-step alongside effects
+- Host run/manual-finalization paths — egress startup before first
+  event, quiesce/stop before capture-bundle finalization
+- `usecases.rs` — egress lifecycle integration with `RunOutcome` and
+  hosted-runner finalization
+- Capture artifact write path — optional file write from the finalized
+  bundle; ack records stored per-step alongside effects

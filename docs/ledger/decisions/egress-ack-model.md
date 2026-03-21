@@ -232,10 +232,13 @@ establishes that completion does NOT arrive via the egress ack.
 
 ---
 
-## Impacted Files (future implementation)
+## Impacted Files
 
-- `runner.rs` — dispatch path in `execute_step()` (live mode only)
+- `runner.rs` — live dispatch path and durable-accept ack handling in
+  `execute_step()`
 - Egress protocol definition — ack message schema
-- Capture artifact — stores durable-accept ack alongside intent record
+- Capture bundle / decision ack records — durable-accept ack stored
+  alongside the dispatched intent record
 - Egress configuration — `ack_timeout` field
-- Interrupt handling — timeout → interruption path
+- Interruption mapping — timeout / protocol / IO failures surfaced
+  through the egress failure taxonomy
