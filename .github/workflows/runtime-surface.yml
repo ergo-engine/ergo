@@ -11,15 +11,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify-runtime-surface:
-    name: Verify (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
+  doctrine-and-boundaries:
+    name: Doctrine + boundaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify replay naming
+        shell: bash
+        run: bash tools/verify_replay_naming.sh
+
+      - name: Verify doctrine gate
+        shell: bash
+        run: bash tools/verify_doctrine_gate.sh
+
+      - name: Verify layer boundaries
+        shell: bash
+        run: bash tools/verify_layer_boundaries.sh
+
+      - name: Verify invariant index
+        shell: bash
+        run: bash tools/verify_invariant_index.sh
+
+      - name: Verify ergo-mcp parser tests
+        shell: bash
+        run: |
+          if [[ -d "tools/ergo-mcp" ]]; then
+            python -m unittest discover -s tools/ergo-mcp -p "test_*.py"
+          else
+            echo "skipping ergo-mcp invariant parser tests (tools/ergo-mcp not present)"
+          fi
+
+  rust-verify:
+    name: Rust verify (ubuntu-latest)
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -38,6 +70,25 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Verify runtime surface
-        shell: bash
-        run: bash verify_runtime_surface.sh
+      - name: Cargo fmt
+        run: cargo fmt --check
+
+      - name: Cargo test workspace
+        run: cargo test --workspace
+
+  windows-compile:
+    name: Windows compile (windows-latest)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cargo check workspace
+        run: cargo check --workspace

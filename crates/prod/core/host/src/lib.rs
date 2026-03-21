@@ -37,14 +37,13 @@ pub use runner::{HostedAdapterConfig, HostedEvent, HostedRunner, HostedStepOutco
 pub use usecases::{
     finalize_hosted_runner_capture, prepare_hosted_runner_from_paths,
     prepare_hosted_runner_from_paths_with_surfaces, replay_graph_from_paths,
-    replay_graph_from_paths_with_surfaces, run_graph_from_paths,
-    run_graph_from_paths_with_control, run_graph_from_paths_with_surfaces,
-    run_graph_from_paths_with_surfaces_and_control, validate_graph_from_paths,
-    validate_graph_from_paths_with_surfaces, AdapterDependencySummary, DriverConfig,
-    HostReplayError, HostRunError, HostStopHandle, InterruptedRun, InterruptionReason,
-    PrepareHostedRunnerFromPathsRequest, ReplayGraphFromPathsRequest, ReplayGraphRequest,
-    ReplayGraphResult, RunControl, RunGraphFromPathsRequest, RunGraphResponse, RunOutcome,
-    RunSummary, RuntimeSurfaces,
+    replay_graph_from_paths_with_surfaces, run_graph_from_paths, run_graph_from_paths_with_control,
+    run_graph_from_paths_with_surfaces, run_graph_from_paths_with_surfaces_and_control,
+    validate_graph_from_paths, validate_graph_from_paths_with_surfaces, AdapterDependencySummary,
+    DriverConfig, HostReplayError, HostRunError, HostStopHandle, InterruptedRun,
+    InterruptionReason, PrepareHostedRunnerFromPathsRequest, ReplayGraphFromPathsRequest,
+    ReplayGraphRequest, ReplayGraphResult, RunControl, RunGraphFromPathsRequest, RunGraphResponse,
+    RunOutcome, RunSummary, RuntimeSurfaces,
 };
 
 // Lower-level host building blocks. These remain public for advanced embedded

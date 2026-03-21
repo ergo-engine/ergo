@@ -4,6 +4,10 @@
 
 pub const RUNTIME_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub fn runtime_version() -> &'static str {
+    RUNTIME_VERSION
+}
+
 pub mod action;
 pub mod catalog;
 pub mod cluster;
