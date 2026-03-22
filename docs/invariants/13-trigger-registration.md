@@ -28,12 +28,19 @@
 | TRG-13 | ID unique in registry | trigger.md #TRG-13 | — | — | ✓ | trg_13_duplicate_id_rejected |
 | TRG-14 | Parameter default type matches declared type | trigger.md #TRG-14 | — | — | ✓ | trg_14_invalid_parameter_type_default_rejected |
 
+### Related Composition Alias Invariants
+
+| ID | Invariant | Spec | Type | Assertion | Validation | Test |
+|----|-----------|:----:|:----:|:---------:|:----------:|:----:|
+| COMP-7 | Trigger input from Compute or Trigger | trigger.md #COMP-7 | — | — | ✓ | ✓ |
+| COMP-8 | Trigger output to Action or Trigger | trigger.md #COMP-8 | — | — | ✓ | ✓ |
+
 ### Notes
 
 - **TRG-9 link:** TRG-STATE-1 (stateless triggers) remains enforced by registry validation.
 - **TRG-14:** Enforced in `trigger/registry.rs::validate_manifest` by rejecting manifests where a parameter default value type does not match the declared parameter type (`TriggerValidationError::InvalidParameterType`).
 - **Registration enforcement location:** `crates/kernel/runtime/src/trigger/registry.rs`
 - **Registration test location:** `crates/kernel/runtime/src/trigger/registry.rs`
-- **Composition rules (COMP-7/COMP-8):** enforced by Validation Phase invariant **V.2** (wiring matrix) in `crates/kernel/runtime/src/runtime/validate.rs`.
+- **COMP-7/COMP-8:** Trigger-adjacent composition aliases enforced by Validation Phase invariant **V.2** (wiring matrix) in `crates/kernel/runtime/src/runtime/validate.rs`.
 
 ---

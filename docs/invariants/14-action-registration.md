@@ -49,7 +49,7 @@
 
 ### Notes
 
-- **ACT-12:** Enforced during graph validation in `crates/kernel/runtime/src/runtime/validate.rs` (ValidationError::ActionNotGated).
+- **ACT-12:** Composition-time validation. Same predicate and enforcement as **V.5** (`ValidationError::ActionNotGated` in `crates/kernel/runtime/src/runtime/validate.rs`). It remains documented in the `ACT-*` family file for action-contract traceability.
 - **ACT-19:** Enforced in `action/registry.rs::validate_manifest` by rejecting manifests where a parameter default value type does not match the declared parameter type (`ActionValidationError::InvalidParameterType`).
 - **ACT-20/ACT-21:** Registration-time cross-check for parameter-bound write names (`$key` convention). Ensures `$`-prefixed write spec names reference declared String-typed parameters.
 - **ACT-22/ACT-23:** Registration-time checks for write payload binding (`from_input`) and scalar type compatibility. These define the declarative "what" channel for action writes; they do not by themselves authorize upstream wiring.

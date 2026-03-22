@@ -103,13 +103,15 @@ These tests are permanent. Failure indicates invariant regression.
 
 | ID | Invariant | Enforcement Locus | Status |
 |----|-----------|-------------------|--------|
-| RUN-CANON-1 | Canonical graph run requires explicit event source | Host canonical path usecase validation (`ergo_host::run_graph_from_paths`, delegating to `run_graph`, enforces ingress presence before execution) | Enforced |
-| RUN-CANON-2 | Adapter binding is mandatory only for adapter-dependent graphs | Host canonical path usecase validation (`ergo_host::run_graph_from_paths`, delegating to `run_graph`, enforces adapter requirement from dependency summary) | Enforced |
-| REP-7 | Strict replay requires provenance contract match | `supervisor::replay::replay_checked_strict` | Enforced |
-| REP-8 | Strict replay rejects duplicate `events[].event_id` values | `supervisor::replay::validate_bundle_strict` | Enforced |
+| RUN-CANON-1 | Canonical graph run requires explicit event source | See [07-orchestration.md](07-orchestration.md): host canonical path requires explicit `DriverConfig` and validates driver configuration before execution | Enforced |
+| RUN-CANON-2 | Adapter binding is mandatory only for adapter-dependent graphs | See [07-orchestration.md](07-orchestration.md): host canonical path scans dependency summary and rejects adapter-dependent runs without adapter binding | Enforced |
+| REP-7 | Strict replay requires adapter/runtime provenance contract match | See [08-replay.md](08-replay.md): strict replay preflight enforces adapter provenance sentinel/match rules and exact runtime provenance match | Enforced |
+| REP-8 | Strict replay rejects duplicate `events[].event_id` values | See [08-replay.md](08-replay.md): strict replay preflight validates unique capture event identities before replay | Enforced |
 
 Notes:
 
+- `RUN-CANON-1` and `RUN-CANON-2` are canonically owned by the Orchestration phase file; this strictness section is the run/replay policy summary layer.
+- `REP-7` and `REP-8` are canonically owned by the Replay phase file; this strictness section is the run/replay policy summary layer.
 - Adapter-dependent graph detection is based on required source context keys and action effects (writes and declared intents).
 - Adapter-independent canonical captures use explicit provenance sentinel `none`.
 - Capture bundles are strict v3 (`capture_version: "v3"`):
@@ -135,13 +137,13 @@ Notes:
 | [04-inference.md](04-inference.md) | Inference | F.1–F.6 |
 | [05-validation.md](05-validation.md) | Validation | V.1–V.8 |
 | [06-execution.md](06-execution.md) | Execution | R.1–R.7, TRG-STATE-1 |
-| [07-orchestration.md](07-orchestration.md) | Orchestration | CXT-1, SUP-*, HST-*, RTHANDLE-*, DOC-GATE-1, SDK-CANON-* |
-| [08-replay.md](08-replay.md) | Replay | REP-1–REP-6, REP-SCOPE, SOURCE-TRUST |
+| [07-orchestration.md](07-orchestration.md) | Orchestration | CXT-1, SUP-*, HST-*, RTHANDLE-*, DOC-GATE-1, RUN-CANON-*, SDK-CANON-* |
+| [08-replay.md](08-replay.md) | Replay | REP-1–REP-8, REP-SCOPE, SOURCE-TRUST |
 | [09-adapter-registration.md](09-adapter-registration.md) | Adapter Registration | ADP-1–ADP-19 |
 | [10-adapter-composition.md](10-adapter-composition.md) | Adapter Composition | COMP-1–3, COMP-16 |
 | [11-source-registration.md](11-source-registration.md) | Source Registration | SRC-1–SRC-17 |
-| [12-compute-registration.md](12-compute-registration.md) | Compute Registration | CMP-1–CMP-20 |
-| [13-trigger-registration.md](13-trigger-registration.md) | Trigger Registration | TRG-1–TRG-14 |
+| [12-compute-registration.md](12-compute-registration.md) | Compute Registration | CMP-1–CMP-20, COMP-4–COMP-6 |
+| [13-trigger-registration.md](13-trigger-registration.md) | Trigger Registration | TRG-1–TRG-14, COMP-7–COMP-8 |
 | [14-action-registration.md](14-action-registration.md) | Action Registration | ACT-1–ACT-33 |
 | [15-action-composition.md](15-action-composition.md) | Action Composition | COMP-9–COMP-15, COMP-17–COMP-19 |
 | [rule-registry.md](rule-registry.md) | Rule Registry | Generated rule index |

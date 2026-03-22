@@ -58,7 +58,11 @@
 | HST-8 | Canonical host loop enforces one `on_event` lifecycle per step cycle | supervisor.md §2.2 | — | — | ✓ | ✓ |
 | HST-9 | Canonical host runner rejects duplicate `event_id` values across step lifecycle (including replay_step) | host boundary contract | — | — | ✓ | ✓ |
 | DOC-GATE-1 | Canonical-complete claims blocked while doctrine ledger has open rows | CANONICAL process rule | — | — | ✓ | ✓ |
-| SDK-CANON-1 | SDK canonical execution must delegate to core host path when SDK run/replay APIs exist | CANONICAL scope rule | — | — | — | — |
+| RUN-CANON-1 | Canonical graph run requires explicit event source | host boundary contract | ✓ | — | ✓ | — |
+| RUN-CANON-2 | Adapter binding is mandatory only for adapter-dependent graphs | host boundary contract | — | — | ✓ | ✓ |
+| SDK-CANON-1 | SDK canonical execution must delegate to core host path when SDK run/replay APIs exist | CANONICAL scope rule | — | — | — | ✓ |
+| SDK-CANON-2 | Project/profile resolution must translate into host-owned canonical requests, not invent a second execution model | product boundary contract | — | — | — | ✓ |
+| SDK-CANON-3 | SDK custom primitives register in-process through the shared runtime registration and validation path used by core primitives | product boundary contract | — | — | — | ✓ |
 
 ### Host Usecase API
 
@@ -91,6 +95,10 @@ Notes:
 - HST-9: duplicate `event_id` rejection is enforced at `HostedRunner`, so non-CLI host callers cannot bypass identity guarantees. Host replay execution flows through the host replay path, which performs strict preflight, event rehydration with hash checks, and effect-integrity comparison around the `HostedRunner::replay_step(...)` primitive.
 - HST-7 commit rule follows SUP-6 partial execution semantics: commit if drained buffer is non-empty regardless of final termination; no transactional rollback.
 - DOC-GATE-1 enforcement script: `tools/verify_doctrine_gate.sh`; integrated via `tools/verify_runtime_surface.sh`.
+- RUN-CANON-1: canonical run entrypoints require a non-optional `DriverConfig` (`RunGraphFromPathsRequest.driver`, `RunGraphRequest.driver`), so host canonical run always receives an explicit event source (`Fixture` or `Process`) instead of inventing an implicit direct-run path. Driver-specific validation then rejects empty/invalid driver configuration before canonical execution begins.
+- RUN-CANON-2: `validate_live_runner_setup(...)` scans adapter dependencies before execution and `ensure_adapter_requirement_satisfied(...)` rejects adapter-dependent graphs when `adapter_path` is absent. The host error surface reports this as `RUN-CANON-2` with offending required-context/write nodes when available.
 - SDK-CANON-1: now exercised by `ergo-sdk-rust`. SDK `run_profile`, `replay_profile`, `validate_project`, and `runner_for_profile` delegate canonical orchestration to host entrypoint APIs, and `ProfileRunner::finish()` delegates finalization through `finalize_hosted_runner_capture(...)`; `ergo init` scaffolds against that real surface rather than a placeholder.
+- SDK-CANON-2: SDK profile-facing APIs resolve project profiles through loader-owned resolution, then translate resolved assets into host requests instead of becoming an alternate orchestration authority. `run_profile(...)` resolves and delegates to `run_graph_from_paths_with_surfaces_and_control(...)`; `replay_profile(...)` resolves and delegates to host replay; `validate_project()` resolves every profile and delegates to host validation; `runner_for_profile(...)` resolves a normal run profile and delegates manual-runner preparation to host.
+- SDK-CANON-3: `ErgoBuilder` forwards custom Sources, Computes, Triggers, and Actions into `CatalogBuilder`, and `CatalogBuilder::build()` registers the combined core + custom inventory through the same runtime registry/catalog path. The SDK therefore does not create an SDK-only primitive validation lane; invalid or duplicate custom primitives fail through the shared runtime registration surface.
 
 ---

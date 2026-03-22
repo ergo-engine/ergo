@@ -34,13 +34,21 @@
 | CMP-19 | Parameter default type matches declared type | compute.md #CMP-19 | — | — | ✓ | cmp_19_invalid_parameter_type_default_rejected |
 | CMP-20 | Output types valid | compute.md #CMP-20 | ✓ | — | — | cmp_20_output_types_valid |
 
+### Related Composition Alias Invariants
+
+| ID | Invariant | Spec | Type | Assertion | Validation | Test |
+|----|-----------|:----:|:----:|:---------:|:----------:|:----:|
+| COMP-4 | Source output type equals Compute input type | compute.md #COMP-4 | — | — | ✓ | ✓ |
+| COMP-5 | Input type equals upstream output type | compute.md #COMP-5 | — | — | ✓ | ✓ |
+| COMP-6 | Output type equals downstream input type | compute.md #COMP-6 | — | — | ✓ | ✓ |
+
 ### Notes
 
 - **CMP-11/12:** Enforced at execution in `crates/kernel/runtime/src/runtime/execute.rs`. CMP-12 is structural — `compute()` returns `Result<Outputs, ComputeError>`, so errors have no outputs by construction.
 - **Registration enforcement location:** `crates/kernel/runtime/src/compute/registry.rs`
 - **Registration test location:** `crates/kernel/runtime/src/compute/registry.rs`
 - **Execution test location:** `crates/kernel/runtime/src/runtime/tests.rs`
-- **Composition rules (COMP-5/COMP-6):** enforced by Validation Phase invariant **V.4** (`ValidationError::TypeMismatch`) in `crates/kernel/runtime/src/runtime/validate.rs`.
+- **COMP-4/COMP-5/COMP-6:** Compute-adjacent composition aliases enforced by Validation Phase invariant **V.4** (`ValidationError::TypeMismatch`) in `crates/kernel/runtime/src/runtime/validate.rs`.
 - **CMP-19:** Enforced in `compute/registry.rs::validate_manifest` by rejecting manifests where a parameter default value type does not match the declared parameter type (`ValidationError::InvalidParameterType`).
 - **CMP-20:** Structurally enforced in `compute/registry.rs::validate_manifest` by exhaustive `ValueType` matching for outputs (`Number | Series | Bool | String`).
 

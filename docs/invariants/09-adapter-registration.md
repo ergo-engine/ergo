@@ -30,10 +30,14 @@
 | ADP-15 | Writable keys must be capturable | adapter.md #ADP-15 | — | — | — | — |
 | ADP-16 | Write effect must be capturable | adapter.md #ADP-16 | — | — | — | — |
 | ADP-17 | Writable keys cannot be required | adapter.md #ADP-17 | — | — | ✓ | adp_17_writable_key_required_rejected |
+| ADP-18 | Required event fields map to context keys with compatible types | adapter.md #ADP-18 | — | — | ✓ | adp_18_* |
+| ADP-19 | Materialized event field types are supported | adapter.md #ADP-19 | — | — | ✓ | adp_19_* |
 
 ### Notes
 
 - **ADP-15/ADP-16:** Deferred as adapter-manifest completeness items. Same-ingestion Scope A replay already verifies host-owned effect integrity including `set_context` writes (see `08-replay.md`). These rules would require the manifest to explicitly declare capturability of writable context keys and `set_context` effects in `capture.fields`. They are not blockers to current same-ingestion replay correctness. If this work is revived, open a dedicated gap-work file first to decide whether manifests canonically declare context/effect capture coverage and what guarantee that implies across ingestion modes.
+- **ADP-18:** Only fields listed in `payload_schema.required` participate. If `required` is omitted, the invariant vacuously passes.
+- **ADP-19:** Event payload schemas must materialize only supported runtime value types (`Number`, `Bool`, `String`, `Series`).
 - **Enforcement location:** `crates/kernel/adapter/src/validate.rs`
 - **Test location:** `crates/kernel/adapter/tests/validation.rs`
 
