@@ -14,7 +14,14 @@ use ergo_runtime::cluster::{
 };
 
 pub fn decode_graph_yaml(input: &str) -> Result<DecodedAuthoringGraph, LoaderError> {
-    parse_graph_str(input, Path::new("<memory>"))
+    decode_graph_yaml_labeled(input, "<memory>")
+}
+
+pub fn decode_graph_yaml_labeled(
+    input: &str,
+    source_label: &str,
+) -> Result<DecodedAuthoringGraph, LoaderError> {
+    parse_graph_str(input, source_label)
 }
 
 pub fn parse_graph_file(path: &Path) -> Result<DecodedAuthoringGraph, LoaderError> {
@@ -24,21 +31,35 @@ pub fn parse_graph_file(path: &Path) -> Result<DecodedAuthoringGraph, LoaderErro
             message: format!("read graph '{}': {err}", path.display()),
         })
     })?;
-    parse_graph_str(&data, path)
+    parse_graph_str(&data, &path.display().to_string())
 }
 
-fn parse_graph_str(input: &str, source: &Path) -> Result<DecodedAuthoringGraph, LoaderError> {
+pub(crate) fn validate_cluster_reference_id(cluster_id: &str) -> Result<(), LoaderError> {
+    validate_general_identifier(cluster_id, "cluster id", false).map_err(|err| decode_error(err))
+}
+
+pub(crate) fn parse_graph_str(
+    input: &str,
+    source_label: &str,
+) -> Result<DecodedAuthoringGraph, LoaderError> {
     let raw: RawClusterDefinition = serde_yaml::from_str(input)
-        .map_err(|err| decode_error(format!("parse YAML '{}': {err}", source.display())))?;
+        .map_err(|err| decode_error(format!("parse YAML '{}': {err}", source_label)))?;
+    decode_raw_graph(raw, source_label)
+}
+
+pub(crate) fn decode_raw_graph(
+    raw: RawClusterDefinition,
+    source_label: &str,
+) -> Result<DecodedAuthoringGraph, LoaderError> {
     raw.into_cluster_definition()
-        .map_err(|err| decode_error(format!("graph '{}': {err}", source.display())))
+        .map_err(|err| decode_error(format!("graph '{}': {err}", source_label)))
 }
 
 fn decode_error(message: String) -> LoaderError {
     LoaderError::Decode(LoaderDecodeError { message })
 }
 #[derive(Debug, Deserialize)]
-struct RawClusterDefinition {
+pub(crate) struct RawClusterDefinition {
     kind: String,
     id: String,
     version: serde_yaml::Value,
@@ -718,6 +739,15 @@ fn validate_general_identifier(
     }
     if value.contains(' ') {
         return Err(format!("{label} must not contain spaces"));
+    }
+    if value.contains('/') {
+        return Err(format!("{label} must not contain '/'"));
+    }
+    if value.contains('\\') {
+        return Err(format!("{label} must not contain '\\\\'"));
+    }
+    if value.contains(':') {
+        return Err(format!("{label} must not contain ':'"));
     }
     if forbid_dollar && value.contains('$') {
         return Err(format!("{label} must not contain '$'"));

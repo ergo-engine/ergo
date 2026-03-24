@@ -1,20 +1,37 @@
 use std::collections::{HashMap, HashSet};
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use ergo_runtime::cluster::Version;
 
-use crate::decode::{parse_graph_file, selector_matches_version, DecodedAuthoringGraph};
-use crate::io::{canonicalize_or_self, LoaderDiscoveryError, LoaderError};
+use crate::decode::{
+    parse_graph_content, parse_graph_file, selector_matches_version, validate_cluster_reference_id,
+    DecodedAuthoringGraph,
+};
+use crate::io::{LoaderDiscoveryError, LoaderError};
+use crate::resolver::{ClusterResolver, FilesystemResolver, InMemoryResolver, SourceRef};
 
+#[derive(Debug, Clone)]
 pub struct ClusterDiscovery {
+    pub root: DecodedAuthoringGraph,
     pub clusters: HashMap<(String, Version), DecodedAuthoringGraph>,
     pub cluster_sources: HashMap<(String, Version), PathBuf>,
+    pub cluster_diagnostic_labels: HashMap<(String, Version), String>,
 }
 
-struct CandidateSearch {
-    searched_paths: Vec<PathBuf>,
-    existing_paths: Vec<PathBuf>,
+#[derive(Debug, Clone)]
+pub struct InMemorySourceInput {
+    pub source_id: String,
+    pub source_label: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct InMemoryClusterDiscovery {
+    pub root: DecodedAuthoringGraph,
+    pub clusters: HashMap<(String, Version), DecodedAuthoringGraph>,
+    pub cluster_source_ids: HashMap<(String, Version), String>,
+    pub cluster_source_labels: HashMap<(String, Version), String>,
+    pub cluster_diagnostic_labels: HashMap<(String, Version), String>,
 }
 
 pub fn resolve_cluster_candidates(
@@ -22,95 +39,115 @@ pub fn resolve_cluster_candidates(
     cluster_id: &str,
     search_paths: &[PathBuf],
 ) -> Result<Vec<PathBuf>, LoaderError> {
-    Ok(collect_candidate_search(base_dir, cluster_id, search_paths).existing_paths)
-}
-
-fn collect_candidate_search(
-    base_dir: &Path,
-    cluster_id: &str,
-    search_paths: &[PathBuf],
-) -> CandidateSearch {
-    let filename = format!("{cluster_id}.yaml");
-
-    let mut candidates = vec![
-        base_dir.join(&filename),
-        base_dir.join("clusters").join(&filename),
-    ];
-
-    for path in search_paths {
-        candidates.push(path.join(&filename));
-        if path.file_name() != Some(OsStr::new("clusters")) {
-            candidates.push(path.join("clusters").join(&filename));
-        }
-    }
-
-    let mut searched_seen = HashSet::new();
-    let mut searched_paths = Vec::new();
-    let mut existing_seen = HashSet::new();
-    let mut existing_paths = Vec::new();
-    for candidate in candidates {
-        if searched_seen.insert(candidate.clone()) {
-            searched_paths.push(candidate.clone());
-        }
-        if !candidate.exists() {
-            continue;
-        }
-        let canonical = canonicalize_or_self(&candidate);
-        if existing_seen.insert(canonical) {
-            existing_paths.push(candidate);
-        }
-    }
-
-    CandidateSearch {
-        searched_paths,
-        existing_paths,
-    }
+    validate_cluster_id(cluster_id)?;
+    let resolver = FilesystemResolver::new(search_paths);
+    Ok(resolver.resolve_existing_candidate_paths(base_dir, cluster_id))
 }
 
 pub fn load_cluster_tree(
     root_path: &Path,
-    root: &DecodedAuthoringGraph,
     search_paths: &[PathBuf],
 ) -> Result<HashMap<(String, Version), DecodedAuthoringGraph>, LoaderError> {
-    let discovery = discover_cluster_tree(root_path, root, search_paths)?;
+    let discovery = discover_cluster_tree(root_path, search_paths)?;
     Ok(discovery.clusters)
 }
 
 pub fn discover_cluster_tree(
     root_path: &Path,
-    root: &DecodedAuthoringGraph,
     search_paths: &[PathBuf],
 ) -> Result<ClusterDiscovery, LoaderError> {
-    let mut builder = ClusterTreeBuilder {
-        clusters: HashMap::new(),
-        cluster_sources: HashMap::new(),
-        visiting_paths: HashSet::new(),
-        visiting_keys: HashSet::new(),
-        search_paths: search_paths.to_vec(),
-    };
-    builder.visit(root_path, root.clone())?;
+    let root = parse_graph_file(root_path)?;
+    let resolver = FilesystemResolver::new(search_paths);
+    let mut builder = ClusterTreeBuilder::new(&resolver);
+    builder.visit(SourceRef::from_opened_path(root_path), root.clone())?;
+    let mut cluster_diagnostic_labels = HashMap::new();
+    let cluster_sources = builder
+        .cluster_sources
+        .into_iter()
+        .map(|(key, source_ref)| {
+            cluster_diagnostic_labels.insert(key.clone(), source_ref.opened_label());
+            (
+                key,
+                source_ref
+                    .filesystem_canonical_path()
+                    .expect("filesystem discovery must keep filesystem source refs")
+                    .to_path_buf(),
+            )
+        })
+        .collect();
     Ok(ClusterDiscovery {
+        root,
         clusters: builder.clusters,
-        cluster_sources: builder.cluster_sources,
+        cluster_sources,
+        cluster_diagnostic_labels,
     })
 }
 
-struct ClusterTreeBuilder {
-    clusters: HashMap<(String, Version), DecodedAuthoringGraph>,
-    cluster_sources: HashMap<(String, Version), PathBuf>,
-    visiting_paths: HashSet<PathBuf>,
-    visiting_keys: HashSet<(String, Version)>,
-    search_paths: Vec<PathBuf>,
+pub fn discover_in_memory_cluster_tree(
+    root_source_id: &str,
+    sources: &[InMemorySourceInput],
+    search_roots: &[String],
+) -> Result<InMemoryClusterDiscovery, LoaderError> {
+    let resolver = InMemoryResolver::new(sources, search_roots)?;
+    let root_source = resolver.root_source(root_source_id)?;
+    let root_source_text = resolver.read(&root_source)?;
+    let root = parse_graph_content(&root_source_text, &root_source.opened_label())?;
+    let mut builder = ClusterTreeBuilder::new(&resolver);
+    builder.visit(root_source, root.clone())?;
+
+    let mut cluster_source_ids = HashMap::new();
+    let mut cluster_source_labels = HashMap::new();
+    let mut cluster_diagnostic_labels = HashMap::new();
+    for (key, source_ref) in builder.cluster_sources {
+        let source_id = source_ref
+            .in_memory_source_id()
+            .expect("in-memory discovery must keep in-memory source refs")
+            .to_string();
+        let diagnostic_label = source_ref.opened_label();
+        cluster_source_labels.insert(key.clone(), diagnostic_label.clone());
+        cluster_diagnostic_labels.insert(key.clone(), diagnostic_label);
+        cluster_source_ids.insert(key, source_id);
+    }
+
+    Ok(InMemoryClusterDiscovery {
+        root,
+        clusters: builder.clusters,
+        cluster_source_ids,
+        cluster_source_labels,
+        cluster_diagnostic_labels,
+    })
 }
 
-impl ClusterTreeBuilder {
-    fn visit(&mut self, path: &Path, def: DecodedAuthoringGraph) -> Result<(), LoaderError> {
-        let (canonical, cluster_key) = self.record_cluster_definition(path, &def)?;
+struct ClusterTreeBuilder<'a, R: ClusterResolver> {
+    clusters: HashMap<(String, Version), DecodedAuthoringGraph>,
+    cluster_sources: HashMap<(String, Version), SourceRef>,
+    visiting_sources: HashSet<SourceRef>,
+    visiting_keys: HashSet<(String, Version)>,
+    resolver: &'a R,
+}
 
-        if !self.visiting_paths.insert(canonical.clone()) {
+impl<'a, R: ClusterResolver> ClusterTreeBuilder<'a, R> {
+    fn new(resolver: &'a R) -> Self {
+        Self {
+            clusters: HashMap::new(),
+            cluster_sources: HashMap::new(),
+            visiting_sources: HashSet::new(),
+            visiting_keys: HashSet::new(),
+            resolver,
+        }
+    }
+
+    fn visit(
+        &mut self,
+        source_ref: SourceRef,
+        def: DecodedAuthoringGraph,
+    ) -> Result<(), LoaderError> {
+        let cluster_key = self.record_cluster_definition(&source_ref, &def)?;
+
+        if !self.visiting_sources.insert(source_ref.clone()) {
             return Err(discovery_error(format!(
                 "circular cluster reference detected at '{}'",
-                path.display()
+                source_ref.opened_label()
             )));
         }
         if !self.visiting_keys.insert(cluster_key.clone()) {
@@ -118,11 +155,10 @@ impl ClusterTreeBuilder {
                 "circular cluster reference detected for '{}@{}' at '{}'",
                 def.id,
                 def.version,
-                path.display()
+                source_ref.opened_label()
             )));
         }
 
-        let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
         for node in def.nodes.values() {
             let ergo_runtime::cluster::NodeKind::Cluster {
                 cluster_id,
@@ -131,83 +167,88 @@ impl ClusterTreeBuilder {
             else {
                 continue;
             };
-            let candidate_search =
-                collect_candidate_search(base_dir, cluster_id, &self.search_paths);
-            if candidate_search.existing_paths.is_empty() {
+            let candidate_search = self.resolver.resolve(cluster_id, Some(&source_ref))?;
+            if candidate_search.found.is_empty() {
                 return Err(missing_cluster_error(
                     cluster_id,
                     version,
                     &node.id,
-                    path,
-                    &candidate_search,
+                    &source_ref,
+                    &candidate_search.search_trace,
                 ));
             }
 
-            for cluster_path in &candidate_search.existing_paths {
-                let nested = parse_graph_file(&cluster_path).map_err(|err| {
+            for candidate in candidate_search.found {
+                let nested_content = self.resolver.read(&candidate.source_ref).map_err(|err| {
                     discovery_error(format!(
                         "failed parsing nested cluster '{}@{}' at '{}': {}",
-                        cluster_id,
-                        version,
-                        cluster_path.display(),
-                        err
+                        cluster_id, version, candidate.opened_label, err
                     ))
                 })?;
+                let nested = parse_graph_content(&nested_content, &candidate.opened_label)
+                    .map_err(|err| {
+                        discovery_error(format!(
+                            "failed parsing nested cluster '{}@{}' at '{}': {}",
+                            cluster_id, version, candidate.opened_label, err
+                        ))
+                    })?;
 
                 if nested.id != *cluster_id {
                     return Err(id_mismatch_error(
                         cluster_id,
                         version,
                         &nested.id,
-                        cluster_path,
+                        &candidate.source_ref,
                         &node.id,
-                        path,
+                        &source_ref,
                     ));
                 }
 
-                self.record_cluster_definition(cluster_path, &nested)?;
+                self.record_cluster_definition(&candidate.source_ref, &nested)?;
 
                 if !selector_matches_version(version, &nested.version).map_err(discovery_error)? {
                     continue;
                 }
 
-                self.visit(cluster_path, nested)?;
+                self.visit(candidate.source_ref, nested)?;
             }
         }
 
-        self.visiting_paths.remove(&canonical);
+        self.visiting_sources.remove(&source_ref);
         self.visiting_keys.remove(&cluster_key);
         Ok(())
     }
 
     fn record_cluster_definition(
         &mut self,
-        path: &Path,
+        source_ref: &SourceRef,
         def: &DecodedAuthoringGraph,
-    ) -> Result<(PathBuf, (String, Version)), LoaderError> {
-        let canonical = canonicalize_or_self(path);
+    ) -> Result<(String, Version), LoaderError> {
         let cluster_key = (def.id.clone(), def.version.clone());
 
-        if let Some(existing_path) = self.cluster_sources.get(&cluster_key) {
-            if existing_path != &canonical {
+        if let Some(existing_source) = self.cluster_sources.get(&cluster_key) {
+            if existing_source != source_ref {
+                let left = conflict_source_display(existing_source);
+                let right = conflict_source_display(source_ref);
+                let source_kind = match (existing_source, source_ref) {
+                    (SourceRef::Filesystem { .. }, SourceRef::Filesystem { .. }) => "files",
+                    _ => "sources",
+                };
                 return Err(discovery_error(format!(
-                    "cluster '{}@{}' is defined by multiple files: '{}' and '{}'",
-                    def.id,
-                    def.version,
-                    existing_path.display(),
-                    canonical.display()
+                    "cluster '{}@{}' is defined by multiple {}: {} and {}",
+                    def.id, def.version, source_kind, left, right
                 )));
             }
         } else {
             self.cluster_sources
-                .insert(cluster_key.clone(), canonical.clone());
+                .insert(cluster_key.clone(), source_ref.clone());
         }
 
         self.clusters
             .entry(cluster_key.clone())
             .or_insert_with(|| def.clone());
 
-        Ok((canonical, cluster_key))
+        Ok(cluster_key)
     }
 }
 
@@ -215,49 +256,101 @@ fn missing_cluster_error(
     cluster_id: &str,
     version: &str,
     node_id: &str,
-    file_path: &Path,
-    search: &CandidateSearch,
+    referring_source: &SourceRef,
+    search_trace: &[String],
 ) -> LoaderError {
-    discovery_error(format!(
-        "looked for '{}.yaml' for cluster '{}@{}' in:\n{}\nnot found.\ncluster resolution is filename-based: the file must be named '{}.yaml'.\nreferenced by node '{}' in '{}'",
-        cluster_id,
-        cluster_id,
-        version,
-        format_paths(&search.searched_paths),
-        cluster_id,
-        node_id,
-        file_path.display()
-    ))
+    match referring_source {
+        SourceRef::Filesystem { .. } => discovery_error(format!(
+            "looked for '{}.yaml' for cluster '{}@{}' in:\n{}\nnot found.\ncluster resolution is filename-based: the file must be named '{}.yaml'.\nreferenced by node '{}' in '{}'",
+            cluster_id,
+            cluster_id,
+            version,
+            format_search_trace(search_trace),
+            cluster_id,
+            node_id,
+            referring_source.opened_label()
+        )),
+        SourceRef::InMemory { .. } => discovery_error(format!(
+            "looked for logical source paths ending in '{}.yaml' for cluster '{}@{}' in:\n{}\nnot found.\nin-memory cluster resolution is logical-path-based: a matching source_id must end in '{}.yaml'.\nreferenced by node '{}' in '{}'",
+            cluster_id,
+            cluster_id,
+            version,
+            format_search_trace(search_trace),
+            cluster_id,
+            node_id,
+            referring_source.opened_label()
+        )),
+    }
 }
 
 fn id_mismatch_error(
     expected_id: &str,
     requested_version: &str,
     actual_id: &str,
-    opened_path: &Path,
+    candidate_source: &SourceRef,
     node_id: &str,
-    file_path: &Path,
+    referring_source: &SourceRef,
 ) -> LoaderError {
-    discovery_error(format!(
-        "opened '{}' for cluster '{}@{}', but the YAML id is '{}'.\ncluster resolution is path-based, and the filename must match the YAML id field.\nfix: rename the file to '{}.yaml' or change the cluster id in the graph/YAML to match.\nreferenced by node '{}' in '{}'",
-        opened_path.display(),
-        expected_id,
-        requested_version,
-        actual_id,
-        expected_id,
-        node_id,
-        file_path.display()
-    ))
+    match candidate_source {
+        SourceRef::Filesystem { .. } => discovery_error(format!(
+            "opened '{}' for cluster '{}@{}', but the graph id is '{}'.\ncluster resolution is path-based, and the filename must match the decoded graph id field.\nfix: rename the file to '{}.yaml' or change the cluster id in the graph content to match.\nreferenced by node '{}' in '{}'",
+            candidate_source.opened_label(),
+            expected_id,
+            requested_version,
+            actual_id,
+            expected_id,
+            node_id,
+            referring_source.opened_label()
+        )),
+        SourceRef::InMemory {
+            source_id,
+            source_label,
+            ..
+        } => discovery_error(format!(
+            "opened in-memory source '{}' (source_id '{}') for cluster '{}@{}', but the graph id is '{}'.\nin-memory cluster resolution is logical-path-based, so the graph reference, source_id, and graph id must agree on '{}'.\nfix: change the graph id to '{}' or change the graph reference and source_id to match.\nreferenced by node '{}' in '{}'",
+            source_label,
+            source_id,
+            expected_id,
+            requested_version,
+            actual_id,
+            expected_id,
+            expected_id,
+            node_id,
+            referring_source.opened_label()
+        )),
+    }
 }
 
-fn format_paths(paths: &[PathBuf]) -> String {
+fn format_search_trace(paths: &[String]) -> String {
     paths
         .iter()
-        .map(|path| format!("- {}", path.display()))
+        .map(|path| format!("- {path}"))
         .collect::<Vec<_>>()
         .join("\n")
 }
 
 fn discovery_error(message: String) -> LoaderError {
     LoaderError::Discovery(LoaderDiscoveryError { message })
+}
+
+fn validate_cluster_id(cluster_id: &str) -> Result<(), LoaderError> {
+    validate_cluster_reference_id(cluster_id)
+        .map_err(|err| discovery_error(format!("invalid cluster_id '{}': {}", cluster_id, err)))
+}
+
+fn conflict_source_display(source_ref: &SourceRef) -> String {
+    match source_ref {
+        SourceRef::Filesystem { .. } => format!(
+            "'{}'",
+            source_ref
+                .filesystem_canonical_path()
+                .expect("filesystem source ref")
+                .display()
+        ),
+        SourceRef::InMemory {
+            source_id,
+            source_label,
+            ..
+        } => format!("'{}' (source_id '{}')", source_label, source_id),
+    }
 }

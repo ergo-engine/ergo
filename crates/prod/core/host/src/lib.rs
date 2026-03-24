@@ -49,7 +49,11 @@ pub use usecases::{
 // Lower-level host building blocks. These remain public for advanced embedded
 // callers and tests, but they are not the canonical orchestration surface that
 // CLI and SDK should compose themselves.
+pub use ergo_loader::{InMemorySourceInput, PreparedGraphAssets};
 pub use usecases::{
-    replay_graph, run_fixture, run_graph, run_graph_with_control, scan_adapter_dependencies,
-    validate_adapter_composition, RunFixtureRequest, RunFixtureResult, RunGraphRequest,
+    load_graph_assets_from_memory, load_graph_assets_from_paths, prepare_hosted_runner,
+    prepare_hosted_runner_with_surfaces, replay_graph, run_fixture, run_graph,
+    run_graph_with_control, scan_adapter_dependencies, validate_adapter_composition,
+    validate_graph, validate_graph_with_surfaces, LivePrepOptions, RunFixtureRequest,
+    RunFixtureResult, RunGraphRequest,
 };

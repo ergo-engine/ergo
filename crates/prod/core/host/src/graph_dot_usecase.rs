@@ -25,10 +25,9 @@ pub fn graph_to_dot_from_paths(request: GraphToDotFromPathsRequest) -> Result<St
         show_runtime_id,
     } = request;
 
-    let root = ergo_loader::parse_graph_file(&graph_path).map_err(|err| err.to_string())?;
-    let discovery =
-        ergo_loader::discovery::discover_cluster_tree(&graph_path, &root, &cluster_paths)
-            .map_err(|err| err.to_string())?;
+    let discovery = ergo_loader::discovery::discover_cluster_tree(&graph_path, &cluster_paths)
+        .map_err(|err| err.to_string())?;
+    let root = discovery.root.clone();
     let cluster_sources = discovery.cluster_sources;
     let clusters = discovery.clusters;
     let loader = PreloadedClusterLoader::new(clusters);

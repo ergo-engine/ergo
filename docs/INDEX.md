@@ -1,3 +1,12 @@
+---
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-03-23
+Owner: Documentation Index
+Scope: Documentation map and authority taxonomy
+Change Rule: Tracks implementation
+---
+
 # Documentation Index
 
 > **Single-Source Rule:** Every fact has exactly one authoritative
@@ -66,12 +75,16 @@ Directory structure is the topic map. No separate navigation aids needed.
 - [ledger/](ledger/)
   Operational planning and doctrine risk tracking: closure register,
   dev-work ledgers, gap-work ledgers, and the decision log.
+- [plans/](plans/)
+  Working design-loop documents: blast-radius maps, option analysis,
+  scope shaping, and phased execution plans while the design loop remains
+  active.
 
 ---
 
 ## Authority Levels
 
-Every document declares its authority in frontmatter. The four levels
+Every document declares its authority in frontmatter. The active levels
 and their change rules:
 
 - **FROZEN**
@@ -89,7 +102,7 @@ and their change rules:
   [rule-registry](invariants/rule-registry.md).
 - **CANONICAL**
   Change rule: tracks implementation.
-  Documents: [kernel](system/kernel.md),
+  Documents include: [kernel](system/kernel.md),
   [current-architecture](system/current-architecture.md),
   [kernel-prod-separation](system/kernel-prod-separation.md),
   [terminology](system/terminology.md),
@@ -99,11 +112,23 @@ and their change rules:
   [testing-notes](authoring/testing-notes.md),
   [ingress-channel-guide](authoring/ingress-channel-guide.md),
   [egress-channel-guide](authoring/egress-channel-guide.md), and
-  [invariants/](invariants/) (all phase files plus INDEX).
+  [invariants/](invariants/) (all phase files plus INDEX), along with
+  canonical ledger records when their frontmatter declares `Authority:
+  CANONICAL`.
 - **CONTRACTS**
   Change rule: external interfaces.
   Documents: [ui-runtime](contracts/ui-runtime.md) and
   [extension-roadmap](contracts/extension-roadmap.md).
+- **PROJECT**
+  Change rule: working project/implementation records that track active design
+  or delivery state.
+  Documents: [plans/](plans/) and operational ledger entries such as
+  [ledger/dev-work/](ledger/dev-work/).
+- **ESCALATION**
+  Change rule: exceptional authority record for conflict, override, or
+  unresolved semantic risk that cannot be handled cleanly inside the normal
+  decision/gap flow.
+  Documents: specific escalation records when they exist.
 
 ---
 
@@ -118,6 +143,9 @@ and their change rules:
   doctrine/risk gaps, and
   **[ledger/decisions/](ledger/decisions/)** records authority
   outcomes.
+- **[plans/](plans/)** is the sanctioned pre-ledger or cross-ledger
+  working area for iterative architecture/design loops that are not ready
+  to be split cleanly across gap, decision, and dev-work files.
 - All three reference spec documents (ontology, execution, etc.) as
   the source of truth.
 - Decision records explain **why** a ruling was made. Top-level system,

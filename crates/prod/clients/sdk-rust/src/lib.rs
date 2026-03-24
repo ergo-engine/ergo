@@ -1812,7 +1812,7 @@ outputs:
                 assert!(detail.contains("shared_value"));
                 assert!(detail.contains("^2.0"));
                 assert!(detail.contains("available: 1.0.0, 1.5.0"));
-                assert!(detail.contains("available cluster files"));
+                assert!(detail.contains("available cluster sources"));
                 assert!(detail.contains("shared_value@1.0.0"));
                 assert!(detail.contains("shared_value@1.5.0"));
             }

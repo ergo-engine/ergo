@@ -181,7 +181,7 @@ fn summarize_error_info(err: &impl ErrorInfo) -> String {
     format!("{} ({})", err.summary(), err.rule_id())
 }
 
-fn summarize_expand_error(
+fn summarize_filesystem_expand_error(
     err: &ExpandError,
     cluster_sources: &HashMap<(String, Version), PathBuf>,
 ) -> String {
@@ -206,6 +206,42 @@ fn summarize_expand_error(
             } else {
                 format!(
                     "{}\navailable cluster files:\n{}",
+                    base,
+                    available.join("\n")
+                )
+            }
+        }
+        _ => base,
+    }
+}
+
+fn summarize_expand_error(
+    err: &ExpandError,
+    diagnostic_labels: &HashMap<(String, Version), String>,
+) -> String {
+    let base = summarize_error_info(err);
+    match err {
+        ExpandError::UnsatisfiedVersionConstraint {
+            target_kind: VersionTargetKind::Cluster,
+            id,
+            available_versions,
+            ..
+        } => {
+            let available = available_versions
+                .iter()
+                .map(|version| {
+                    let label = diagnostic_labels
+                        .get(&(id.clone(), version.clone()))
+                        .cloned()
+                        .unwrap_or_else(|| format!("{id}@{version}"));
+                    format!("- {}@{} at {}", id, version, label)
+                })
+                .collect::<Vec<_>>();
+            if available.is_empty() {
+                base
+            } else {
+                format!(
+                    "{}\navailable cluster sources:\n{}",
                     base,
                     available.join("\n")
                 )
@@ -451,6 +487,12 @@ pub struct PrepareHostedRunnerFromPathsRequest {
     pub egress_config: Option<EgressConfig>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct LivePrepOptions {
+    pub adapter_path: Option<PathBuf>,
+    pub egress_config: Option<EgressConfig>,
+}
+
 struct PreparedLiveRunnerSetup {
     adapter_bound: bool,
     dependency_summary: AdapterDependencySummary,
@@ -509,6 +551,34 @@ impl RuntimeSurfaces {
     pub(crate) fn into_shared_parts(self) -> (Arc<CorePrimitiveCatalog>, Arc<CoreRegistries>) {
         (self.catalog, self.registries)
     }
+}
+
+fn map_live_prep_loader_result(
+    result: Result<ergo_loader::PreparedGraphAssets, ergo_loader::LoaderError>,
+) -> Result<ergo_loader::PreparedGraphAssets, HostRunError> {
+    result.map_err(|err| HostRunError::InvalidInput(err.to_string()))
+}
+
+pub fn load_graph_assets_from_paths(
+    graph_path: &Path,
+    cluster_paths: &[PathBuf],
+) -> Result<ergo_loader::PreparedGraphAssets, HostRunError> {
+    map_live_prep_loader_result(ergo_loader::load_graph_assets_from_paths(
+        graph_path,
+        cluster_paths,
+    ))
+}
+
+pub fn load_graph_assets_from_memory(
+    root_source_id: &str,
+    sources: &[ergo_loader::InMemorySourceInput],
+    search_roots: &[String],
+) -> Result<ergo_loader::PreparedGraphAssets, HostRunError> {
+    map_live_prep_loader_result(ergo_loader::load_graph_assets_from_memory(
+        root_source_id,
+        sources,
+        search_roots,
+    ))
 }
 
 #[derive(Clone)]
@@ -646,9 +716,9 @@ fn prepare_graph_runtime(
     cluster_paths: &[PathBuf],
     runtime_surfaces: Option<RuntimeSurfaces>,
 ) -> Result<PreparedGraphRuntime, String> {
-    let root = ergo_loader::parse_graph_file(graph_path).map_err(|err| err.to_string())?;
-    let discovery = ergo_loader::discovery::discover_cluster_tree(graph_path, &root, cluster_paths)
+    let discovery = ergo_loader::discovery::discover_cluster_tree(graph_path, cluster_paths)
         .map_err(|err| err.to_string())?;
+    let root = discovery.root.clone();
     let cluster_sources = discovery.cluster_sources;
     let clusters = discovery.clusters;
     let loader = PreloadedClusterLoader::new(clusters);
@@ -657,7 +727,7 @@ fn prepare_graph_runtime(
     let expanded = expand(&root, &loader, catalog.as_ref()).map_err(|err| {
         format!(
             "graph expansion failed: {}",
-            summarize_expand_error(&err, &cluster_sources)
+            summarize_filesystem_expand_error(&err, &cluster_sources)
         )
     })?;
     let runtime_provenance = compute_runtime_provenance(
@@ -670,6 +740,35 @@ fn prepare_graph_runtime(
 
     Ok(PreparedGraphRuntime {
         graph_id: root.id,
+        runtime_provenance,
+        expanded,
+        catalog,
+        registries,
+    })
+}
+
+fn prepare_graph_runtime_from_assets(
+    assets: &ergo_loader::PreparedGraphAssets,
+    runtime_surfaces: Option<RuntimeSurfaces>,
+) -> Result<PreparedGraphRuntime, String> {
+    let loader = PreloadedClusterLoader::new(assets.clusters().clone());
+    let (catalog, registries) = materialize_runtime_surfaces(runtime_surfaces)?;
+    let expanded = expand(assets.root(), &loader, catalog.as_ref()).map_err(|err| {
+        format!(
+            "graph expansion failed: {}",
+            summarize_expand_error(&err, assets.cluster_diagnostic_labels())
+        )
+    })?;
+    let runtime_provenance = compute_runtime_provenance(
+        RuntimeProvenanceScheme::Rpv1,
+        &assets.root().id,
+        &expanded,
+        catalog.as_ref(),
+    )
+    .map_err(|err| format!("runtime provenance compute failed: {err}"))?;
+
+    Ok(PreparedGraphRuntime {
+        graph_id: assets.root().id.clone(),
         runtime_provenance,
         expanded,
         catalog,
@@ -742,20 +841,18 @@ fn hosted_runner_setup_error(err: HostedStepError) -> HostRunError {
 }
 
 #[allow(clippy::arc_with_non_send_sync)]
-fn validate_live_runner_setup(
-    graph_path: &Path,
-    cluster_paths: &[PathBuf],
-    adapter_path: Option<&Path>,
-    egress_config: Option<EgressConfig>,
+fn validate_live_runner_setup_from_assets(
+    assets: &ergo_loader::PreparedGraphAssets,
+    options: &LivePrepOptions,
     runtime_surfaces: Option<RuntimeSurfaces>,
 ) -> Result<ValidatedLiveRunnerSetup, HostRunError> {
-    let prepared = prepare_graph_runtime(graph_path, cluster_paths, runtime_surfaces)
+    let prepared = prepare_graph_runtime_from_assets(assets, runtime_surfaces)
         .map_err(HostRunError::InvalidInput)?;
     let dependency_summary =
         scan_adapter_dependencies(&prepared.expanded, &prepared.catalog, &prepared.registries)
             .map_err(HostRunError::InvalidInput)?;
-    let adapter_setup =
-        prepare_adapter_setup(adapter_path, &prepared).map_err(HostRunError::InvalidInput)?;
+    let adapter_setup = prepare_adapter_setup(options.adapter_path.as_deref(), &prepared)
+        .map_err(HostRunError::InvalidInput)?;
 
     ensure_adapter_requirement_satisfied(adapter_setup.adapter_bound, &dependency_summary)?;
 
@@ -773,11 +870,14 @@ fn validate_live_runner_setup(
         registries,
         adapter_setup.adapter_provides,
     );
-    let egress_provenance = egress_config.as_ref().map(compute_egress_provenance);
+    let egress_provenance = options
+        .egress_config
+        .as_ref()
+        .map(compute_egress_provenance);
     let graph_emittable_effect_kinds = runtime.graph_emittable_effect_kinds();
     validate_hosted_runner_configuration(
         adapter_setup.adapter_config.as_ref(),
-        egress_config.as_ref(),
+        options.egress_config.as_ref(),
         egress_provenance.as_deref(),
         &HashSet::new(),
         &graph_emittable_effect_kinds,
@@ -789,7 +889,7 @@ fn validate_live_runner_setup(
         runtime_provenance,
         runtime,
         adapter_config: adapter_setup.adapter_config,
-        egress_config,
+        egress_config: options.egress_config.clone(),
         egress_provenance,
         adapter_bound: adapter_setup.adapter_bound,
         dependency_summary,
@@ -828,20 +928,12 @@ fn build_live_runner_from_validated(
 }
 
 #[allow(clippy::arc_with_non_send_sync)]
-fn prepare_live_runner_setup(
-    graph_path: &Path,
-    cluster_paths: &[PathBuf],
-    adapter_path: Option<&Path>,
-    egress_config: Option<EgressConfig>,
+fn prepare_live_runner_setup_from_assets(
+    assets: &ergo_loader::PreparedGraphAssets,
+    options: &LivePrepOptions,
     runtime_surfaces: Option<RuntimeSurfaces>,
 ) -> Result<PreparedLiveRunnerSetup, HostRunError> {
-    let validated = validate_live_runner_setup(
-        graph_path,
-        cluster_paths,
-        adapter_path,
-        egress_config,
-        runtime_surfaces,
-    )?;
+    let validated = validate_live_runner_setup_from_assets(assets, options, runtime_surfaces)?;
     Ok(build_live_runner_from_validated(validated))
 }
 
@@ -1036,17 +1128,17 @@ fn run_graph_from_paths_internal(
         pretty_capture,
     } = request;
 
+    let assets = load_graph_assets_from_paths(&graph_path, &cluster_paths)?;
+    let options = LivePrepOptions {
+        adapter_path,
+        egress_config,
+    };
+
     let PreparedLiveRunnerSetup {
         adapter_bound,
         dependency_summary,
         runner,
-    } = prepare_live_runner_setup(
-        &graph_path,
-        &cluster_paths,
-        adapter_path.as_deref(),
-        egress_config,
-        runtime_surfaces,
-    )?;
+    } = prepare_live_runner_setup_from_assets(&assets, &options, runtime_surfaces)?;
 
     run_graph_with_policy(
         RunGraphRequest {
@@ -1063,6 +1155,38 @@ fn run_graph_from_paths_internal(
     )
 }
 
+/// Lower-level validation API over preloaded graph assets. Validation stops
+/// after runtime/configuration validation and does not construct or start a
+/// hosted session.
+#[allow(clippy::arc_with_non_send_sync)]
+pub fn validate_graph(
+    assets: &ergo_loader::PreparedGraphAssets,
+    options: &LivePrepOptions,
+) -> Result<(), HostRunError> {
+    validate_graph_internal(assets, options, None)
+}
+
+/// Advanced lower-level validation API over preloaded graph assets with
+/// injected runtime surfaces.
+#[allow(clippy::arc_with_non_send_sync)]
+pub fn validate_graph_with_surfaces(
+    assets: &ergo_loader::PreparedGraphAssets,
+    options: &LivePrepOptions,
+    runtime_surfaces: RuntimeSurfaces,
+) -> Result<(), HostRunError> {
+    validate_graph_internal(assets, options, Some(runtime_surfaces))
+}
+
+#[allow(clippy::arc_with_non_send_sync)]
+fn validate_graph_internal(
+    assets: &ergo_loader::PreparedGraphAssets,
+    options: &LivePrepOptions,
+    runtime_surfaces: Option<RuntimeSurfaces>,
+) -> Result<(), HostRunError> {
+    let _ = validate_live_runner_setup_from_assets(assets, options, runtime_surfaces)?;
+    Ok(())
+}
+
 #[allow(clippy::arc_with_non_send_sync)]
 fn validate_graph_from_paths_internal(
     request: PrepareHostedRunnerFromPathsRequest,
@@ -1074,16 +1198,12 @@ fn validate_graph_from_paths_internal(
         adapter_path,
         egress_config,
     } = request;
-
-    let _ = validate_live_runner_setup(
-        &graph_path,
-        &cluster_paths,
-        adapter_path.as_deref(),
+    let assets = load_graph_assets_from_paths(&graph_path, &cluster_paths)?;
+    let options = LivePrepOptions {
+        adapter_path,
         egress_config,
-        runtime_surfaces,
-    )?;
-
-    Ok(())
+    };
+    validate_graph_internal(&assets, &options, runtime_surfaces)
 }
 
 /// Canonical replay API for clients. Host owns capture load, graph loading, adapter composition, and runner setup.
@@ -1121,6 +1241,38 @@ pub fn prepare_hosted_runner_from_paths_with_surfaces(
     runtime_surfaces: RuntimeSurfaces,
 ) -> Result<HostedRunner, HostRunError> {
     prepare_hosted_runner_from_paths_internal(request, Some(runtime_surfaces))
+}
+
+/// Lower-level manual-step preparation API over preloaded graph assets.
+#[allow(clippy::arc_with_non_send_sync)]
+pub fn prepare_hosted_runner(
+    assets: ergo_loader::PreparedGraphAssets,
+    options: &LivePrepOptions,
+) -> Result<HostedRunner, HostRunError> {
+    prepare_hosted_runner_internal(assets, options, None)
+}
+
+/// Advanced lower-level manual-step preparation API over preloaded graph
+/// assets with injected runtime surfaces.
+#[allow(clippy::arc_with_non_send_sync)]
+pub fn prepare_hosted_runner_with_surfaces(
+    assets: ergo_loader::PreparedGraphAssets,
+    options: &LivePrepOptions,
+    runtime_surfaces: RuntimeSurfaces,
+) -> Result<HostedRunner, HostRunError> {
+    prepare_hosted_runner_internal(assets, options, Some(runtime_surfaces))
+}
+
+#[allow(clippy::arc_with_non_send_sync)]
+fn prepare_hosted_runner_internal(
+    assets: ergo_loader::PreparedGraphAssets,
+    options: &LivePrepOptions,
+    runtime_surfaces: Option<RuntimeSurfaces>,
+) -> Result<HostedRunner, HostRunError> {
+    let PreparedLiveRunnerSetup { mut runner, .. } =
+        prepare_live_runner_setup_from_assets(&assets, options, runtime_surfaces)?;
+    start_live_runner_egress(&mut runner)?;
+    Ok(runner)
 }
 
 #[allow(clippy::arc_with_non_send_sync)]
@@ -1220,18 +1372,12 @@ fn prepare_hosted_runner_from_paths_internal(
         adapter_path,
         egress_config,
     } = request;
-
-    let PreparedLiveRunnerSetup { mut runner, .. } = prepare_live_runner_setup(
-        &graph_path,
-        &cluster_paths,
-        adapter_path.as_deref(),
+    let assets = load_graph_assets_from_paths(&graph_path, &cluster_paths)?;
+    let options = LivePrepOptions {
+        adapter_path,
         egress_config,
-        runtime_surfaces,
-    )?;
-
-    start_live_runner_egress(&mut runner)?;
-
-    Ok(runner)
+    };
+    prepare_hosted_runner_internal(assets, &options, runtime_surfaces)
 }
 
 /// Lower-level canonical run API used once a fully configured `HostedRunner` exists.
@@ -2891,7 +3037,7 @@ outputs:
                 assert!(detail.contains("shared_value"));
                 assert!(detail.contains("^2.0"));
                 assert!(detail.contains("available: 1.0.0, 1.5.0"));
-                assert!(detail.contains("available cluster files"));
+                assert!(detail.contains("available cluster sources"));
                 assert!(detail.contains("shared_value@1.0.0"));
                 assert!(detail.contains("shared_value@1.5.0"));
                 assert!(!detail.contains("discovery error"));
@@ -2901,6 +3047,26 @@ outputs:
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
+    }
+
+    #[test]
+    fn summarize_expand_error_falls_back_to_cluster_key_when_label_missing() {
+        let detail = summarize_expand_error(
+            &ExpandError::UnsatisfiedVersionConstraint {
+                target_kind: VersionTargetKind::Cluster,
+                id: "shared_value".to_string(),
+                selector: "^2.0".parse().expect("selector"),
+                available_versions: vec![
+                    "1.0.0".parse().expect("version"),
+                    "1.5.0".parse().expect("version"),
+                ],
+            },
+            &HashMap::new(),
+        );
+
+        assert!(detail.contains("available cluster sources"));
+        assert!(detail.contains("shared_value@1.0.0 at shared_value@1.0.0"));
+        assert!(detail.contains("shared_value@1.5.0 at shared_value@1.5.0"));
     }
 
     #[test]
@@ -3275,6 +3441,167 @@ outputs:
     }
 
     #[test]
+    fn validate_graph_accepts_simple_adapterless_assets() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-validate-assets-simple-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            r#"
+kind: cluster
+id: host_validate_assets_simple
+version: "0.1.0"
+nodes:
+  src:
+    impl: const_number@0.1.0
+    params:
+      value: 7.5
+edges: []
+outputs:
+  value_out: src.value
+"#,
+        )?;
+
+        let assets = load_graph_assets_from_paths(&graph, &[])?;
+        validate_graph_with_surfaces(
+            &assets,
+            &LivePrepOptions::default(),
+            build_injected_runtime_surfaces(7.5),
+        )?;
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn validate_graph_accepts_simple_in_memory_assets() -> Result<(), Box<dyn std::error::Error>> {
+        let assets = load_graph_assets_from_memory(
+            "graphs/root.yaml",
+            &[ergo_loader::InMemorySourceInput {
+                source_id: "graphs/root.yaml".to_string(),
+                source_label: "root-memory".to_string(),
+                content: r#"
+kind: cluster
+id: host_validate_in_memory_simple
+version: "0.1.0"
+nodes:
+  src:
+    impl: const_number@0.1.0
+    params:
+      value: 7.5
+edges: []
+outputs:
+  value_out: src.value
+"#
+                .to_string(),
+            }],
+            &[],
+        )?;
+
+        validate_graph_with_surfaces(
+            &assets,
+            &LivePrepOptions::default(),
+            build_injected_runtime_surfaces(7.5),
+        )?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn validate_graph_in_memory_assets_use_label_first_cluster_version_details(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let assets = load_graph_assets_from_memory(
+            "graphs/root.yaml",
+            &[
+                ergo_loader::InMemorySourceInput {
+                    source_id: "graphs/root.yaml".to_string(),
+                    source_label: "root-row".to_string(),
+                    content: r#"
+kind: cluster
+id: host_validate_in_memory_version_miss
+version: "0.1.0"
+nodes:
+  nested:
+    cluster: shared_value@^2.0
+edges: []
+outputs:
+  result: nested.value
+"#
+                    .to_string(),
+                },
+                ergo_loader::InMemorySourceInput {
+                    source_id: "search-a/shared_value.yaml".to_string(),
+                    source_label: "shared-v1-row".to_string(),
+                    content: r#"
+kind: cluster
+id: shared_value
+version: "1.0.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 3.0
+edges: []
+outputs:
+  value: src.value
+"#
+                    .to_string(),
+                },
+                ergo_loader::InMemorySourceInput {
+                    source_id: "search-b/shared_value.yaml".to_string(),
+                    source_label: "shared-v1_5-row".to_string(),
+                    content: r#"
+kind: cluster
+id: shared_value
+version: "1.5.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 4.0
+edges: []
+outputs:
+  value: src.value
+"#
+                    .to_string(),
+                },
+            ],
+            &["search-a".to_string(), "search-b".to_string()],
+        )?;
+
+        let err = validate_graph_with_surfaces(
+            &assets,
+            &LivePrepOptions::default(),
+            build_injected_runtime_surfaces(42.0),
+        )
+        .expect_err("in-memory version-miss must fail before runner construction");
+
+        match err {
+            HostRunError::InvalidInput(detail) => {
+                assert!(detail.contains("graph expansion failed"));
+                assert!(detail.contains("shared_value"));
+                assert!(detail.contains("^2.0"));
+                assert!(detail.contains("available: 1.0.0, 1.5.0"));
+                assert!(detail.contains("available cluster sources"));
+                assert!(detail.contains("shared_value@1.0.0 at shared-v1-row"));
+                assert!(detail.contains("shared_value@1.5.0 at shared-v1_5-row"));
+                assert!(!detail.contains("search-a/shared_value.yaml"));
+                assert!(!detail.contains("search-b/shared_value.yaml"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn validate_graph_from_paths_reports_adapter_required_before_runner_validation(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let index = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -3294,6 +3621,36 @@ outputs:
                 adapter_path: None,
                 egress_config: None,
             },
+            build_injected_runtime_surfaces(42.0),
+        )
+        .expect_err("adapter-required validation should fail before runner construction");
+
+        match err {
+            HostRunError::AdapterRequired(summary) => assert!(summary.requires_adapter),
+            other => panic!("unexpected adapter-required validation error: {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn validate_graph_reports_adapter_required_before_runner_construction(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-validate-assets-adapter-required-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_validate_assets_adapter")?;
+        let assets = load_graph_assets_from_paths(&graph, &[])?;
+
+        let err = validate_graph_with_surfaces(
+            &assets,
+            &LivePrepOptions::default(),
             build_injected_runtime_surfaces(42.0),
         )
         .expect_err("adapter-required validation should fail before runner construction");
@@ -3467,6 +3824,96 @@ outputs:
         );
 
         let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_hosted_runner_surfaces_egress_startup_failure_after_runner_construction(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-prepare-assets-startup-fail-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph =
+            write_intent_graph(&temp_dir, "graph.yaml", "host_prepare_assets_startup_fail")?;
+        let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
+        let config = EgressConfig {
+            default_ack_timeout: Duration::from_millis(50),
+            channels: BTreeMap::from([(
+                "broker".to_string(),
+                EgressChannelConfig::Process {
+                    command: vec!["/definitely/missing-egress-binary".to_string()],
+                },
+            )]),
+            routes: BTreeMap::from([(
+                "place_order".to_string(),
+                EgressRoute {
+                    channel: "broker".to_string(),
+                    ack_timeout: None,
+                },
+            )]),
+        };
+
+        let assets = load_graph_assets_from_paths(&graph, &[])?;
+        let options = LivePrepOptions {
+            adapter_path: Some(adapter),
+            egress_config: Some(config),
+        };
+
+        let err = match prepare_hosted_runner_with_surfaces(
+            assets,
+            &options,
+            build_injected_runtime_surfaces(42.0),
+        ) {
+            Ok(_) => panic!("startup failure should surface before manual stepping begins"),
+            Err(err) => err,
+        };
+
+        assert!(
+            matches!(err, HostRunError::DriverIo(_)),
+            "expected HostRunError::DriverIo, got {err:?}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_hosted_runner_accepts_simple_in_memory_assets(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let assets = load_graph_assets_from_memory(
+            "graphs/root.yaml",
+            &[ergo_loader::InMemorySourceInput {
+                source_id: "graphs/root.yaml".to_string(),
+                source_label: "root-memory".to_string(),
+                content: r#"
+kind: cluster
+id: host_prepare_in_memory_simple
+version: "0.1.0"
+nodes:
+  src:
+    impl: const_number@0.1.0
+    params:
+      value: 7.5
+edges: []
+outputs:
+  value_out: src.value
+"#
+                .to_string(),
+            }],
+            &[],
+        )?;
+
+        let _runner = prepare_hosted_runner_with_surfaces(
+            assets,
+            &LivePrepOptions::default(),
+            build_injected_runtime_surfaces(7.5),
+        )?;
+
         Ok(())
     }
 
@@ -3654,6 +4101,47 @@ outputs:
         ) {
             Ok(_) => {
                 panic!("adapter-required error should win before manual runner init validation")
+            }
+            Err(err) => err,
+        };
+
+        match err {
+            HostRunError::AdapterRequired(summary) => assert!(summary.requires_adapter),
+            other => panic!("unexpected manual adapter-preflight error: {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_hosted_runner_surfaces_reports_adapter_required_before_runner_construction(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-host-prepare-assets-adapter-preflight-order-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir)?;
+
+        let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_prepare_assets_adapter")?;
+        let assets = load_graph_assets_from_paths(&graph, &[])?;
+        let options = LivePrepOptions {
+            adapter_path: None,
+            egress_config: Some(make_intent_egress_config_with_timeout(
+                &temp_dir.join("unused-egress.sh"),
+                Duration::from_millis(50),
+            )),
+        };
+
+        let err = match prepare_hosted_runner_with_surfaces(
+            assets,
+            &options,
+            build_injected_runtime_surfaces(42.0),
+        ) {
+            Ok(_) => {
+                panic!("adapter-required error should win before runner construction and egress startup")
             }
             Err(err) => err,
         };
