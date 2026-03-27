@@ -16,23 +16,23 @@ These invariants hold across all phases. Violation at any point is a system-leve
 | X.1 | Exactly four ontological primitives exist: Source, Compute, Trigger, Action | ontology.md §2 | `PrimitiveKind` enum | — | — | — |
 | X.2 | Wiring matrix is never violated (see ontology.md §3) | ontology.md §3 | — | — | ✓ | ✓ |
 | X.3 | All graphs are directed acyclic graphs (DAGs) | execution.md §2 | — | — | ✓ | ✓ |
-| X.4 | Determinism: identical inputs + identical state → identical outputs | execution.md §8 | — | — | — | ✓ |
+| X.4 | Determinism: identical inputs, parameters, and explicit state → identical outputs | execution.md §8 | — | — | — | ✓ |
 | X.5 | Actions are terminal; Action → * is forbidden | ontology.md §3 | — | — | ✓ | ✓ |
 | X.6 | Sources have no inputs | ontology.md §2.1 | — | — | ✓ | ✓ |
 | X.7 | Compute primitives have ≥1 input | ontology.md §2.2 | — | — | ✓ | ✓ |
 | X.8 | Triggers emit events | ontology.md §2.3 | — | — | ✓ | ✓ |
 | X.9 | Authoring constructs compile away before execution | freeze.md §7 | — | ✓ | — | ✓ |
-| X.10 | Compute parameter types must not include Series | (inferred) | — | — | ✓ | ✓ |
+| X.10 | Compute parameter types must not include Series or String | (inferred) | — | — | ✓ | ✓ |
 | X.11 | Int→f64 conversion must be exactly representable (\|i\| ≤ 2^53) | (inferred) | — | — | ✓ | ✓ |
 | X.12 | Every ValueType has at least one source producer | (inferred) | — | — | — | ✓ |
 
 ### Notes
 
 - **X.1:** Enforced by type system. `PrimitiveKind` enum has exactly four variants.
-- **X.4:** Determinism is tested but not structurally enforced. Acceptable for v0.
-- **X.7:** ✅ **CLOSED.** Enforced in `compute/registry.rs::validate_manifest` (returns `NoInputsDeclared` when `inputs.is_empty()` for Compute manifests). Test: `compute_with_zero_inputs_rejected` in `compute/registry.rs`.
-- **X.9:** Requires assertion at execution entry that no `ClusterDefinition` or `NodeKind::Cluster` survives.
-- **X.10:** ✅ **CLOSED.** Enforced in `catalog.rs::register_compute()` (returns `ValidationError::UnsupportedParameterType` when parameter has `ValueType::Series`). Test: `series_parameter_type_rejected` in `catalog.rs`. Prior behavior silently coerced Series to Number(0.0); now rejects at registration time.
+- **X.4:** Determinism is tested but not structurally enforced. Current docs define it over identical inputs, resolved parameters, and any explicit state. Acceptable for v0.
+- **X.7:** ✅ **CLOSED.** Enforced in `compute/registry.rs::validate_manifest` (returns `NoInputsDeclared` when `inputs.is_empty()` for Compute manifests). Test: `cmp_4_no_inputs_rejected` in `compute/registry.rs`.
+- **X.9:** Structurally enforced at the expansion boundary. `ExpandedGraph` carries only expanded implementation instances, so authored cluster constructs do not survive into executable runtime topology.
+- **X.10:** ✅ **CLOSED.** Enforced in `catalog.rs::register_compute()` through `map_compute_param_type()`, which rejects both `ValueType::Series` and `ValueType::String` for compute parameter metadata by returning `ValidationError::UnsupportedParameterType`. Anchor test: `series_parameter_type_rejected` in `catalog.rs`. Prior behavior silently coerced Series to Number(0.0); current registration rejects unsupported parameter types instead.
 - **X.11:** ✅ **CLOSED.** Enforced in `execute.rs::map_to_compute_parameter_value()` (returns `None` for Int values where `|i| > 2^53`). Caller produces `ExecError::ParameterOutOfRange { node, parameter, value }`. Tests: `int_parameter_within_f64_exact_range_allowed`, `int_parameter_out_of_range_rejected`. Prior behavior silently converted all Int to f64, losing precision for large values.
 - **X.12 / STRING-SOURCE-1:** ✅ **CLOSED.** `string_source` added to complete ValueType surface coverage. Prior state: `ValueType::String` existed in cluster/runtime types but `common::ValueType` lacked String, creating a gap where string outputs could be declared but never originated. Implementation required adding `common::ValueType::String` and `common::Value::String` variants, which triggered exhaustive match cascade across four mapping functions (`map_compute_param_type`, `map_compute_param_value`, `map_common_value_type`, `map_common_value`). Tests: `string_source_emits_configured_value`, `string_source_defaults_to_empty_string`.
 
