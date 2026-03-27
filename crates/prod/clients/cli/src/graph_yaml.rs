@@ -58,7 +58,9 @@ pub fn run_graph_command(graph_path: &Path, args: &[String]) -> Result<GraphRunS
         events: summary.events,
         invoked: summary.invoked,
         deferred: summary.deferred,
-        capture_path: summary.capture_path,
+        capture_path: summary
+            .capture_path
+            .expect("filesystem graph run should always produce a capture path"),
     })
 }
 

@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-21
+Last Updated: 2026-03-23
 Owner: Claude (Structural Auditor)
 Scope: v0 baseline declaration, v1 workstream rules
 Change Rule: Operational log
@@ -81,10 +81,13 @@ The catalog-access boundary (yaml-format.md §8.3) defines the loader/kernel div
 The host (`prod/core/host`) owns:
 
 - Adapter dependency scan, composition validation, and live egress/handler validation
-- Usecase API surface: `run_graph_from_paths`, `replay_graph_from_paths`, `validate_graph_from_paths`, `prepare_hosted_runner_from_paths`, `finalize_hosted_runner_capture` (canonical client entrypoints); `run_graph`, `replay_graph`, `run_fixture` (lower-level)
+- Usecase API surface: `run_graph_from_paths`, `replay_graph_from_paths`, `validate_graph_from_paths`, `prepare_hosted_runner_from_paths`, `finalize_hosted_runner_capture` (canonical client entrypoints); `run_graph_from_assets`, `run_graph`, `replay_graph`, `run_fixture` (lower-level)
 - Canonical run ingress selection through host-owned `DriverConfig`
   (current implementation term for ingress-channel configuration);
   replay remains capture-driven and takes no live channel config
+- Lower-level live prep and assets-based one-shot execution over `PreparedGraphAssets`,
+  host-owned `LivePrepOptions`, and explicit capture policy without widening the
+  canonical path-backed client entrypoints
 - Post-episode effect dispatch at host boundary (HST-1 through HST-9);
   host-internal effects may be realized locally while true external I/O
   belongs to prod boundary channels

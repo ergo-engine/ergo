@@ -20,9 +20,13 @@ pub use egress::{
 pub use ergo_supervisor::{write_capture_bundle, CaptureBundle, CaptureJsonStyle};
 pub use error::{EgressDispatchFailure, HostedStepError};
 pub use gen_docs_usecase::gen_docs_command;
-pub use graph_dot_usecase::{graph_to_dot_from_paths, GraphToDotFromPathsRequest};
+pub use graph_dot_usecase::{
+    graph_to_dot_from_assets, graph_to_dot_from_paths, GraphToDotFromAssetsRequest,
+    GraphToDotFromPathsRequest,
+};
 pub use manifest_usecases::{
-    check_compose_paths, validate_manifest_path, HostManifestError, HostRuleViolation,
+    check_compose_paths, check_compose_text, check_compose_values, validate_manifest_path,
+    validate_manifest_text, validate_manifest_value, HostManifestError, HostRuleViolation,
     ManifestSummary,
 };
 pub use replay::{decision_counts, replay_bundle_strict, HostedReplayError};
@@ -39,11 +43,14 @@ pub use usecases::{
     prepare_hosted_runner_from_paths_with_surfaces, replay_graph_from_paths,
     replay_graph_from_paths_with_surfaces, run_graph_from_paths, run_graph_from_paths_with_control,
     run_graph_from_paths_with_surfaces, run_graph_from_paths_with_surfaces_and_control,
-    validate_graph_from_paths, validate_graph_from_paths_with_surfaces, AdapterDependencySummary,
-    DriverConfig, HostReplayError, HostRunError, HostStopHandle, InterruptedRun,
-    InterruptionReason, PrepareHostedRunnerFromPathsRequest, ReplayGraphFromPathsRequest,
-    ReplayGraphRequest, ReplayGraphResult, RunControl, RunGraphFromPathsRequest, RunGraphResponse,
-    RunOutcome, RunSummary, RuntimeSurfaces,
+    validate_graph_from_paths, validate_graph_from_paths_with_surfaces,
+    validate_run_graph_from_assets, validate_run_graph_from_assets_with_surfaces,
+    validate_run_graph_from_paths, validate_run_graph_from_paths_with_surfaces,
+    AdapterDependencySummary, DriverConfig, HostReplayError, HostRunError, HostStopHandle,
+    InterruptedRun, InterruptionReason, PrepareHostedRunnerFromPathsRequest,
+    ReplayGraphFromAssetsRequest, ReplayGraphFromPathsRequest, ReplayGraphRequest,
+    ReplayGraphResult, RunControl, RunGraphFromAssetsRequest, RunGraphFromPathsRequest,
+    RunGraphResponse, RunOutcome, RunSummary, RuntimeSurfaces,
 };
 
 // Lower-level host building blocks. These remain public for advanced embedded
@@ -52,8 +59,11 @@ pub use usecases::{
 pub use ergo_loader::{InMemorySourceInput, PreparedGraphAssets};
 pub use usecases::{
     load_graph_assets_from_memory, load_graph_assets_from_paths, prepare_hosted_runner,
-    prepare_hosted_runner_with_surfaces, replay_graph, run_fixture, run_graph,
-    run_graph_with_control, scan_adapter_dependencies, validate_adapter_composition,
-    validate_graph, validate_graph_with_surfaces, LivePrepOptions, RunFixtureRequest,
+    prepare_hosted_runner_with_surfaces, replay_graph, replay_graph_from_assets,
+    replay_graph_from_assets_with_surfaces, run_fixture, run_graph, run_graph_from_assets,
+    run_graph_from_assets_with_control, run_graph_from_assets_with_surfaces,
+    run_graph_from_assets_with_surfaces_and_control, run_graph_with_control,
+    scan_adapter_dependencies, validate_adapter_composition, validate_graph,
+    validate_graph_with_surfaces, AdapterInput, CapturePolicy, LivePrepOptions, RunFixtureRequest,
     RunFixtureResult, RunGraphRequest,
 };

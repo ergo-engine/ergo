@@ -520,11 +520,17 @@ fn doctor() -> Result<(), Box<dyn Error>> {
 }
 
 fn print_project_summary(label: &str, summary: &ProjectSummary) {
+    let root = summary
+        .root
+        .as_deref()
+        .map(Path::display)
+        .map(|display| display.to_string())
+        .unwrap_or_else(|| "<in-memory>".to_string());
     println!(
         "{label} project '{}' version={} root={}",
         summary.name,
         summary.version,
-        summary.root.display()
+        root
     );
     print_profiles(summary);
 }

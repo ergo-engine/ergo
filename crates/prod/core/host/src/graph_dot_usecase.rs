@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use ergo_loader::PreparedGraphAssets;
 use ergo_runtime::catalog::{build_core_catalog, CorePrimitiveCatalog};
 use ergo_runtime::cluster::{
     expand, ClusterDefinition, ClusterLoader, ClusterVersionIndex, ExpandError, ExpandedEndpoint,
@@ -11,6 +12,13 @@ use ergo_runtime::common::ErrorInfo;
 pub struct GraphToDotFromPathsRequest {
     pub graph_path: PathBuf,
     pub cluster_paths: Vec<PathBuf>,
+    pub show_ports: bool,
+    pub show_impl: bool,
+    pub show_runtime_id: bool,
+}
+
+pub struct GraphToDotFromAssetsRequest {
+    pub assets: PreparedGraphAssets,
     pub show_ports: bool,
     pub show_impl: bool,
     pub show_runtime_id: bool,
@@ -37,7 +45,37 @@ pub fn graph_to_dot_from_paths(request: GraphToDotFromPathsRequest) -> Result<St
         format!(
             "graph expansion failed: [{}] {}",
             err.rule_id(),
-            summarize_expand_error(&err, &cluster_sources)
+            summarize_expand_error_with_files(&err, &cluster_sources)
+        )
+    })?;
+
+    Ok(render_graph_as_dot(
+        &root.id,
+        &expanded,
+        &catalog,
+        show_ports,
+        show_impl,
+        show_runtime_id,
+    ))
+}
+
+pub fn graph_to_dot_from_assets(request: GraphToDotFromAssetsRequest) -> Result<String, String> {
+    let GraphToDotFromAssetsRequest {
+        assets,
+        show_ports,
+        show_impl,
+        show_runtime_id,
+    } = request;
+
+    let root = assets.root().clone();
+    let loader = PreloadedClusterLoader::new(assets.clusters().clone());
+
+    let catalog = build_core_catalog();
+    let expanded = expand(&root, &loader, &catalog).map_err(|err| {
+        format!(
+            "graph expansion failed: [{}] {}",
+            err.rule_id(),
+            summarize_expand_error_with_labels(&err, assets.cluster_diagnostic_labels())
         )
     })?;
 
@@ -88,7 +126,7 @@ impl ClusterVersionIndex for PreloadedClusterLoader {
     }
 }
 
-fn summarize_expand_error(
+fn summarize_expand_error_with_files(
     err: &ExpandError,
     cluster_sources: &HashMap<(String, Version), PathBuf>,
 ) -> String {
@@ -113,6 +151,42 @@ fn summarize_expand_error(
             } else {
                 format!(
                     "{}\navailable cluster files:\n{}",
+                    base,
+                    available.join("\n")
+                )
+            }
+        }
+        _ => base,
+    }
+}
+
+fn summarize_expand_error_with_labels(
+    err: &ExpandError,
+    cluster_diagnostic_labels: &HashMap<(String, Version), String>,
+) -> String {
+    let base = err.summary().to_string();
+    match err {
+        ExpandError::UnsatisfiedVersionConstraint {
+            target_kind: VersionTargetKind::Cluster,
+            id,
+            available_versions,
+            ..
+        } => {
+            let available = available_versions
+                .iter()
+                .map(|version| {
+                    let label = cluster_diagnostic_labels
+                        .get(&(id.clone(), version.clone()))
+                        .cloned()
+                        .unwrap_or_else(|| format!("{id}@{version}"));
+                    format!("- {}@{} at {}", id, version, label)
+                })
+                .collect::<Vec<_>>();
+            if available.is_empty() {
+                base
+            } else {
+                format!(
+                    "{}\navailable cluster sources:\n{}",
                     base,
                     available.join("\n")
                 )
@@ -331,4 +405,53 @@ fn quote_label(value: &str) -> String {
 fn quote_id(value: &str) -> String {
     let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
     format!("\"{}\"", escaped)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{graph_to_dot_from_assets, GraphToDotFromAssetsRequest};
+    use ergo_loader::{load_graph_assets_from_memory, InMemorySourceInput};
+
+    #[test]
+    fn graph_to_dot_from_assets_renders_loaded_in_memory_graph() -> Result<(), String> {
+        let assets = load_graph_assets_from_memory(
+            "mem/root.yaml",
+            &[InMemorySourceInput {
+                source_id: "mem/root.yaml".to_string(),
+                source_label: "mem/root.yaml".to_string(),
+                content: r#"
+kind: cluster
+id: memory_visual
+version: "0.1.0"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: 3
+  cmp:
+    impl: gt@0.1.0
+edges:
+  - src.value -> cmp.a
+outputs:
+  out: cmp.result
+"#
+                .to_string(),
+            }],
+            &[],
+        )
+        .map_err(|err| err.to_string())?;
+
+        let dot = graph_to_dot_from_assets(GraphToDotFromAssetsRequest {
+            assets,
+            show_ports: true,
+            show_impl: false,
+            show_runtime_id: false,
+        })?;
+
+        assert!(dot.contains("digraph \"memory_visual\""));
+        assert!(dot.contains("src"));
+        assert!(dot.contains("cmp"));
+        assert!(dot.contains("value -> a"));
+        Ok(())
+    }
 }

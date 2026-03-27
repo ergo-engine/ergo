@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-19
+Last Updated: 2026-03-26
 Owner: Sebastian (Architect)
 Scope: SDK-first Ergo project convention, crate layout, and profile model
 Change Rule: Tracks implementation
@@ -14,7 +14,7 @@ This document explains the current v1 Ergo project model.
 The primary product surface is the Rust SDK. A production Ergo
 application is a Rust crate that depends on `ergo-sdk-rust`,
 registers custom primitives in-process, and runs named profiles from
-`ergo.toml`.
+either `ergo.toml` on disk or an SDK-owned in-memory project snapshot.
 
 The CLI remains a support tool for validation, replay, fixture runs,
 and other development conveniences. It is not the defining production
@@ -118,11 +118,24 @@ let ergo = Ergo::builder()
 let outcome = ergo.run_profile("live")?;
 ```
 
+The SDK now supports two truthful project sources behind that same
+profile-facing surface:
+
+- filesystem project resolution through `.project_root(...)`
+- in-memory project snapshots through `.in_memory_project(...)`
+
+Filesystem project/profile discovery remains loader-owned. The
+in-memory project/profile model is SDK-owned. Both resolve into the
+same host-owned execution, replay, validation, and manual-runner
+orchestration.
+
 That means:
 
 - user code owns primitive registration
-- project/profile resolution is shared loader infrastructure consumed
-  by the SDK now and available for future CLI convenience paths
+- filesystem project/profile resolution is shared loader infrastructure
+  consumed by the SDK
+- in-memory project/profile resolution is an SDK-native product model
+  with the same host-owned execution semantics
 - canonical execution still delegates to host
 - replay still delegates to host strict replay
 
@@ -157,7 +170,11 @@ separate SDK call, and only that explicit path applies
 
 ## 4. Profile Model
 
-Profiles live in `ergo.toml`.
+Filesystem profiles live in `ergo.toml`.
+
+SDK callers may also define profiles programmatically through
+`InMemoryProjectSnapshot::builder(...)` and
+`InMemoryProfileConfig::{process, fixture_items}(...)`.
 
 Each profile resolves:
 
@@ -168,6 +185,11 @@ Each profile resolves:
   - `ingress` process command
 - optional `egress` config path
 - optional capture output override
+
+For SDK in-memory profiles, the same profile-facing operations
+(`run_profile`, `validate_project`, `runner_for_profile`,
+`replay_profile_bundle`) work identically. The transport difference is
+internal to SDK resolution, not a second orchestration model.
 
 The project `clusters/` directory is always added to cluster search
 paths automatically. Users should not repeat it in every profile.

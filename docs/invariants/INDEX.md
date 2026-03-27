@@ -2,14 +2,14 @@
 Authority: CANONICAL
 Version: v0.37
 Owner: Claude (Structural Auditor)
-Last Updated: 2026-03-16
+Last Updated: 2026-03-23
 Scope: Phase boundaries, enforcement loci, gap tracking
 Change Rule: Operational log
 ---
 
 # Phase Invariants — v0
 
-**Tracked invariants:** 208
+**Tracked invariants:** 220
 
 This document defines the invariants that must hold at each phase boundary in the system. It is the authoritative reference for what is true, where that truth is enforced, and what happens if it is violated.
 

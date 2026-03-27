@@ -19,7 +19,10 @@ fn fixture_run_empty_fixture_returns_cli_error() {
     );
 
     assert_eq!(code, 1, "stderr: {stderr}");
-    assert_contains(&stderr, "fixture contained no episodes");
+    assert_contains(
+        &stderr,
+        "fixture input 'whitespace.jsonl' contained no episodes",
+    );
 }
 
 #[test]
@@ -75,7 +78,10 @@ fn fixture_run_episode_start_without_events_returns_cli_error() {
     );
 
     assert_eq!(code, 1, "stderr: {stderr}");
-    assert_contains(&stderr, "fixture contained no events");
+    assert_contains(
+        &stderr,
+        "fixture input 'episode_start_no_events.jsonl' contained no events",
+    );
 }
 
 #[test]

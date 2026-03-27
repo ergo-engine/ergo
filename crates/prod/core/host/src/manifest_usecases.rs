@@ -114,7 +114,29 @@ enum ParsedManifest {
 
 #[allow(clippy::result_large_err)]
 pub fn validate_manifest_path(path: &Path) -> Result<ManifestSummary, HostManifestError> {
-    let parsed = parse_manifest(path).map_err(HostManifestError::from)?;
+    let parsed = parse_manifest_path(path).map_err(HostManifestError::from)?;
+    let summary = parsed.summary().clone();
+    validate_parsed(&parsed).map_err(HostManifestError::from)?;
+    Ok(summary)
+}
+
+#[allow(clippy::result_large_err)]
+pub fn validate_manifest_text(
+    source_label: &str,
+    content: &str,
+) -> Result<ManifestSummary, HostManifestError> {
+    let parsed = parse_manifest_text(source_label, content).map_err(HostManifestError::from)?;
+    let summary = parsed.summary().clone();
+    validate_parsed(&parsed).map_err(HostManifestError::from)?;
+    Ok(summary)
+}
+
+#[allow(clippy::result_large_err)]
+pub fn validate_manifest_value(
+    source_label: &str,
+    value: serde_json::Value,
+) -> Result<ManifestSummary, HostManifestError> {
+    let parsed = parse_manifest_value(source_label, value).map_err(HostManifestError::from)?;
     let summary = parsed.summary().clone();
     validate_parsed(&parsed).map_err(HostManifestError::from)?;
     Ok(summary)
@@ -125,14 +147,52 @@ pub fn check_compose_paths(
     adapter_path: &Path,
     other_path: &Path,
 ) -> Result<(), HostManifestError> {
-    let adapter_manifest = parse_adapter_manifest(adapter_path)
+    let adapter_manifest = parse_adapter_manifest_path(adapter_path)
         .map_err(|msg| HostManifestError::RuleViolation(parse_error_violation(msg).into()))?;
+    check_compose_with_adapter_manifest(adapter_manifest, parse_manifest_path(other_path))
+}
+
+#[allow(clippy::result_large_err)]
+pub fn check_compose_text(
+    adapter_label: &str,
+    adapter_content: &str,
+    other_label: &str,
+    other_content: &str,
+) -> Result<(), HostManifestError> {
+    let adapter_manifest = parse_adapter_manifest_text(adapter_label, adapter_content)
+        .map_err(|msg| HostManifestError::RuleViolation(parse_error_violation(msg).into()))?;
+    check_compose_with_adapter_manifest(
+        adapter_manifest,
+        parse_manifest_text(other_label, other_content),
+    )
+}
+
+#[allow(clippy::result_large_err)]
+pub fn check_compose_values(
+    adapter_label: &str,
+    adapter_value: serde_json::Value,
+    other_label: &str,
+    other_value: serde_json::Value,
+) -> Result<(), HostManifestError> {
+    let adapter_manifest = parse_adapter_manifest_value(adapter_label, adapter_value)
+        .map_err(|msg| HostManifestError::RuleViolation(parse_error_violation(msg).into()))?;
+    check_compose_with_adapter_manifest(
+        adapter_manifest,
+        parse_manifest_value(other_label, other_value),
+    )
+}
+
+#[allow(clippy::result_large_err)]
+fn check_compose_with_adapter_manifest(
+    adapter_manifest: AdapterManifest,
+    other: Result<ParsedManifest, RuleViolation>,
+) -> Result<(), HostManifestError> {
     ergo_adapter::validate_adapter(&adapter_manifest)
         .map_err(RuleViolation::from)
         .map_err(HostManifestError::from)?;
     let adapter_provides = AdapterProvides::from_manifest(&adapter_manifest);
 
-    let other = parse_manifest(other_path).map_err(HostManifestError::from)?;
+    let other = other.map_err(HostManifestError::from)?;
     match other {
         ParsedManifest::Source { manifest, .. } => {
             let params = source_manifest_default_params(&manifest);
@@ -146,19 +206,33 @@ pub fn check_compose_paths(
                 .map_err(RuleViolation::from)
                 .map_err(HostManifestError::from)
         }
-        _ => Err(HostManifestError::UnsupportedComposeTargetKind {
-            kind: other.summary().kind.clone(),
+        parsed => Err(HostManifestError::UnsupportedComposeTargetKind {
+            kind: parsed.summary().kind.clone(),
         }),
     }
 }
 
-fn parse_adapter_manifest(path: &Path) -> Result<AdapterManifest, String> {
+fn parse_adapter_manifest_path(path: &Path) -> Result<AdapterManifest, String> {
     let data = std::fs::read_to_string(path)
         .map_err(|err| format!("read adapter manifest '{}': {err}", path.display()))?;
-    let value = serde_yaml::from_str::<serde_json::Value>(&data)
-        .map_err(|err| format!("parse adapter manifest '{}': {err}", path.display()))?;
+    parse_adapter_manifest_text(&path.display().to_string(), &data)
+}
+
+fn parse_adapter_manifest_text(
+    source_label: &str,
+    content: &str,
+) -> Result<AdapterManifest, String> {
+    let value = serde_yaml::from_str::<serde_json::Value>(content)
+        .map_err(|err| format!("parse adapter manifest '{}': {err}", source_label))?;
+    parse_adapter_manifest_value(source_label, value)
+}
+
+fn parse_adapter_manifest_value(
+    source_label: &str,
+    value: serde_json::Value,
+) -> Result<AdapterManifest, String> {
     serde_json::from_value::<AdapterManifest>(value)
-        .map_err(|err| format!("decode adapter manifest '{}': {err}", path.display()))
+        .map_err(|err| format!("decode adapter manifest '{}': {err}", source_label))
 }
 
 fn source_manifest_default_params(
@@ -243,17 +317,33 @@ impl ParsedManifest {
     }
 }
 
-fn parse_manifest(path: &Path) -> Result<ParsedManifest, RuleViolation> {
-    let value = load_manifest_value(path).map_err(parse_error_violation)?;
-    let kind = value
-        .get("kind")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| parse_error_violation("manifest is missing 'kind' field".to_string()))?;
+fn parse_manifest_path(path: &Path) -> Result<ParsedManifest, RuleViolation> {
+    let value = load_manifest_value_from_path(path).map_err(parse_error_violation)?;
+    parse_manifest_value(&path.display().to_string(), value)
+}
+
+fn parse_manifest_text(source_label: &str, content: &str) -> Result<ParsedManifest, RuleViolation> {
+    let value =
+        load_manifest_value_from_text(source_label, content).map_err(parse_error_violation)?;
+    parse_manifest_value(source_label, value)
+}
+
+fn parse_manifest_value(
+    source_label: &str,
+    value: serde_json::Value,
+) -> Result<ParsedManifest, RuleViolation> {
+    let kind = value.get("kind").and_then(|v| v.as_str()).ok_or_else(|| {
+        parse_error_violation(format!(
+            "manifest '{}' is missing 'kind' field",
+            source_label
+        ))
+    })?;
 
     match kind.to_ascii_lowercase().as_str() {
         "adapter" => {
-            let manifest = serde_json::from_value::<AdapterManifest>(value)
-                .map_err(|err| parse_error_violation(format!("parse adapter manifest: {err}")))?;
+            let manifest = serde_json::from_value::<AdapterManifest>(value).map_err(|err| {
+                parse_error_violation(format!("parse adapter manifest '{}': {err}", source_label))
+            })?;
             let summary = ManifestSummary {
                 kind: "adapter".to_string(),
                 id: manifest.id.clone(),
@@ -262,8 +352,9 @@ fn parse_manifest(path: &Path) -> Result<ParsedManifest, RuleViolation> {
             Ok(ParsedManifest::Adapter { summary, manifest })
         }
         "source" => {
-            let raw = serde_json::from_value::<RawSourceManifest>(value)
-                .map_err(|err| parse_error_violation(format!("parse source manifest: {err}")))?;
+            let raw = serde_json::from_value::<RawSourceManifest>(value).map_err(|err| {
+                parse_error_violation(format!("parse source manifest '{}': {err}", source_label))
+            })?;
             let manifest = raw_to_source_manifest(raw).map_err(RuleViolation::from)?;
             let summary = ManifestSummary {
                 kind: "source".to_string(),
@@ -273,8 +364,9 @@ fn parse_manifest(path: &Path) -> Result<ParsedManifest, RuleViolation> {
             Ok(ParsedManifest::Source { summary, manifest })
         }
         "compute" => {
-            let raw = serde_json::from_value::<RawComputeManifest>(value)
-                .map_err(|err| parse_error_violation(format!("parse compute manifest: {err}")))?;
+            let raw = serde_json::from_value::<RawComputeManifest>(value).map_err(|err| {
+                parse_error_violation(format!("parse compute manifest '{}': {err}", source_label))
+            })?;
             let manifest = raw_to_compute_manifest(raw).map_err(RuleViolation::from)?;
             let summary = ManifestSummary {
                 kind: "compute".to_string(),
@@ -284,8 +376,9 @@ fn parse_manifest(path: &Path) -> Result<ParsedManifest, RuleViolation> {
             Ok(ParsedManifest::Compute { summary, manifest })
         }
         "trigger" => {
-            let raw = serde_json::from_value::<RawTriggerManifest>(value)
-                .map_err(|err| parse_error_violation(format!("parse trigger manifest: {err}")))?;
+            let raw = serde_json::from_value::<RawTriggerManifest>(value).map_err(|err| {
+                parse_error_violation(format!("parse trigger manifest '{}': {err}", source_label))
+            })?;
             let manifest = raw_to_trigger_manifest(raw).map_err(RuleViolation::from)?;
             let summary = ManifestSummary {
                 kind: "trigger".to_string(),
@@ -295,8 +388,9 @@ fn parse_manifest(path: &Path) -> Result<ParsedManifest, RuleViolation> {
             Ok(ParsedManifest::Trigger { summary, manifest })
         }
         "action" => {
-            let raw = serde_json::from_value::<RawActionManifest>(value)
-                .map_err(|err| parse_error_violation(format!("parse action manifest: {err}")))?;
+            let raw = serde_json::from_value::<RawActionManifest>(value).map_err(|err| {
+                parse_error_violation(format!("parse action manifest '{}': {err}", source_label))
+            })?;
             let manifest = raw_to_action_manifest(raw).map_err(RuleViolation::from)?;
             let summary = ManifestSummary {
                 kind: "action".to_string(),
@@ -306,16 +400,24 @@ fn parse_manifest(path: &Path) -> Result<ParsedManifest, RuleViolation> {
             Ok(ParsedManifest::Action { summary, manifest })
         }
         other => Err(parse_error_violation(format!(
-            "unknown manifest kind '{other}'"
+            "unknown manifest kind '{}' in '{}'",
+            other, source_label
         ))),
     }
 }
 
-fn load_manifest_value(path: &Path) -> Result<serde_json::Value, String> {
+fn load_manifest_value_from_path(path: &Path) -> Result<serde_json::Value, String> {
     let data = std::fs::read_to_string(path)
         .map_err(|err| format!("read manifest '{}': {err}", path.display()))?;
-    serde_yaml::from_str::<serde_json::Value>(&data)
-        .map_err(|err| format!("parse manifest '{}': {err}", path.display()))
+    load_manifest_value_from_text(&path.display().to_string(), &data)
+}
+
+fn load_manifest_value_from_text(
+    source_label: &str,
+    content: &str,
+) -> Result<serde_json::Value, String> {
+    serde_yaml::from_str::<serde_json::Value>(content)
+        .map_err(|err| format!("parse manifest '{}': {err}", source_label))
 }
 
 #[derive(Debug)]
@@ -983,6 +1085,142 @@ struct RawActionManifest {
     execution: RawActionExecution,
     state: RawActionState,
     side_effects: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        check_compose_text, check_compose_values, validate_manifest_text, validate_manifest_value,
+    };
+
+    #[test]
+    fn validate_manifest_text_accepts_source_yaml() -> Result<(), String> {
+        let summary = validate_manifest_text(
+            "memory/source.yaml",
+            r#"
+kind: source
+id: mem_source
+version: "0.1.0"
+inputs: []
+outputs:
+  - name: value
+    type: number
+parameters: []
+requires:
+  context: []
+execution:
+  deterministic: true
+  cadence: continuous
+state:
+  allowed: false
+side_effects: false
+"#,
+        )
+        .map_err(|err| format!("{err:?}"))?;
+
+        assert_eq!(summary.kind, "source");
+        assert_eq!(summary.id, "mem_source");
+        Ok(())
+    }
+
+    #[test]
+    fn validate_manifest_value_reports_source_label_on_parse_error() {
+        let err = validate_manifest_value(
+            "memory/bad.yaml",
+            serde_json::json!({
+                "id": "broken",
+                "version": "0.1.0"
+            }),
+        )
+        .expect_err("missing kind should fail")
+        .into_rule_violation();
+
+        assert!(err.summary.contains("memory/bad.yaml"));
+    }
+
+    #[test]
+    fn check_compose_text_accepts_in_memory_manifests() -> Result<(), String> {
+        check_compose_text(
+            "memory/adapter.yaml",
+            r#"
+kind: adapter
+id: demo_adapter
+version: "0.1.0"
+runtime_compatibility: "0.1.0"
+context_keys:
+  - name: auth_token
+    type: String
+    required: true
+    writable: false
+event_kinds: []
+capture:
+  format_version: "1"
+  fields: []
+"#,
+            "memory/source.yaml",
+            r#"
+kind: source
+id: demo_source
+version: "0.1.0"
+inputs: []
+outputs:
+  - name: value
+    type: number
+parameters: []
+requires:
+  context:
+    - name: auth_token
+      type: string
+      required: true
+execution:
+  deterministic: true
+  cadence: continuous
+state:
+  allowed: false
+side_effects: false
+"#,
+        )
+        .map_err(|err| format!("{err:?}"))
+    }
+
+    #[test]
+    fn check_compose_values_rejects_unsupported_target_kind() {
+        let err = check_compose_values(
+            "memory/adapter.json",
+            serde_json::json!({
+                "kind": "adapter",
+                "id": "demo_adapter",
+                "version": "0.1.0",
+                "runtime_compatibility": "0.1.0",
+                "context_keys": [{
+                    "name": "auth_token",
+                    "type": "String",
+                    "required": true,
+                    "writable": false,
+                    "description": null
+                }],
+                "event_kinds": [],
+                "capture": {"format_version": "1", "fields": []}
+            }),
+            "memory/compute.json",
+            serde_json::json!({
+                "kind": "compute",
+                "id": "other",
+                "version": "0.1.0",
+                "inputs": [],
+                "outputs": [{"name":"value","type":"number"}],
+                "parameters": [],
+                "execution": {"deterministic": true, "cadence": "continuous", "may_error": false},
+                "errors": {"allowed": false, "types": [], "deterministic": true},
+                "state": {"allowed": false, "resettable": false, "description": null},
+                "side_effects": false
+            }),
+        )
+        .expect_err("compute target should be rejected")
+        .into_rule_violation();
+
+        assert_eq!(err.rule_id, "COMP-1");
+    }
 }
 
 #[derive(Debug, Deserialize)]
