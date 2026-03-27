@@ -1,8 +1,17 @@
+---
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-03-26
+Owner: Documentation
+Scope: Adapter registration invariants
+Change Rule: Operational log
+---
+
 ## 9. Adapter Registration Phase
 
 **Scope:** When an adapter manifest is registered with the system.
 
-**Source:** EXTENSION_CONTRACTS_ROADMAP.md Phase 1, adapter.md (stable)
+**Source:** `docs/primitives/adapter.md`
 
 **Entry invariants:**
 

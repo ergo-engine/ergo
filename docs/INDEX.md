@@ -9,10 +9,11 @@ Change Rule: Tracks implementation
 
 # Documentation Index
 
-> **Single-Source Rule:** Every fact has exactly one authoritative
-> location. Authority level is declared in each document's
-> frontmatter, not by directory placement. CI enforces change rules by
-> reading frontmatter.
+> **Single-Source Rule:** Every fact should have exactly one authoritative
+> location. For the current production-contract doc set, authority level is
+> declared in frontmatter rather than by directory placement. CI enforces
+> explicit guards and generated-doc checks; it does not parse frontmatter to
+> apply change rules.
 
 ---
 
@@ -70,8 +71,8 @@ Directory structure is the topic map. No separate navigation aids needed.
   External interface specifications: UI ↔ Runtime contract and
   extension roadmap.
 - [invariants/](invariants/)
-  Phase boundaries and enforcement: 194 tracked invariants across 16
-  phase files plus the rule registry.
+  Phase boundaries and enforcement: 220 tracked invariants across 16
+  phase files plus the generated rule registry.
 - [ledger/](ledger/)
   Operational planning and doctrine risk tracking: closure register,
   dev-work ledgers, gap-work ledgers, and the decision log.
@@ -84,8 +85,8 @@ Directory structure is the topic map. No separate navigation aids needed.
 
 ## Authority Levels
 
-Every document declares its authority in frontmatter. The active levels
-and their change rules:
+Current production-contract docs declare their authority in frontmatter.
+The active levels and their change rules:
 
 - **FROZEN**
   Change rule: v1 required to change.

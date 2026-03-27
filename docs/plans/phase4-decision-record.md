@@ -1,3 +1,12 @@
+---
+Authority: PROJECT
+Version: v1
+Last Updated: 2026-03-26
+Owner: Documentation
+Scope: Historical phase-4 design record for the in-memory loader workstream
+Change Rule: Working record
+---
+
 # Phase 4 — Decision Record
 
 Historical design-loop artifact for the shipped Phase 4 boundary choices.

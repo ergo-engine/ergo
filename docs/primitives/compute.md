@@ -1,13 +1,18 @@
 ---
 Authority: STABLE
 Version: v1
-Last Updated: 2026-02-12
-Last Amended: 2026-02-12
+Last Updated: 2026-03-26
+Last Amended: 2026-03-26
 ---
 
 > **Amended 2026-02-02** by Codex (Implementation Assistant)
 > Phase 3 (Compute Contract) completion: schema updates (cardinality, may_error, errors, resettable),
 > rules table, enforcement mapping, composition rules, and examples.
+>
+> **Amended 2026-03-26** by Codex (Docs)
+> Corrected current prod manifest/runtime details for compute parameter
+> types, error variants, undeclared outputs, and the non-persisted
+> compute-state execution path.
 
 # Compute Primitive Manifest — v1
 
@@ -94,7 +99,9 @@ Rules:
 - Output names must be unique
 - Output types must be `Number`, `Bool`, `Series`, or `String`
 - On success, all declared outputs must be produced
-- Undeclared outputs are not permitted
+- Extra undeclared outputs are not currently rejected, but they are not
+  wireable or boundary-addressable because validation only knows the
+  declared output metadata
 
 ---
 
@@ -103,7 +110,7 @@ Rules:
 ```yaml
 parameters:
   - name: string
-    type: int | number | bool
+    type: number | bool
     default: any
     required: bool
     bounds: optional
@@ -111,7 +118,8 @@ parameters:
 
 Rules:
 
-- Parameter types are limited to `int | number | bool`
+- Current compute manifests can declare only `number` or `bool`
+  parameters
 - Parameters are static presets (do not change during execution)
 - Parameters must be serializable
 
@@ -147,6 +155,7 @@ Valid ErrorType values:
 
 - `DivisionByZero`
 - `NonFiniteResult`
+- `InvalidParameter`
 
 Rules:
 
@@ -170,6 +179,8 @@ Rules:
 
 - If `state.allowed == true`, then `state.resettable` must be true
 - External or hidden state is forbidden
+- The type layer still models optional compute state, but current prod
+  execution does not provide persisted compute state to computes
 
 ---
 

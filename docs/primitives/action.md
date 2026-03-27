@@ -1,8 +1,8 @@
 ---
 Authority: STABLE
 Version: v1
-Last Updated: 2026-03-16
-Last Amended: 2026-03-16
+Last Updated: 2026-03-26
+Last Amended: 2026-03-26
 Scope: Declarative action contract for gating, writes, and external intents
 ---
 
@@ -15,18 +15,31 @@ Scope: Declarative action contract for gating, writes, and external intents
 > ACT-33 registration rules, and intent-aware composition rules. Aligned the
 > stable action contract with the v1 external effect intent model and current
 > adapter composition enforcement.
+>
+> **Amended 2026-03-26** by Codex (Implementation Assistant)
+> Clarified the current prod manifest surface: file-backed action manifests
+> deserialize `effects.writes` and default missing `effects` to empty writes,
+> while `effects.intents` and `mirror_writes` are enforced only for
+> code-defined/custom manifests that construct `ActionPrimitiveManifest`
+> directly.
 
 # Action Primitive Manifest — v1
 
 This is the authoritative contract.
 
-Actions may now project intent in two directions:
+At the runtime-manifest layer, Actions may project effects in two directions:
 
 - host-internal projection through `effects.writes` and `mirror_writes`
 - external projection through `effects.intents`
 
-The graph still emits intent only. Host realizes host-internal
-projection locally and routes external projection to egress channels.
+Current file-backed prod manifests deserialize only `effects.writes`.
+`effects.intents` and `mirror_writes` are available today only to
+code-defined/custom actions that construct `ActionPrimitiveManifest`
+directly.
+
+The graph emits declarative effects only. Host realizes host-internal
+`set_context` projection locally and routes external projection to egress
+channels.
 
 ---
 
@@ -166,11 +179,11 @@ side_effects: true
 Rules:
 
 - Action primitives are the only primitives where this is allowed
-- Side effects are limited to declared external operations
+- Side effects are limited to declared host-internal or external operations
 
 ---
 
-### 2.8 Effects (Write Declarations)
+### 2.8 Effects (Write Declarations; current file-backed surface)
 
 ```yaml
 effects:
@@ -182,14 +195,14 @@ effects:
 
 Rules:
 
-- `effects` block must exist (it may contain empty `writes` and empty `intents`)
+- On file-backed prod manifests, `effects` is optional; if omitted, it defaults to `writes: []`
 - Write names must be unique
 - Write types must be Number, Series, Bool, or String
 - `from_input` is required and must name a declared scalar input (ACT-22/ACT-23)
 
 ---
 
-### 2.9 Effects (Intent Declarations)
+### 2.9 Effects (Intent Declarations; runtime/custom surface)
 
 ```yaml
 effects:
@@ -209,6 +222,8 @@ effects:
 Rules:
 
 - `effects.intents` may be empty
+- `effects.intents` are enforced when present on the runtime manifest
+- Current file-backed prod manifest parsing does not deserialize `intents` or `mirror_writes`; authors reach this surface through code-defined/custom manifests today
 - Intent names must be unique (ACT-24)
 - Field names must be unique within each intent (ACT-25)
 - Each intent field must declare exactly one source: `from_input` or `from_param` (ACT-26/ACT-27)
@@ -220,7 +235,8 @@ Rules:
 
 ### 2.10 Effect Projection Semantics
 
-`effects.writes` and `effects.intents` are additive. An Action may declare:
+At the runtime-manifest layer, `effects.writes` and `effects.intents`
+are additive. An Action may declare:
 
 - only `writes`
 - only `intents`
@@ -233,6 +249,7 @@ Canonical effect projection rules:
 - Each declared intent projects into a real external effect kind named by `intent.name`
 - When both projections exist, host-internal `set_context` projection precedes external intent projection
 - One Action may therefore emit both a host-internal `set_context` effect and one or more external intent effects during the same attempt
+- Current file-backed prod manifests can declare only the `writes` branch of this model
 
 ---
 
@@ -248,7 +265,7 @@ Rules:
 
 - Outcome events do not carry payloads in v0
 - Outcome events are **non-wireable** in v0
-- Outcome events may be consumed only by external sinks (logging/audit/replay)
+- Outcome events may still be exported through graph boundary outputs and appear in `ExecutionReport.outputs`
 
 ---
 
@@ -268,7 +285,7 @@ Rules:
 | ACT-10 | State not allowed | `state.allowed == false` |
 | ACT-11 | Side effects required | `side_effects == true` |
 | ACT-12 | Gated by trigger | (validation phase, R.7) |
-| ACT-13 | Effects block present | `effects is present` |
+| ACT-13 | Effects surface normalized | `file-backed parse defaults omitted effects to empty writes; runtime manifest always carries ActionEffects` |
 | ACT-14 | Write names unique | `unique(effects.writes[].name)` |
 | ACT-15 | Write types valid | `all(effects.writes[].type ∈ {Number, Series, Bool, String})` |
 | ACT-16 | Retryable false | `execution.retryable == false` |
@@ -312,7 +329,7 @@ Rules:
 | ACT-10 | Registration | `ActionValidationError::StateNotAllowed` | `act_10_action_has_state_rejected` |
 | ACT-11 | Registration | `ActionValidationError::SideEffectsRequired` | `act_11_action_no_side_effects_rejected` |
 | ACT-12 | Validation | `ValidationError::ActionNotGated` | `act_12_action_not_gated_rejected` |
-| ACT-13 | Registration | Type (effects field required) | `act_3_kind_action_accepted` |
+| ACT-13 | Registration | Parse/default normalization | `—` |
 | ACT-14 | Registration | `ActionValidationError::DuplicateWriteName` | `act_14_duplicate_write_name_rejected` |
 | ACT-15 | Registration | `ActionValidationError::InvalidWriteType` | `act_15_write_types_valid_accepts_all_scalar_variants` |
 | ACT-16 | Registration | `ActionValidationError::RetryNotAllowed` | `act_16_retryable_not_allowed_rejected` |
@@ -351,6 +368,7 @@ Rules:
 | COMP-11 | Action writes target provided keys | `effects.writes.names ⊆ adapter.context_keys.names` |
 | COMP-12 | Action writes only writable keys | `∀n ∈ writes: adapter.key[n].writable == true` |
 | COMP-13 | Action write types match | `∀n ∈ writes: action.type[n] == adapter.key[n].type` |
+| COMP-16 | Parameter-bound manifest names resolve | `$-prefixed source requirements and action write names resolve to String parameter values at composition time` |
 | COMP-14 | If action writes or mirror writes, adapter accepts set_context | `(writes.len > 0 OR any(intent.mirror_writes.len > 0)) => accepts.effects contains "set_context"` |
 | COMP-15 | Writes captured (planned) | `(writes.len > 0 OR any(intent.mirror_writes.len > 0)) => capture includes effect + keys` (deferred: REP-SCOPE) |
 | COMP-17 | If action declares intents, adapter accepts each intent effect kind | `effects.intents.names ⊆ accepts.effects.names` |
@@ -361,7 +379,8 @@ Rules:
 
 - COMP-10 is enforced by wiring matrix validation (`runtime/validate.rs`).
 - COMP-9 refines Action input legality by destination input type (event gate vs scalar payload). Runtime validation implements this with destination-input-type-aware checks in `runtime/validate.rs` in addition to the coarse wiring matrix path.
-- COMP-11 through COMP-14 and COMP-17 through COMP-19 are enforced in `crates/kernel/adapter/src/composition.rs` when binding adapter ↔ graph.
+- COMP-11 through COMP-14 and COMP-16 are enforced in `crates/kernel/adapter/src/composition.rs` when binding adapter ↔ graph.
+- COMP-17 through COMP-19 are enforced there as well, but they apply only when the richer runtime/custom intent surface is present; current file-backed prod manifests do not deserialize intent declarations.
 - COMP-15 is deferred until REP-SCOPE expands.
 
 ---
@@ -402,7 +421,6 @@ side_effects: true
 
 effects:
   writes: []
-  intents: []
 ```
 
 ### 7.2 Action With Writes
@@ -442,10 +460,9 @@ effects:
     - name: price
       type: number
       from_input: price
-  intents: []
 ```
 
-### 7.3 Action With External Intent And Mirror Write
+### 7.3 Code-Defined / Custom Action With External Intent And Mirror Write
 
 ```yaml
 kind: action
@@ -472,7 +489,7 @@ outputs:
 
 parameters:
   - name: side
-    type: enum
+    type: string
     default: buy
     required: false
 

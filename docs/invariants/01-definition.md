@@ -1,3 +1,12 @@
+---
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-03-26
+Owner: Documentation
+Scope: Definition-phase invariants for authored clusters
+Change Rule: Operational log
+---
+
 ## 1. Definition Phase
 
 **Scope:** When a cluster is authored and saved.

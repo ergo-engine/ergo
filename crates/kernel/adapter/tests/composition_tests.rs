@@ -287,7 +287,7 @@ fn comp_18_and_comp_19_doc_anchors_point_to_action_manifest() {
     };
     assert_eq!(
         missing.doc_anchor(),
-        "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-18"
+        "docs/primitives/action.md#6-composition-rules"
     );
 
     let incompatible = CompositionError::IntentPayloadSchemaIncompatible {
@@ -297,7 +297,7 @@ fn comp_18_and_comp_19_doc_anchors_point_to_action_manifest() {
     };
     assert_eq!(
         incompatible.doc_anchor(),
-        "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-19"
+        "docs/primitives/action.md#6-composition-rules"
     );
 }
 

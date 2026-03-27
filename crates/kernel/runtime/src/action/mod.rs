@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use crate::common::{ErrorInfo, Phase, ValueType};
+use crate::common::{doc_anchor_for_rule, ErrorInfo, Phase, ValueType};
 
 pub mod implementations;
 pub mod registry;
@@ -363,40 +363,7 @@ impl ErrorInfo for ActionValidationError {
     }
 
     fn doc_anchor(&self) -> &'static str {
-        match self.rule_id() {
-            "ACT-1" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-1",
-            "ACT-2" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-2",
-            "ACT-3" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-3",
-            "ACT-4" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-4",
-            "ACT-5" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-5",
-            "ACT-6" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-6",
-            "ACT-7" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-7",
-            "ACT-8" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-8",
-            "ACT-9" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-9",
-            "ACT-10" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-10",
-            "ACT-11" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-11",
-            "ACT-14" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-14",
-            "ACT-15" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-15",
-            "ACT-16" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-16",
-            "ACT-17" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-17",
-            "ACT-18" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-18",
-            "ACT-19" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-19",
-            "ACT-20" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-20",
-            "ACT-21" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-21",
-            "ACT-22" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-22",
-            "ACT-23" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-23",
-            "ACT-24" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-24",
-            "ACT-25" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-25",
-            "ACT-26" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-26",
-            "ACT-27" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-27",
-            "ACT-28" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-28",
-            "ACT-29" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-29",
-            "ACT-30" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-30",
-            "ACT-31" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-31",
-            "ACT-32" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-32",
-            "ACT-33" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-33",
-            _ => "CANONICAL/PHASE_INVARIANTS.md",
-        }
+        doc_anchor_for_rule(self.rule_id())
     }
 
     fn summary(&self) -> Cow<'static, str> {

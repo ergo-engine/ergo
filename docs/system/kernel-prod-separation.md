@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-21
+Last Updated: 2026-03-26
 Owner: Claude (Structural Auditor)
 Scope: Kernel/prod boundary, host ownership, and boundary channel roles
 Change Rule: Operational log
@@ -34,7 +34,9 @@ Kernel is the semantic authority for:
 - Rule identity and rejection (`RuleViolation` ownership)
 - Supervisor scheduling semantics and retry policy categories
 
-Kernel must remain domain-neutral and must not depend on `prod/*` runtime crates.
+Kernel must remain domain-neutral and must not depend on `prod/*` or
+`shared/*` at runtime. `shared/*` is allowed only in kernel
+`dev-dependencies`.
 
 ### Prod (`crates/prod/*`) owns composition and delivery
 
@@ -42,8 +44,8 @@ Prod is the product composition layer for:
 
 - Transport/decode/discovery (`prod/core/loader`)
 - Canonical host orchestration (`prod/core/host`)
-- Boundary channel implementations that connect host execution to real
-  external systems
+- Channel protocol/runtime support used by project-owned ingress and
+  egress programs
 - Thin client entrypoints (`prod/clients/*`) that delegate to host
 
 Prod may compose kernel APIs, but must not redefine kernel meaning.
@@ -56,7 +58,13 @@ Prod may compose kernel APIs, but must not redefine kernel meaning.
 
 Host responsibilities:
 
-- Provide canonical entrypoints for run, replay, validation, manual-runner preparation, and hosted-runner finalization (`run_graph_from_paths`, `replay_graph_from_paths`, `validate_graph_from_paths`, `prepare_hosted_runner_from_paths`, `finalize_hosted_runner_capture`)
+- Provide canonical entrypoints for run, replay, validation,
+  manual-runner preparation, and hosted-runner finalization
+  (`run_graph_from_paths`, `replay_graph_from_paths`,
+  `validate_run_graph_from_paths`,
+  `prepare_hosted_runner_from_paths`,
+  `finalize_hosted_runner_capture`; `validate_graph_from_paths`
+  remains the narrower live-prep validator)
 - Own loader + kernel composition for client run, replay, validation, and manual-stepping paths
 - Own canonical run ingress selection at the host boundary
   (`DriverConfig` in current code; ingress-channel selection in
@@ -90,7 +98,8 @@ Host is a composition boundary, not a semantic authority.
 | Kernel semantics | `X.*`, `D.*`, `I.*`, `E.*`, `V.*`, `R.*`, `TRG-STATE-*` | `kernel/runtime`, `kernel/adapter`, `kernel/supervisor` |
 | Kernel replay primitives | `REP-1` through `REP-5`, `REP-7`, `REP-8` | `kernel/adapter` + `kernel/supervisor/replay.rs` |
 | Kernel orchestration core | `SUP-*`, `CXT-*`, `RTHANDLE-*` | `kernel/supervisor` + `kernel/adapter` |
-| Host boundary orchestration | `HST-*`, `RUN-CANON-*`, `SDK-CANON-*` | `prod/core/host` |
+| Host boundary orchestration | `HST-*`, `RUN-CANON-*` | `prod/core/host` |
+| SDK boundary delegation | `SDK-CANON-*` | `prod/clients/sdk-rust` delegating to host |
 | Cross-scope replay posture | `REP-SCOPE` | kernel scheduling + host-owned effect integrity |
 
 Interpretation rule:

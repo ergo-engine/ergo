@@ -23,8 +23,8 @@ project snapshot.
 - adapter composition rules
 - host effect routing
 
-Those remain owned by `ergo-host`, `ergo-loader`, `ergo-runtime`, and
-the canonical docs under `/docs`.
+Those remain owned by `ergo-host`, `ergo-loader`, `ergo-runtime`,
+`ergo-adapter`, and the canonical docs under `/docs`.
 
 ## Example
 
@@ -85,8 +85,9 @@ low-level `ProfileRunner` for manual stepping.
   during manual stepping.
 - `finish()` returns a `CaptureBundle` and does not write
   `capture_output`.
-- `finish_and_write_capture()` is the call that explicitly applies the
-  resolved file-capture settings.
+- `finish_and_write_capture()` only works when the runner resolved an
+  explicit file capture path; it does not apply default-file or
+  in-memory capture plans.
 
 ## Transport-Neutral Replay
 

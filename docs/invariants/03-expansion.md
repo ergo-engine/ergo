@@ -1,3 +1,12 @@
+---
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-03-26
+Owner: Documentation
+Scope: Expansion-phase invariants for flattening clusters to implementations
+Change Rule: Operational log
+---
+
 ## 3. Expansion Phase
 
 **Scope:** Recursive flattening of clusters to primitives.
@@ -12,27 +21,20 @@
 | ID | Invariant | Spec | Type | Assertion | Validation | Test |
 |----|-----------|:----:|:----:|:---------:|:----------:|:----:|
 | E.1 | Output contains only primitives (no `NodeKind::Cluster` survives) | cluster-spec.md §7 | — | ✓ | — | ✓ |
-| E.2 | All placeholder edges are rewritten to node-to-node edges | cluster-spec.md §7 | — | ✓ | — | ✓ |
-| E.3 | `ExternalInput` does not appear as edge target (sink) | (inferred) | — | ✓ | — | — |
+| E.2 | Placeholder edge rewrites are applied where resolvable during expansion | cluster-spec.md §7 | — | ✓ | — | ✓ |
+| E.3 | No surviving `ExternalInput` endpoint reaches executable runtime | (inferred) | — | ✓ | — | — |
 | E.4 | Authoring path is preserved for each expanded node | cluster-spec.md §7.2 | — | — | — | ✓ |
 | E.5 | Empty clusters are rejected | cluster-spec.md §6.1 | — | — | ✓ | ✓ |
 | E.6 | Original cluster definitions are not mutated | (inferred) | — | — | — | — |
-| E.7 | `ExpandedGraph` carries boundary ports for inference only | (inferred) | — | — | — | — |
+| E.7 | `ExpandedGraph` retains boundary ports for signature inference, and boundary outputs also drive runtime result collection | (inferred) | — | — | — | — |
 | E.8 | Runtime ID assignment is deterministic for identical definitions | (inferred) | — | — | ✓ | ✓ |
 | E.9 | Referenced nested clusters exist | cluster-spec.md §6.2 | — | — | ✓ | ✓ |
 
 ### Notes
 
-- **E.3:** Enforced via `ValidationError::ExternalInputNotAllowed` in `validate.rs::map_endpoint`.
+- **E.3:** Expansion may still materialize `ExpandedEndpoint::ExternalInput` for unresolved or top-level `$input` sources. Expand debug-asserts that `ExternalInput` is never used as a sink during rewrite, and runtime validation rejects any surviving `ExternalInput` endpoint before execution.
 - **E.6:** True by clone semantics but not explicitly enforced.
-- **E.7:** Requires doc comment on `ExpandedGraph` to make contract explicit:
-
-```rust
-/// Expansion output. Contains only topology, primitive identity, and authoring trace.
-/// `boundary_inputs` and `boundary_outputs` are retained for signature inference only
-/// and must not influence runtime execution.
-```
-
-- **E.2:** ✅ Strengthened (2025-01-05). Boundary output mapping (`map_boundary_outputs`) and nested output mapping now return typed errors instead of silent fallback. Errors: `ExpandError::UnmappedBoundaryOutput { port_name, node_id }`, `ExpandError::UnmappedNestedOutput { cluster_id, port_name }`. Tests: `unmapped_boundary_output_rejected`, `nested_output_mapping_failure_rejected`.
+- **E.7:** `ExpandedGraph` already documents retained boundary ports. `boundary_inputs` remain part of signature inference, while `boundary_outputs` also survive validation and are used during execution to assemble named runtime outputs.
+- **E.2:** Boundary output mapping (`map_boundary_outputs`) and nested output mapping now return typed `D.4` mapping errors instead of silently falling through. `ExpandError::UnmappedBoundaryOutput { ... }` and `ExpandError::UnmappedNestedOutput { ... }` are output-port mapping failures, not placeholder-edge rewrite failures.
 - **E.8:** ✅ **CLOSED.** Enforced via sorted-key iteration in `expand_with_context` (cluster.rs:694-698). Test: `expansion_runtime_ids_deterministic`.
 - **E.9:** Enforced in `cluster.rs::expand_with_context()` when resolving `NodeKind::Cluster` via `ClusterLoader::load`. Missing references return `ExpandError::MissingCluster { id, version }`. Test: `missing_nested_cluster_rejected`.

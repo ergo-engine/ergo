@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::action::ActionRegistry;
 use crate::cluster::{InputMetadata, OutputMetadata, PrimitiveKind, ValueType};
-use crate::common::{ErrorInfo, Phase, Value};
+use crate::common::{doc_anchor_for_rule, ErrorInfo, Phase, Value};
 use crate::compute::ComputeError;
 use crate::compute::PrimitiveRegistry as ComputeRegistry;
 use crate::source::SourceRegistry;
@@ -121,18 +121,7 @@ impl ErrorInfo for ValidationError {
     }
 
     fn doc_anchor(&self) -> &'static str {
-        match self.rule_id() {
-            "D.2" => "STABLE/CLUSTER_SPEC.md#D.2",
-            "E.3" => "STABLE/CLUSTER_SPEC.md#E.3",
-            "V.1" => "STABLE/CLUSTER_SPEC.md#V.1",
-            "V.2" => "STABLE/CLUSTER_SPEC.md#V.2",
-            "V.3" => "STABLE/CLUSTER_SPEC.md#V.3",
-            "V.4" => "STABLE/CLUSTER_SPEC.md#V.4",
-            "V.5" => "STABLE/CLUSTER_SPEC.md#V.5",
-            "V.7" => "STABLE/CLUSTER_SPEC.md#V.7",
-            "V.8" => "STABLE/CLUSTER_SPEC.md#V.8",
-            _ => "CANONICAL/PHASE_INVARIANTS.md",
-        }
+        doc_anchor_for_rule(self.rule_id())
     }
 
     fn summary(&self) -> Cow<'static, str> {
@@ -302,18 +291,7 @@ impl ErrorInfo for ExecError {
     }
 
     fn doc_anchor(&self) -> &'static str {
-        match self.rule_id() {
-            "CMP-11" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-11",
-            "CMP-12" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-12",
-            "SRC-10" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-10",
-            "SRC-11" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-11",
-            "V.4" => "STABLE/CLUSTER_SPEC.md#V.4",
-            "I.4" => "STABLE/CLUSTER_SPEC.md#I.4",
-            "NUM-FINITE-1" => "CANONICAL/PHASE_INVARIANTS.md#NUM-FINITE-1",
-            "X.11" => "CANONICAL/PHASE_INVARIANTS.md#X.11",
-            "GW-EFX-META-1" => "PROJECT/ledger/decisions/intent-id-semantics.md",
-            _ => "CANONICAL/PHASE_INVARIANTS.md",
-        }
+        doc_anchor_for_rule(self.rule_id())
     }
 
     fn summary(&self) -> Cow<'static, str> {
@@ -490,7 +468,10 @@ mod tests {
         };
 
         assert_eq!(err.rule_id(), "V.8");
-        assert_eq!(err.doc_anchor(), "STABLE/CLUSTER_SPEC.md#V.8");
+        assert_eq!(
+            err.doc_anchor(),
+            "docs/authoring/cluster-spec.md#64-enforcement-mapping-phase-6"
+        );
     }
 
     #[test]
@@ -501,7 +482,10 @@ mod tests {
         };
 
         assert_eq!(err.rule_id(), "V.4");
-        assert_eq!(err.doc_anchor(), "STABLE/CLUSTER_SPEC.md#V.4");
+        assert_eq!(
+            err.doc_anchor(),
+            "docs/authoring/cluster-spec.md#64-enforcement-mapping-phase-6"
+        );
     }
 
     #[test]
@@ -512,7 +496,10 @@ mod tests {
         };
 
         assert_eq!(err.rule_id(), "I.4");
-        assert_eq!(err.doc_anchor(), "STABLE/CLUSTER_SPEC.md#I.4");
+        assert_eq!(
+            err.doc_anchor(),
+            "docs/authoring/cluster-spec.md#64-enforcement-mapping-phase-6"
+        );
     }
 
     #[test]
@@ -523,7 +510,7 @@ mod tests {
 
         assert_eq!(err.rule_id(), "INTERNAL");
         assert_eq!(err.phase(), crate::common::Phase::Execution);
-        assert_eq!(err.doc_anchor(), "CANONICAL/PHASE_INVARIANTS.md");
+        assert_eq!(err.doc_anchor(), "docs/invariants/INDEX.md");
     }
 
     #[test]
@@ -535,7 +522,7 @@ mod tests {
         assert_eq!(err.rule_id(), "GW-EFX-META-1");
         assert_eq!(
             err.doc_anchor(),
-            "PROJECT/ledger/decisions/intent-id-semantics.md"
+            "docs/contracts/ui-runtime.md#3-metadata-requirement-for-intent-effects"
         );
     }
 

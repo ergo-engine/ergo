@@ -5,7 +5,7 @@ decode, and cluster discovery.
 
 ## Scope
 
-- Read source bytes from filesystem paths or caller-provided in-memory sources.
+- Read UTF-8 graph text from filesystem paths or caller-provided in-memory sources.
 - Decode YAML/JSON graph content into `ClusterDefinition` (`DecodedAuthoringGraph` is a type alias).
 - Discover candidate clusters from filesystem base/search paths or from
   loader-defined logical in-memory source paths and logical search roots.
@@ -18,10 +18,11 @@ decode, and cluster discovery.
 
 ## Error Categories
 
-- `LoaderIoError`: filesystem and path read failures.
+- `LoaderIoError`: direct top-level filesystem read/open failures.
 - `LoaderDecodeError`: syntax/format decode failures.
 - `LoaderDiscoveryError`: filesystem path, logical source-path, and
-  cluster-tree discovery failures.
+  cluster-tree discovery failures, including nested cluster lookup/read
+  problems surfaced during discovery.
 
 ## Public Entry Points
 

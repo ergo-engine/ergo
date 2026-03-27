@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::fmt;
 
-use ergo_runtime::common::{ErrorInfo, Phase};
+use ergo_runtime::common::{doc_anchor_for_rule, ErrorInfo, Phase};
 #[derive(Debug)]
 pub enum InvalidAdapter {
     InvalidId {
@@ -124,42 +124,7 @@ impl ErrorInfo for InvalidAdapter {
     }
 
     fn doc_anchor(&self) -> &'static str {
-        match self {
-            Self::InvalidId { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-1",
-            Self::InvalidVersion { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-2",
-            Self::InvalidRuntimeCompatibility { .. } => {
-                "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-3"
-            }
-            Self::IncompatibleRuntime { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-3",
-            Self::ProvidesNothing => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-4",
-            Self::DuplicateContextKey { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-5",
-            Self::InvalidContextKeyType { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-6",
-            Self::DuplicateEventKind { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-7",
-            Self::InvalidPayloadSchema { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-8",
-            Self::NoCaptureFormat => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-9",
-            Self::InvalidCaptureField { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-10",
-            Self::MissingWritableFlag { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-11",
-            Self::DuplicateEffectName { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-12",
-            Self::InvalidEffectSchema { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-13",
-            Self::WritableWithoutSetContext { .. } => {
-                "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-14"
-            }
-            Self::WritableKeyNotCaptured { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-15",
-            Self::SetContextNotCaptured => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-16",
-            Self::WritableKeyRequired { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-17",
-            Self::RequiredEventFieldNotProvided { .. } => {
-                "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-18"
-            }
-            Self::RequiredEventFieldTypeMismatch { .. } => {
-                "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-18"
-            }
-            Self::EventPayloadSchemaNotObject { .. } => {
-                "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-19"
-            }
-            Self::UnsupportedEventFieldType { .. } => {
-                "STABLE/PRIMITIVE_MANIFESTS/adapter.md#ADP-19"
-            }
-        }
+        doc_anchor_for_rule(self.rule_id())
     }
 
     fn summary(&self) -> Cow<'static, str> {

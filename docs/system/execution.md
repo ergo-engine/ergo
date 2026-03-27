@@ -1,7 +1,7 @@
 ---
 Authority: FROZEN
 Version: v0
-Last Amended: 2026-03-16
+Last Amended: 2026-03-26
 Scope: Evaluation semantics, phase rules, determinism
 Verified Against Tag: v1.0.0-alpha.1
 Change Rule: v1 only
@@ -218,7 +218,7 @@ do not require upstream graph edges.
 Validation enforces this distinction per destination Action input port type:
 
 - Event input ports accept only Trigger-provided Event edges.
-- Non-Event Action input ports (v0: Number/Bool/String) may accept Source/Compute edges.
+- Non-Event Action input ports (v0: Number/Series/Bool/String) may accept Source/Compute edges.
 - Scalar payload edges never satisfy the Action gate requirement.
 
 ### 6.6 Amendment Record
@@ -247,16 +247,21 @@ Validation enforces this distinction per destination Action input port type:
 All nodes must pass validation before any action executes.
 
 Actions execute sequentially in topological order inherited from their trigger dependencies.
+For topologically independent actions, the current implementation still produces a deterministic
+tie-break order from the validated topological sort.
 
-If multiple actions are topologically independent (no ordering relationship between their
-upstream triggers), their relative execution order is undefined in v0.
+Action outcome values (`Completed`, `Rejected`, `Cancelled`, `Failed`, `Skipped`) are ordinary
+node outputs, not control-flow abort signals. A pass aborts only when runtime execution itself
+fails or the runtime returns a failing termination.
 
-If an action fails during execution:
+When runtime execution aborts:
 
-- Subsequent actions in the same evaluation pass are aborted.
-- Prior external effects are not reversible.
+- Subsequent actions in the same evaluation pass are not executed.
+- Episode-local buffered effects are not dispatched.
 - No retry or compensation occurs within the same pass.
-- Error handling and retries are orchestrator concerns.
+
+Post-episode host dispatch is a separate, non-transactional phase. Error handling and retries
+there are orchestrator concerns.
 
 ---
 
@@ -265,15 +270,20 @@ If an action fails during execution:
 Within an evaluation pass:
 
 - Node evaluation must be deterministic.
-- Given identical inputs and identical declared node state (for stateful Compute nodes), outputs must be identical.
+- Given identical inputs, parameters, and any explicitly supplied node state, outputs must be identical.
 - No internal randomness is permitted.
 - No hidden mutable state is permitted.
 
-External nondeterminism enters through declared adapter inputs and
+The current prod runtime executes Compute primitives without persisted compute state, so
+determinism is grounded in the input snapshot plus resolved parameters.
+
+External nondeterminism enters through declared ingress payloads
+(adapter-shaped or adapter-independent external event payloads) and
 leaves through post-episode host dispatch to prod boundary channels.
 
 For Triggers: determinism means identical behavior given identical inputs (triggers are stateless).
-For Actions: determinism means identical command emission given identical trigger events and parameters.
+For Actions: determinism means identical outcomes and derived effects given identical input
+snapshots and parameters.
 
 ---
 
@@ -303,3 +313,4 @@ direct cyclic wiring.
 | v0 | 2025-12-28 | Original | Initial freeze |
 | v0.1 | 2026-03-04 | Claude (Structural Auditor) | §6 rewritten to document dual non-causal Action outputs (outcome + effects), runtime-to-host effect lifecycle, adapter-bound cross-episode context flow, and per-port wiring constraints for Action gating vs scalar payload. Aligned with ontology.md §2.4. Sebastian override authorization. |
 | v0.2 | 2026-03-16 | Codex (Docs) | §6 widened from write-only effect wording to write + intent declarations, and §8 sharpened the external nondeterminism boundary to distinguish adapter vocabulary from host dispatch and prod boundary channel realization. Sebastian freeze-authority authorization. |
+| v0.3 | 2026-03-26 | Codex (Docs) | Corrected current-prod behavior for independent Action ordering, pass-abort semantics, scalar Action payload types, and determinism wording around compute state and adapter-independent ingress. |

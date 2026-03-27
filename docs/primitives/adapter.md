@@ -1,8 +1,8 @@
 ---
 Authority: STABLE
 Version: v1
-Last Updated: 2026-03-16
-Last Amended: 2026-03-16
+Last Updated: 2026-03-26
+Last Amended: 2026-03-26
 Scope: Declarative adapter contract for context, events, and accepted effects
 ---
 
@@ -10,13 +10,20 @@ Scope: Declarative adapter contract for context, events, and accepted effects
 > Clarified the stable adapter contract after the ingress/egress split:
 > adapters declare accepted effect vocabulary and payload schemas, but
 > do not own routing policy or concrete external I/O realization.
+>
+> **Amended 2026-03-26** by Codex (Implementation Assistant)
+> Tightened the contract to current prod reality: adapters are declarative
+> manifests consumed by host/ingress paths, registration does not re-check
+> `kind`, and composition carries parameter-bound manifest-name resolution
+> plus effect schema access through `AdapterProvides.effect_schemas`.
 
 # Adapter Manifest — v1
 
-An adapter is the bridge between the runtime and the external world.
-It defines what context data is available to the graph, what external events
-can trigger execution, and what effect kinds the runtime may request
-against the adapter's declared acceptance surface.
+An adapter is the declarative contract between the runtime and the
+external world. It defines what context data host/ingress may expose to
+the graph, what semantic events host/ingress may materialize into
+execution, and what effect kinds the runtime may request against the
+adapter's declared acceptance surface.
 
 This is the authoritative contract.
 
@@ -35,11 +42,11 @@ real external I/O themselves.
 
 An Adapter Primitive is the external interface layer that:
 
-- populates ExecutionContext for graph evaluation
-- emits ExternalEvents that trigger episodes
+- declares which ExecutionContext keys host/ingress may populate for graph evaluation
+- declares which semantic ExternalEvents host/ingress may materialize to trigger episodes
 - declares which effects requested by Actions are accepted at the
   contract boundary
-- captures replay-relevant data
+- declares capture selectors for adapter-authored event/metadata coverage
 
 An adapter answers three questions:
 
@@ -51,7 +58,8 @@ An adapter answers three questions:
 
 Adapters are declarative contracts. Concrete post-episode dispatch
 belongs to host. Concrete external I/O belongs to prod boundary
-channels; host-internal effects may still be realized by host handlers.
+channels. Replay capture plumbing is host-owned; host-internal effects
+may still be realized by host handlers.
 
 ---
 
@@ -64,7 +72,7 @@ Every adapter must declare all of the following.
 ### 2.1 Identity
 
 ```yaml
-kind: adapter                    # MUST be literal "adapter"
+kind: adapter                    # File-backed manifest dispatch tag
 id: string                       # ^[a-z][a-z0-9_]*$
 version: semver                  # Adapter version (e.g., "1.0.0")
 runtime_compatibility: semver    # Minimum runtime version supported
@@ -72,7 +80,8 @@ runtime_compatibility: semver    # Minimum runtime version supported
 
 Rules:
 
-- `kind` must be literal `"adapter"`
+- On file-backed manifest inputs, `kind` must be `adapter` so host manifest dispatch selects the adapter validation path
+- After parse/dispatch, adapter registration assumes the adapter manifest type has already been selected and does not re-check `kind`
 - `id` must start with lowercase letter, contain only lowercase letters, digits, underscores
 - `version` must be valid semver
 - `runtime_compatibility` must be valid semver; runtime must satisfy `runtime.version >= runtime_compatibility`
@@ -270,8 +279,9 @@ These rules validate adapter compatibility with other components.
 | Rule ID | Rule | Predicate |
 |---------|------|-----------|
 | COMP-1 | Source context requirements satisfied | `source.requires.context.filter(required).keys ⊆ adapter.provides.context.keys` |
-| COMP-2 | Source context types match | `∀ k where required: source.requires.context[k].ty == adapter.provides.context[k].ty` |
+| COMP-2 | Source context types match | `∀ k in source.requires.context where adapter provides k: source.requires.context[k].ty == adapter.provides.context[k].ty` |
 | COMP-3 | Capture format version supported | `runtime.supports_capture(adapter.capture.format_version)` |
+| COMP-16 | Parameter-bound manifest names resolve | `$-prefixed source requirements and action write names resolve to String parameter values at composition time` |
 
 ### 5.1 Composition Enforcement Mapping
 
@@ -280,6 +290,7 @@ These rules validate adapter compatibility with other components.
 | COMP-1 | Composition | `CompositionError::MissingContextKey` | `comp_1_missing_context_key_rejected` |
 | COMP-2 | Composition | `CompositionError::ContextTypeMismatch` | `comp_2_context_type_mismatch_rejected` |
 | COMP-3 | Composition | `CompositionError::UnsupportedCaptureFormat` | `comp_3_unsupported_capture_format_rejected` |
+| COMP-16 | Composition | `CompositionError::ManifestNameResolutionFailed` | `comp_source_dollar_key_missing_parameter_rejected` / `comp_action_dollar_key_missing_parameter_rejected` |
 
 **Enforcement location:** `crates/kernel/adapter/src/composition.rs`
 **Test location:** `crates/kernel/adapter/tests/composition_tests.rs`
@@ -295,6 +306,7 @@ pub struct AdapterProvides {
     pub context: HashMap<String, ContextKeyProvision>,
     pub events: HashSet<String>,
     pub effects: HashSet<String>,
+    pub effect_schemas: HashMap<String, serde_json::Value>,
     pub event_schemas: HashMap<String, serde_json::Value>,
     pub capture_format_version: String,
     pub adapter_fingerprint: String,
@@ -389,6 +401,12 @@ context_keys:
     required: true
     writable: false
     description: Current price from market data feed
+
+  - name: action
+    type: String
+    required: true
+    writable: false
+    description: Semantic command name materialized from required event payload fields
 
   - name: last_signal
     type: String

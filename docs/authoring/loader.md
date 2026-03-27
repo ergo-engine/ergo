@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-22
+Last Updated: 2026-03-26
 Owner: Claude (Structural Auditor)
 Scope: Loader responsibility boundary, decode contract
 Change Rule: Tracks implementation
@@ -24,8 +24,8 @@ divide.
 The loader does:
 
 - Project root discovery via `ergo.toml`
-- Project/profile manifest resolution into graph, adapter, ingress,
-  egress, and cluster path references
+- Project manifest loading plus per-profile resolution into graph,
+  adapter, ingress, egress, capture, and cluster path references
 - YAML/JSON decode of graph content into `ClusterDefinition`
 - Shorthand expansion and format-level coercions tied to file format
 - Cluster discovery and candidate resolution across filesystem paths or
@@ -37,7 +37,7 @@ The loader does NOT:
 - Access the primitive catalog
 - Perform semantic validation (wiring legality, type rules)
 - Define or return `RuleViolation` types (LAYER-2)
-- Perform expansion, inference, or execution
+- Perform semantic graph expansion, signature inference, or execution
 
 ---
 
@@ -58,8 +58,8 @@ The loader does NOT:
 - `discover_project_root`
   Nested path to project root containing `ergo.toml`.
 - `load_project`
-  Project root discovery plus `ergo.toml` parse into resolved
-  profiles.
+  Project root discovery plus `ergo.toml` parse into `ResolvedProject { root, manifest }`.
+  Individual profiles are resolved later via `ResolvedProject::resolve_run_profile(...)`.
 - `decode_graph_yaml`
   YAML string to `ClusterDefinition`.
 - `decode_graph_yaml_labeled`
@@ -171,7 +171,9 @@ For the in-memory surface:
 - both discovery outputs expose `cluster_diagnostic_labels`; host/error
   consumers should read labels from that field rather than deriving them from
   `PathBuf` or `source_label` directly
-- ordered input slices define resolver precedence
+- when multiple in-memory sources could satisfy the same lookup, caller `sources` order
+  decides which matching source is chosen; `search_roots` define candidate scope and search
+  trace order rather than source precedence
 - `InMemoryGraphBundle.discovered_source_ids` follows lexicographic `source_id`
   order, matching `source_map` key order
 - logical `search_roots` preserve referrer-sensitive discovery scope without

@@ -1,71 +1,74 @@
 ---
 Authority: CONTRACTS
 Version: v0
-Last Updated: 2026-01-05
-Derived From: crates/kernel/runtime/src/runtime/tests::hello_world_graph_executes_with_core_catalog_and_registries
-Scope: Data structures UI must emit for runtime
+Last Updated: 2026-03-26
+Derived From: crates/kernel/runtime/src/runtime/tests.rs::hello_world_graph_executes_with_core_catalog_and_registries
+Scope: Low-level ExpandedGraph and ExecutionReport contract
 Change Rule: Review required
 ---
 
 # UI ↔ Runtime Contract
 
-This document defines the exact data structure a UI must emit to drive the Primitive Library runtime.
+This document defines the low-level graph shape a UI or other external tool
+must emit if it talks directly to `ergo-runtime`.
 
----
+Higher-level product callers should normally prefer host or SDK entrypoints
+instead of constructing `ExpandedGraph` directly.
 
 ## Trust Boundary Notice
 
-**Client implementations are non-canonical integrations, not contract authorities.**
+**Client implementations are non-canonical integrations, not contract
+authorities.**
 
-- **Authority:** Runtime contract authority is Rust types in `crates/kernel/runtime/src/cluster.rs` + this document
-- **Clients:** CLI/SDKs are thin clients that delegate canonical execution to host entrypoints
-- **No guarantees:** Client-side mirrors or wrappers may add conveniences (for example defaults or looser typing) that production callers must not treat as enforcement
-- **Validation:** All contract enforcement happens at runtime; UI-side validation is advisory only
+- **Authority:** Runtime contract authority is Rust types in
+  `crates/kernel/runtime/src/cluster.rs`,
+  `crates/kernel/runtime/src/runtime/types.rs`, and this document.
+- **Clients:** CLI and SDK layers delegate canonical execution to host entrypoints.
+- **Validation:** All low-level contract enforcement happens in runtime validation
+  and execution.
 
----
-
-## 1. Data Shape (Authoritative)
+## 1. Data Shape
 
 ### ExpandedGraph
-
-The top-level structure the UI must produce.
 
 ```rust
 pub struct ExpandedGraph {
     pub nodes: HashMap<String, ExpandedNode>,
     pub edges: Vec<ExpandedEdge>,
-    pub boundary_inputs: Vec<InputPortSpec>,   // Empty for runtime execution
-    pub boundary_outputs: Vec<OutputPortSpec>, // Maps graph outputs to node ports
+    pub boundary_inputs: Vec<InputPortSpec>,
+    pub boundary_outputs: Vec<OutputPortSpec>,
 }
 ```
+
+`boundary_inputs` and `boundary_outputs` are retained for signature inference.
+Runtime execution does not allow `ExternalInput` endpoints to survive validation.
 
 ### ExpandedNode
 
-Each node in the graph.
-
 ```rust
 pub struct ExpandedNode {
-    pub runtime_id: String,                        // Unique ID within graph
-    pub authoring_path: Vec<(String, NodeId)>,     // Empty for flat graphs
-    pub implementation: ImplementationInstance,    // Which primitive
-    pub parameters: HashMap<String, ParameterValue>, // Literal values
+    pub runtime_id: String,
+    pub authoring_path: Vec<(String, NodeId)>,
+    pub implementation: ImplementationInstance,
+    pub parameters: HashMap<String, ParameterValue>,
 }
 ```
 
-### ImplementationInstance
+On the direct runtime path, `ExpandedGraph.nodes` map keys and
+`ExpandedEndpoint::NodePort.node_id` remain the authoritative node identity;
+validation copies the map key into validated runtime IDs.
 
-Reference to a registered primitive.
+### ImplementationInstance
 
 ```rust
 pub struct ImplementationInstance {
-    pub impl_id: String,   // e.g., "number_source", "gt", "emit_if_true"
-    pub version: String,   // e.g., "0.1.0"
+    pub impl_id: String,
+    pub requested_version: String,
+    pub version: String,
 }
 ```
 
 ### ExpandedEdge
-
-Connection between node ports.
 
 ```rust
 pub struct ExpandedEdge {
@@ -75,13 +78,11 @@ pub struct ExpandedEdge {
 
 pub enum ExpandedEndpoint {
     NodePort { node_id: String, port_name: String },
-    ExternalInput { name: String },  // Not allowed in runtime execution
+    ExternalInput { name: String },
 }
 ```
 
 ### ParameterValue
-
-Literal values bound to node parameters.
 
 ```rust
 pub enum ParameterValue {
@@ -95,12 +96,10 @@ pub enum ParameterValue {
 
 ### OutputPortSpec
 
-Maps graph boundary outputs to internal node ports.
-
 ```rust
 pub struct OutputPortSpec {
-    pub name: String,       // External name for this output
-    pub maps_to: OutputRef, // Which node:port produces it
+    pub name: String,
+    pub maps_to: OutputRef,
 }
 
 pub struct OutputRef {
@@ -109,51 +108,41 @@ pub struct OutputRef {
 }
 ```
 
----
-
 ## 2. Execution Flow
 
-### Step 1: UI Constructs ExpandedGraph
+### Step 1: Construct `ExpandedGraph`
 
-UI assembles:
+The caller assembles:
 
-- Nodes with unique `runtime_id`
-- Implementation references (`impl_id` + `version`)
-- Parameter literals (no bindings, no expressions)
-- Edges connecting `NodePort` → `NodePort`
-- Boundary outputs naming which node ports to observe
+- a node map whose keys are the canonical node IDs referenced by edges
+- implementation references (`impl_id`, `requested_version`, and resolved `version`)
+- literal parameter values
+- edges between node ports
+- boundary outputs naming which node ports to observe
 
-### Step 2: Backend Calls validate()
+### Step 2: Validate
 
 ```rust
 let validated = validate(&expanded, &catalog)?;
 ```
 
-- Checks all primitives exist in catalog
-- Enforces wiring matrix (Source→Compute, Compute→Trigger, etc.)
-- Enforces required inputs are connected
-- Enforces type compatibility on edges
-- Enforces actions are gated by triggers
-- Returns `ValidatedGraph` or `ValidationError`
+Validation checks primitive existence, wiring legality, required inputs, edge
+type compatibility, action gating, and other graph-shape rules.
 
-### Step 3: Backend Calls run()
+### Step 3: Run
 
 ```rust
 let report = run(&expanded, &catalog, &registries, &ctx)?;
 ```
 
-- Executes nodes in topological order
-- Sources produce values from parameters
-- Computes transform inputs to outputs
-- Triggers emit events based on conditions
-- Actions execute when triggered
-- Returns `ExecutionReport` with boundary outputs
+`run()` performs validation internally and then executes the validated graph.
 
-### Step 4: Backend Surfaces Outputs
+### Step 4: Read Outputs And Effects
 
 ```rust
 pub struct ExecutionReport {
     pub outputs: HashMap<String, RuntimeValue>,
+    pub effects: Vec<ActionEffect>,
 }
 
 pub enum RuntimeValue {
@@ -165,61 +154,43 @@ pub enum RuntimeValue {
 }
 ```
 
-UI reads `report.outputs` by the names declared in `boundary_outputs`.
+`outputs` are keyed by the names declared in `boundary_outputs`. `effects`
+contains emitted runtime action effects for callers that care about side-effect
+intent.
 
----
+## 3. Metadata Requirement For Intent Effects
 
-## 3. Explicit Non-Goals
+Low-level callers that execute graphs directly through `ergo-runtime` must
+provide execution metadata whenever an action manifest declares
+`effects.intents`.
 
-The UI:
+- `execute(&graph, &registries, &ctx)` rejects such graphs with
+  `ExecError::IntentMetadataRequired { node }`.
+- `execute_with_metadata(&graph, &registries, &ctx, graph_id, event_id)` is the
+  low-level lane that supplies the stable identifiers required to derive
+  deterministic `intent_id` values.
+- Host and SDK entrypoints already own this metadata and are the preferred
+  production surfaces.
 
-- **Does not reason about primitives** — it only references `impl_id` + `version`
-- **Does not execute logic** — the runtime does all computation
-- **Does not invent semantics** — port names and types come from the catalog
-- **Does not validate** — the backend validates; UI may pre-check for UX only
+## 4. Non-Goals
 
-**The UI is a pure graph authoring surface.**
+The UI or external caller:
 
-Its sole responsibility is emitting a valid `ExpandedGraph` structure.
+- does not define primitive semantics
+- does not replace runtime validation
+- does not become the canonical orchestration surface
+- does not widen host or SDK product guarantees
 
----
+## 5. Reference Hello-World Graph
 
-## Reference: Hello-World Graph
-
+```text
+number_source(value=3.0) -> gt:a
+number_source(value=1.0) -> gt:b
+gt.result -> emit_if_true.input
+emit_if_true.event -> ack_action.event
 ```
-number_source(value=3.0) → gt:a
-number_source(value=1.0) → gt:b
-gt.result → emit_if_true.input
-emit_if_true.event → ack_action.event
-```
 
-Nodes:
+Result:
 
-| runtime_id | impl_id       | parameters          |
-|------------|---------------|---------------------|
-| src_a      | number_source | value: Number(3.0)  |
-| src_b      | number_source | value: Number(1.0)  |
-| gt1        | gt            | (none)              |
-| emit       | emit_if_true  | (none)              |
-| act        | ack_action    | accept: Bool(true)  |
-
-Edges:
-
-| from             | to                |
-|------------------|-------------------|
-| src_a:value      | gt1:a             |
-| src_b:value      | gt1:b             |
-| gt1:result       | emit:input        |
-| emit:event       | act:event         |
-
-Boundary outputs:
-
-| name           | maps_to       |
-|----------------|---------------|
-| action_outcome | act:outcome   |
-
-Result: `action_outcome = Event(Action(Completed))`
-
----
-
-*This contract exactly matches the hello-world test. No runtime code was changed.*
+- boundary output can expose `act:outcome`
+- runtime may also emit action effects through `ExecutionReport.effects`

@@ -1,8 +1,17 @@
+---
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-03-26
+Owner: Documentation
+Scope: Adapter composition invariants
+Change Rule: Operational log
+---
+
 ## 10. Adapter Composition Phase
 
 **Scope:** When sources or actions are composed with an adapter.
 
-**Source:** EXTENSION_CONTRACTS_ROADMAP.md Phase 1, adapter.md (stable)
+**Source:** `docs/primitives/adapter.md`
 
 **Entry invariants:**
 
@@ -20,7 +29,8 @@
 
 ### Notes
 
-- **COMP-1, COMP-2:** Only keys with `required: true` in source requirements must exist in adapter provides.
+- **COMP-1:** Only keys with `required: true` in source requirements must exist in adapter provides.
+- **COMP-2:** Any source-required key that the adapter does provide must match type, including optional keys whose existence is allowed but not guaranteed.
 - **COMP-16:** `$`-prefixed manifest names must resolve to a String parameter value at composition time. Enforced for both source context requirements and action write specs.
 - **Enforcement location:** `crates/kernel/adapter/src/composition.rs`
 - **Test location:** `crates/kernel/adapter/tests/composition_tests.rs`

@@ -3,7 +3,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use ergo_runtime::action::{ActionEffects, IntentSpec};
-use ergo_runtime::common::{resolve_manifest_name, ErrorInfo, Phase, ValueType};
+use ergo_runtime::common::{
+    doc_anchor_for_rule, resolve_manifest_name, ErrorInfo, Phase, ValueType,
+};
 pub use ergo_runtime::source::{ContextRequirement, SourceRequires};
 
 use crate::provides::AdapterProvides;
@@ -80,23 +82,7 @@ impl ErrorInfo for CompositionError {
     }
 
     fn doc_anchor(&self) -> &'static str {
-        match self {
-            Self::MissingContextKey { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#COMP-1",
-            Self::ContextTypeMismatch { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#COMP-2",
-            Self::UnsupportedCaptureFormat { .. } => "STABLE/PRIMITIVE_MANIFESTS/adapter.md#COMP-3",
-            Self::WriteTargetNotProvided { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-11",
-            Self::WriteTargetNotWritable { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-12",
-            Self::WriteTypeMismatch { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-13",
-            Self::MissingSetContextEffect => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-14",
-            Self::MissingIntentEffect { .. } => "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-17",
-            Self::MissingIntentPayloadSchema { .. } => {
-                "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-18"
-            }
-            Self::IntentPayloadSchemaIncompatible { .. } => {
-                "STABLE/PRIMITIVE_MANIFESTS/action.md#COMP-19"
-            }
-            Self::ManifestNameResolutionFailed { .. } => "CANONICAL/PHASE_INVARIANTS.md#COMP-16",
-        }
+        doc_anchor_for_rule(self.rule_id())
     }
 
     fn summary(&self) -> Cow<'static, str> {

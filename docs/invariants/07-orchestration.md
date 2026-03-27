@@ -1,3 +1,12 @@
+---
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-03-26
+Owner: Documentation
+Scope: Orchestration-phase invariants for supervisor and host scheduling
+Change Rule: Operational log
+---
+
 ## 7. Orchestration Phase
 
 **Scope:** Supervisor scheduling of episodes.
@@ -13,7 +22,7 @@
 
 | ID | Invariant | Spec | Type | Assertion | Validation | Test |
 |----|-----------|:----:|:----:|:---------:|:----------:|:----:|
-| CXT-1 | ExecutionContext is adapter-only | supervisor.md §3 | ✓ | — | — | ✓ |
+| CXT-1 | ExecutionContext is externally supplied only | supervisor.md §3 | ✓ | — | — | ✓ |
 | SUP-1 | Supervisor is graph-identity fixed | supervisor.md §3 | ✓ | — | — | — |
 | SUP-2 | Supervisor is strategy-neutral | supervisor.md §3 | ✓ | — | — | ✓ |
 | SUP-3 | Supervisor decisions are replayable | supervisor.md §3 | — | — | — | ✓ |
@@ -28,7 +37,7 @@
 
 ### Notes
 
-- **CXT-1:** `pub(crate)` constructor; compile_fail doctests verify no external construction.
+- **CXT-1:** `ExecutionContext` is restricted to externally supplied values for the current attempt; supervisor-derived or episode-derived state is excluded.
 - **SUP-1:** Private `graph_id` field with no setters; set only at construction.
 - **SUP-2:** `RuntimeInvoker::run()` returns `RunTermination` only; no `RunResult` exposure.
 - **SUP-4:** `should_retry()` matches only `NetworkTimeout|AdapterUnavailable|RuntimeError|TimedOut`.
@@ -72,7 +81,8 @@ The host (`crates/prod/core/host`) exposes the canonical execution surface:
 |----------|-------|---------------|
 | `run_graph_from_paths` | Client entrypoint | Canonical run: loader decode/discovery, expansion, provenance, adapter validation/binder, host-owned ingress selection via `DriverConfig` (current code term for ingress-channel config), runner setup, eager egress startup/finalization, truthful `Completed` / `Interrupted` outcome reporting |
 | `replay_graph_from_paths` | Client entrypoint | Canonical replay: loader decode, strict preflight, rehydration, and host-owned effect-integrity comparison; replay remains capture-driven and accepts no live channel config |
-| `validate_graph_from_paths` | Client entrypoint | Canonical live-path validation: loader decode/discovery, expansion, dependency scan, adapter/egress/handler validation without constructing a hosted session or starting egress channels |
+| `validate_graph_from_paths` | Client entrypoint | Prep-only live-path validation: loader decode/discovery, expansion, dependency scan, adapter/egress/handler validation without constructing a hosted session, preflighting a driver, or starting egress channels |
+| `validate_run_graph_from_paths` | Client entrypoint | Canonical full-run validation: everything in prep validation plus `DriverConfig` preflight for the explicit ingress shape that canonical run will use |
 | `prepare_hosted_runner_from_paths` | Client entrypoint | Canonical manual-runner preparation: loader decode/discovery, expansion, adapter preflight/binder, hosted-runner construction, eager egress startup, returns `HostedRunner` for caller-driven stepping |
 | `finalize_hosted_runner_capture` | Client entrypoint | Canonical manual-runner finalization: reject zero-step/non-finalizable runners, assert no pending acks, stop egress channels, return `CaptureBundle` |
 | `load_graph_assets_from_paths` | Lower-level | Loader-backed path loading to sealed `PreparedGraphAssets` for the live prep lane |
@@ -103,9 +113,9 @@ Notes:
 - HST-9: duplicate `event_id` rejection is enforced at `HostedRunner`, so non-CLI host callers cannot bypass identity guarantees. Host replay execution flows through the host replay path, which performs strict preflight, event rehydration with hash checks, and effect-integrity comparison around the `HostedRunner::replay_step(...)` primitive.
 - HST-7 commit rule follows SUP-6 partial execution semantics: commit if drained buffer is non-empty regardless of final termination; no transactional rollback.
 - DOC-GATE-1 enforcement script: `tools/verify_doctrine_gate.sh`; integrated via `tools/verify_runtime_surface.sh`.
-- RUN-CANON-1: canonical run entrypoints require a non-optional `DriverConfig` (`RunGraphFromPathsRequest.driver`, `RunGraphRequest.driver`), so host canonical run always receives an explicit event source (`Fixture` or `Process`) instead of inventing an implicit direct-run path. Driver-specific validation then rejects empty/invalid driver configuration before canonical execution begins.
+- RUN-CANON-1: canonical run entrypoints require a non-optional `DriverConfig` (`RunGraphFromPathsRequest.driver`, `RunGraphRequest.driver`), so host canonical run always receives an explicit event source (`Fixture`, `FixtureItems`, or `Process`) instead of inventing an implicit direct-run path. Driver-specific validation then rejects empty/invalid driver configuration before canonical execution begins.
 - RUN-CANON-2: `validate_live_runner_setup_from_assets(...)` scans adapter dependencies before execution and `ensure_adapter_requirement_satisfied(...)` rejects adapter-dependent graphs when no adapter transport is provided. Canonical path entrypoints still surface that through the absence of `adapter_path`; lower-level prep surfaces it through `LivePrepOptions.adapter`. The host error surface reports this as `RUN-CANON-2` with offending required-context/write nodes when available.
-- SDK-CANON-1: now exercised by `ergo-sdk-rust`. SDK `run_profile`, `replay_profile`, `validate_project`, and `runner_for_profile` delegate canonical orchestration to host entrypoint APIs, and `ProfileRunner::finish()` delegates finalization through `finalize_hosted_runner_capture(...)`; `ergo init` scaffolds against that real surface rather than a placeholder.
+- SDK-CANON-1: now exercised by `ergo-sdk-rust`. SDK `run_profile`, `replay_profile`, `validate_project`, and `runner_for_profile` delegate canonical orchestration to host entrypoint APIs, with SDK validation delegating to the run-validation seam (`validate_run_graph_from_paths...`) rather than inventing an SDK-only validation lane; `ProfileRunner::finish()` delegates finalization through `finalize_hosted_runner_capture(...)`; `ergo init` scaffolds against that real surface rather than a placeholder.
 - SDK-CANON-2: SDK profile-facing APIs may resolve projects through either loader-owned filesystem discovery or SDK-owned in-memory project snapshots, but both must translate into host-owned requests instead of becoming an alternate orchestration authority. `run_profile(...)`, `replay_profile(...)`, `validate_project()`, `runner_for_profile(...)`, and `replay_profile_bundle(...)` therefore resolve through transport-neutral SDK planning and then delegate to canonical host run/replay/validation/manual-runner seams.
 - SDK-CANON-3: `ErgoBuilder` forwards custom Sources, Computes, Triggers, and Actions into `CatalogBuilder`, and `CatalogBuilder::build()` registers the combined core + custom inventory through the same runtime registry/catalog path. The SDK therefore does not create an SDK-only primitive validation lane; invalid or duplicate custom primitives fail through the shared runtime registration surface.
 

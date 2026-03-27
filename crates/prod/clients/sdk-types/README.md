@@ -1,6 +1,7 @@
 # ergo-sdk-types
 
-Shared SDK-facing data types only.
+Standalone SDK-facing transport types. Today this crate exports only
+`SdkVersion`.
 
 ## Doctrine
 

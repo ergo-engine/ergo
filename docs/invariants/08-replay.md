@@ -1,3 +1,12 @@
+---
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-03-26
+Owner: Documentation
+Scope: Replay-phase invariants for capture integrity and deterministic verification
+Change Rule: Operational log
+---
+
 ## 8. Replay Phase
 
 **Scope:** Deterministic capture and verification of episode execution.

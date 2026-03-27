@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-19
+Last Updated: 2026-03-26
 Owner: Sebastian (Architect)
 Scope: Getting started workflow for SDK-first Ergo projects
 Change Rule: Tracks implementation
@@ -86,12 +86,15 @@ Current sample boundary programs are Python 3 examples:
 - `channels/ingress/live_feed.py`
 - `channels/egress/sample_outbox.py`
 
-Make sure `python3` is available on your machine before using the live
-profile or the scaffolded `doctor` command.
+Make sure `python3` is available on your machine before using the
+scaffolded `historical` or `live` profiles, or the scaffolded
+`doctor` command.
 
-For long-running profiles such as `live`, `Ctrl-C` requests a graceful
-host stop instead of hard-killing the process. That lets the run
-finalize cleanly and still write its capture artifact.
+For user-authored long-running process-ingress profiles, `Ctrl-C`
+requests a graceful host stop instead of hard-killing the process.
+That lets the run finalize cleanly and still write its capture
+artifact. The scaffolded `live` sample itself is short-lived: it emits
+one event and an explicit end frame, then exits on its own.
 
 Existing apps only get that behavior when they wire `StopHandle` and
 call `run_profile_with_stop(...)`. `run_profile()` remains the raw

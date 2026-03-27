@@ -1,3 +1,12 @@
+---
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-03-26
+Owner: Documentation
+Scope: Validation-phase invariants for expanded graphs
+Change Rule: Operational log
+---
+
 ## 5. Validation Phase
 
 **Scope:** Validating the unified DAG before execution.

@@ -71,12 +71,12 @@ Core is frozen at this point. The following constraints are now in force:
 
 This freeze applies to:
 
-- `src/source/`
-- `src/compute/`
-- `src/trigger/`
-- `src/action/`
-- `src/cluster.rs`
-- `src/runtime/`
+- `crates/kernel/runtime/src/source/`
+- `crates/kernel/runtime/src/compute/`
+- `crates/kernel/runtime/src/trigger/`
+- `crates/kernel/runtime/src/action/`
+- `crates/kernel/runtime/src/cluster.rs`
+- `crates/kernel/runtime/src/runtime/`
 
 Doctrine documents retain their existing authority levels.
 
@@ -114,13 +114,12 @@ Notes:
 - `REP-7` and `REP-8` are canonically owned by the Replay phase file; this strictness section is the run/replay policy summary layer.
 - Adapter-dependent graph detection is based on required source context keys and action effects (writes and declared intents).
 - Adapter-independent canonical captures use explicit provenance sentinel `none`.
-- Capture bundles are strict v3 (`capture_version: "v3"`):
+- Capture bundles are strict v3 (`capture_version: "v3"`): top-level
   `adapter_provenance`, `runtime_provenance`, and `decisions[].effects`
-  are required, unknown fields are rejected, and legacy
+  are required; top-level unknown fields are rejected; and legacy
   `adapter_version` bundles fail deserialization.
-- v2 artifacts remain readable as JSON fixtures, but strict replay
-  comparability is version-scoped and not guaranteed across the v2→v3
-  semantic boundary.
+- Replay is v3-only. Fixtures use a separate JSONL `FixtureItem`
+  schema rather than legacy capture-bundle JSON.
 - Strict replay preflight enforces unique `events[].event_id` identities.
 - Repo policy: capture bundles and fixtures are ephemeral/regenerated artifacts; backward compatibility across bundle schema revisions is not guaranteed inside this repo.
 
@@ -162,13 +161,13 @@ No implementation required. State is already fully externalized and governed by 
 |----|-----------|-------|----------|--------|
 | ~~F.1~~ | ~~Input ports never wireable~~ | ~~Code violation~~ | ~~BLOCKER~~ | ✅ CLOSED |
 | ~~E.3~~ | ~~ExternalInput not as sink~~ | ~~No assertion~~ | ~~HIGH~~ | ✅ CLOSED |
-| ~~E.7~~ | ~~Boundary ports for inference only~~ | ~~No doc comment~~ | ~~MEDIUM~~ | ✅ CLOSED |
+| ~~E.7~~ | ~~Boundary port semantics undocumented~~ | ~~Closed — doc comment added; `boundary_inputs` stay for signature inference and `boundary_outputs` also drive runtime result collection~~ | ~~MEDIUM~~ | ✅ CLOSED |
 | ~~D.11~~ | ~~Declared wireability ≤ inferred~~ | ~~Validation missing~~ | ~~MEDIUM~~ | ✅ CLOSED |
 | ~~X.9~~ | ~~Authoring compiles away~~ | ~~Structurally enforced — type system~~ | ~~MEDIUM~~ | ✅ CLOSED |
 | ~~F.6~~ | ~~Inference depends only on graph + catalog~~ | ~~Documented~~ | ~~LOW~~ | ✅ CLOSED |
 | ~~R.3~~ | ~~No same-pass action observation~~ | ~~Compositionally enforced via F.2, X.5~~ | ~~LOW~~ | ✅ CLOSED |
 | ~~X.7~~ | ~~Compute inputs ≥1~~ | ~~Validation missing~~ | ~~HIGH~~ | ✅ CLOSED |
-| ~~R.4~~ | ~~Action failure aborts subsequent actions~~ | ~~Closed by design — Result::Err propagation~~ | ~~LOW~~ | ✅ CLOSED |
+| ~~R.4~~ | ~~Runtime abort semantics for actions~~ | ~~Closed by design — `Result::Err` propagation aborts passes; `ActionOutcome::Failed` is data~~ | ~~LOW~~ | ✅ CLOSED |
 | ~~R.7~~ | ~~Actions execute only when trigger emitted~~ | ~~Runtime gating missing~~ | ~~BLOCKER~~ | ✅ CLOSED |
 | ~~REP-6~~ | ~~Stateful trigger state captured~~ | ~~Closed — triggers are stateless by design~~ | ~~N/A~~ | ✅ CLOSED |
 
@@ -203,5 +202,12 @@ And the stable specification set:
 
 - `concepts.md`
 - `cluster-spec.md`
+- `yaml-format.md`
+- `primitives/adapter.md`
+- `primitives/source.md`
+- `primitives/compute.md`
+- `primitives/trigger.md`
+- `primitives/action.md`
+- `rule-registry.md`
 
 Changes to this document require the same review bar as changes to frozen specs.

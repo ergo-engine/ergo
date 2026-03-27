@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use crate::common::{ErrorInfo, Phase};
+use crate::common::{doc_anchor_for_rule, ErrorInfo, Phase};
 
 pub mod implementations;
 pub mod registry;
@@ -231,23 +231,7 @@ impl ErrorInfo for TriggerValidationError {
     }
 
     fn doc_anchor(&self) -> &'static str {
-        match self.rule_id() {
-            "TRG-1" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-1",
-            "TRG-2" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-2",
-            "TRG-3" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-3",
-            "TRG-4" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-4",
-            "TRG-5" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-5",
-            "TRG-6" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-6",
-            "TRG-7" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-7",
-            "TRG-8" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-8",
-            "TRG-9" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-9",
-            "TRG-10" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-10",
-            "TRG-11" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-11",
-            "TRG-12" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-12",
-            "TRG-13" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-13",
-            "TRG-14" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-14",
-            _ => "CANONICAL/PHASE_INVARIANTS.md",
-        }
+        doc_anchor_for_rule(self.rule_id())
     }
 
     fn summary(&self) -> Cow<'static, str> {

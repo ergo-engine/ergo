@@ -1,7 +1,7 @@
 ---
 Authority: FROZEN
 Version: v0
-Last Amended: 2026-03-16
+Last Amended: 2026-03-26
 Scope: Four primitives, wiring matrix, causal roles
 Verified Against Tag: v1.0.0-alpha.1
 Change Rule: v1 only
@@ -48,7 +48,7 @@ Characteristics:
 - No transformation of graph-derived inputs; adapter shaping only
 - No inference
 - No side effects
-- Deterministic data materialization given captured adapter inputs
+- Deterministic data materialization from node parameters plus the current `ExecutionContext`
 
 Source may "materialize" values from the environment, but may not "derive" values from other graph values. Adapter behavior is a trust boundary; semantic shaping must be declared as parameters or adapter metadata.
 
@@ -121,15 +121,17 @@ Characteristics:
 
 Action outputs are non-causal and take two forms:
 
-- **Acknowledgment records** — emitted to orchestrator for logging/audit (exactly one per attempt)
-- **Effect descriptions** — emitted as non-causal operational instructions for post-episode realization (zero or more per attempt)
+- **Outcome records** — exactly one non-wireable `outcome` output per evaluation pass (including `Skipped` when gating suppresses execution)
+- **Effect descriptions** — zero or more non-causal operational instructions for post-episode realization
 
-Neither participates in graph causality. Acknowledgment records are
-metadata for accountability. Effect descriptions are operational
-instructions emitted as intent. Adapters declare which effect kinds are
-accepted; host dispatches these descriptions after episode completion;
-host-internal effects may be realized by host handlers, while truly
-external effects cross prod boundary channels.
+Neither participates in graph causality. Outcome records are metadata
+for accountability and are only surfaced if mapped to graph boundary
+outputs. Effect descriptions are operational instructions emitted as
+intent. Adapters declare which effect kinds are accepted; host-facing
+run/report surfaces carry the buffered effects separately; host
+dispatches these descriptions after episode completion; host-internal
+effects may be realized by host handlers, while truly external effects
+cross prod boundary channels.
 
 Action establishes agency, not logic or policy.
 
@@ -213,11 +215,13 @@ That is a policy question, not a causal role.
 
 Risk therefore exists as a macro-primitive: UI-visible, reusable, composable, compiled into compute → trigger → action.
 
-The distinction between Risk and Trigger temporal operators (throttle, debounce, etc.):
+The distinction between Risk and temporal patterns often described as
+throttle/debounce/once/latch behavior in v0:
 
-- Trigger operators govern *when* events propagate (temporal semantics)
+- Trigger primitives govern *when* events propagate (temporal semantics)
 - Risk operators govern *whether* actions execute (acceptability of outcomes)
-- Trigger operators are blind to action content; Risk operators are not
+- Memoryful temporal behavior is expressed as composition, not as primitive trigger operators
+- Trigger primitives are blind to action content; Risk operators are not
 
 ### 4.2 Constraints, Guards, Policies
 
@@ -238,7 +242,7 @@ The following concepts are explicitly not primitives:
 - **State** — orthogonal property, not a causal role
 - **Time** — data/context, introduced via Source
 - **Event** — value type, not a role
-- **Intent** — authoring-time only
+- **Intent** — runtime-real effect metadata, but not a separate ontological primitive
 - **Belief / Uncertainty** — epistemic, not causal
 - **Environment** — interface, not mechanism
 - **Evaluation / Execution** — infrastructure, not a primitive

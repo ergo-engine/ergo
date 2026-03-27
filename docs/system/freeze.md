@@ -1,7 +1,7 @@
 ---
 Authority: FROZEN
 Version: v0
-Last Amended: 2026-03-16
+Last Amended: 2026-03-26
 Scope: What is frozen vs patchable, version boundaries
 Verified Against Tag: v1.0.0-alpha.1
 Change Rule: v1 only
@@ -94,11 +94,11 @@ Action input gating clarification (frozen):
 ### 2.5 Action Semantics
 
 - All nodes must pass validation before any action executes.
-- Actions execute sequentially in topological order inherited from their trigger dependencies.
-- If multiple actions are topologically independent, their relative execution order is undefined in v0.
-- If an action fails during execution:
-  - Subsequent actions in the same pass are aborted.
-  - Prior external effects are not reversible.
+- Actions execute sequentially in deterministic topological order inherited from their trigger dependencies.
+- If multiple actions are topologically independent, the current implementation tie-breaks them deterministically by validated node/runtime order.
+- Action outcome values such as `Rejected`, `Cancelled`, `Failed`, and `Skipped` are ordinary outputs; they do not themselves abort the pass.
+- If runtime execution itself fails during a pass, subsequent actions are not executed and the episode-local buffered effects are dropped before post-episode dispatch.
+- Post-episode host dispatch remains non-transactional; prior external effects are not automatically reversible.
 
 📍 Defined in: `execution.md`
 
@@ -151,9 +151,10 @@ Behaviors requiring memory (once, count, latch, debounce, edge detection) are
 ### 2.7 Determinism
 
 - Given identical inputs and identical declared node state, node outputs must be identical.
-- External nondeterminism is confined to the adapter vocabulary
-  boundary. Host dispatch and prod boundary channel realization operate
-  after the episode within the deterministic capture/replay contract.
+- External nondeterminism is confined to declared ingress payload boundaries
+  (adapter-shaped or adapter-independent external event payloads). Host
+  dispatch and prod boundary channel realization operate after the
+  episode within the deterministic capture/replay contract.
 
 📍 Defined in: `execution.md`, `adapter.md`
 

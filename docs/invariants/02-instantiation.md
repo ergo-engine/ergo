@@ -1,3 +1,12 @@
+---
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-03-26
+Owner: Documentation
+Scope: Instantiation-phase invariants for nested cluster usage
+Change Rule: Operational log
+---
+
 ## 2. Instantiation Phase
 
 **Scope:** When a cluster is placed in a parent context.

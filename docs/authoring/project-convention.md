@@ -13,7 +13,7 @@ This document explains the current v1 Ergo project model.
 
 The primary product surface is the Rust SDK. A production Ergo
 application is a Rust crate that depends on `ergo-sdk-rust`,
-registers custom primitives in-process, and runs named profiles from
+may register custom primitives in-process, and runs named profiles from
 either `ergo.toml` on disk or an SDK-owned in-memory project snapshot.
 
 The CLI remains a support tool for validation, replay, fixture runs,
@@ -84,7 +84,7 @@ Purpose of each area:
   User-owned application entrypoint that builds an Ergo engine through
   the SDK.
 - `src/implementations/`
-  Custom Source, Compute, Trigger, and Action implementations
+  Optional custom Source, Compute, Trigger, and Action implementations
   registered through `CatalogBuilder` / SDK builder.
 - `graphs/`
   Graph YAML entrypoints.
@@ -117,6 +117,8 @@ let ergo = Ergo::builder()
 
 let outcome = ergo.run_profile("live")?;
 ```
+
+Custom registration is optional. `CatalogBuilder` seeds the core primitive inventory by default, so projects can run with only stdlib primitives.
 
 The SDK now supports two truthful project sources behind that same
 profile-facing surface:
@@ -176,15 +178,16 @@ SDK callers may also define profiles programmatically through
 `InMemoryProjectSnapshot::builder(...)` and
 `InMemoryProfileConfig::{process, fixture_items}(...)`.
 
-Each profile resolves:
+Filesystem and in-memory profiles share the same product-facing operations, but
+their resolved shapes differ:
 
-- `graph`
-- `adapter`
-- exactly one ingress source:
-  - `fixture`, or
-  - `ingress` process command
-- optional `egress` config path
-- optional capture output override
+- Filesystem profiles resolve path-based fields from `ergo.toml`:
+  `graph`, implicit project `clusters/`, optional `adapter`, exactly one ingress source
+  (`fixture` or `ingress` process command), optional `egress`, and optional
+  `capture_output` / `pretty_capture`.
+- In-memory profiles resolve SDK-owned execution assets:
+  `PreparedGraphAssets`, `InMemoryIngress::{Process, FixtureItems}`, optional
+  `AdapterInput`, optional `EgressConfig`, and `ProfileCapture::{InMemory, File}`.
 
 For SDK in-memory profiles, the same profile-facing operations
 (`run_profile`, `validate_project`, `runner_for_profile`,

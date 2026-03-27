@@ -1,7 +1,7 @@
 ---
 Authority: FROZEN
 Version: v0
-Last Amended: 2026-03-04
+Last Amended: 2026-03-26
 Scope: Orchestration layer, episode semantics, replay
 Verified Against Tag: v1.0.0-alpha.1
 Change Rule: v1 only
@@ -27,7 +27,7 @@ This is a freeze-candidate specification. Treat it as law.
 The Execution Supervisor is a mechanical scheduler that:
 
 - Receives external events
-- Applies mechanical constraints (rate, concurrency, deadline)
+- Applies mechanical constraints (for example rate limits, invoke/retry policy, and attempt deadlines)
 - Invokes `runtime.run(graph_id, event_id, execution_context, deadline)` to execute episodes
 - Emits an append-only decision log
 
@@ -56,7 +56,9 @@ If the Supervisor requires domain knowledge to function, it has exceeded its man
 
 ### 2.1 Episode
 
-An **Episode** is one atomic invocation of the runtime:
+An **Episode** is one Supervisor-owned invoke decision for an external
+event, producing one final observed termination and one invoke
+DecisionLog entry:
 
 ```
 runtime.run(graph_id, event_id, execution_context, deadline) → RunTermination
@@ -64,14 +66,25 @@ runtime.run(graph_id, event_id, execution_context, deadline) → RunTermination
 
 Episode properties:
 
-- **Atomic in invocation**: One call, one termination, one log entry
+- **Atomic in Supervisor reasoning**: One invoke decision, one final
+  observed termination, one log entry
+- **Not atomic in runtime calls**: Mechanical retries may perform
+  multiple `runtime.run(...)` attempts before that final observed
+  termination
 - **Not atomic in outcome**: Partial action execution is permitted per `execution.md §7`
 - **Opaque to Supervisor**: The Supervisor does not inspect what happened inside
 
 The Episode is the unit of Supervisor reasoning. The Supervisor schedules, invokes, and observes
 termination of episodes. It does not decompose them.
 
-**Lifecycle Scope:** Supervisor lifecycle is orchestration-only: instantiate per graph, run episodes, discard. Triggers are stateless (TRG-STATE-1); they carry no state of any scope. Each episode begins with a fresh `RuntimeExecutionContext`. Cross-episode continuity is achieved exclusively via external writes (Actions) and reads (Sources). This is enforced by construction: all `ExternalEvent` factories in `ergo-adapter` create fresh `RuntimeExecutionContext`.
+**Lifecycle Scope:** Supervisor lifecycle is orchestration-only:
+instantiate per graph, run episodes, discard. Triggers are stateless
+(TRG-STATE-1); they carry no state of any scope. Each invoke attempt
+begins with a fresh `RuntimeExecutionContext`. Cross-episode
+continuity flows through externally supplied values on the next event,
+including the host-managed context store path (`set_context` → host
+merge → next `ExecutionContext`) as well as other environment-state
+observation paths used by Sources.
 
 ### 2.2 ExecutionContext
 
@@ -79,42 +92,51 @@ termination of episodes. It does not decompose them.
 
 ExecutionContext contains:
 
-- Adapter-provided external state snapshot (time, event payloads, environment reads)
-- Run metadata (trace_id, run_id)
+- Externally supplied values for the current attempt (for example event
+  payload fields and any host-merged context-store values)
 
 ExecutionContext does not contain:
 
 - Supervisor-derived state
+- Run metadata fields such as `trace_id` or `run_id`
 - Results of prior episodes
 - Accumulated history
 - Domain-specific signals
 
-> **Provenance rule:** The prohibition on "results of prior episodes" applies to
-> Supervisor-observed outcomes (RunTermination, decision records, ActionOutcomes)
-> being injected into context. Environment state that was modified by prior Actions
-> and obtained via adapter environment reads is permitted—that is the intended
-> cross-episode causality path described below.
+> **Provenance rule:** The prohibition on "results of prior episodes"
+> applies to Supervisor-observed outcomes (RunTermination, decision
+> records, ActionOutcomes) being injected into context. Environment or
+> host-context values that re-enter through the next external event /
+> payload merge are permitted; that is the intended cross-episode
+> causality path described below.
 
 If information from Episode N must influence Episode N+1, it must:
 
-1. Be written to an external store by Episode N's actions
-2. Be read by Episode N+1's Sources from that external store
+1. Be written to an external system or host-managed context store by
+   Episode N's actions
+2. Re-enter Episode N+1 through the next externally supplied payload /
+   context merge, where Sources can observe it
 
-Causality flows through the environment, not through context injection.
+Causality flows through the environment and host boundary state paths,
+not through Supervisor-injected context.
 
 ### 2.3 RunTermination
 
-**RunTermination** is the only information the Supervisor receives about episode completion.
+**RunTermination** is the only information the Supervisor receives
+about episode completion.
 
 ```
 RunTermination = Completed | TimedOut | Aborted | Failed(ErrKind)
 ```
 
-RunTermination is mechanical. It describes *how* the episode ended, not *what* it produced.
+RunTermination is mechanical. It describes *how* the episode ended, not
+*what* it produced. In current prod paths, elapsed-time deadline
+enforcement is minimal: `deadline == 0` aborts immediately, but there
+is no general wall-clock timeout/backoff subsystem in the Supervisor.
 
-The Supervisor does not receive **RunResult** (which contains ActionOutcomes and semantic
-payloads). RunResult is written to external sinks and is only accessible to subsequent
-episodes via Sources.
+The Supervisor does not receive **RunResult**. The host-facing
+`RunResult` surface contains final termination plus derived effects; it
+does not carry ActionOutcomes or generic semantic payloads.
 
 This boundary is load-bearing. It structurally prevents the Supervisor from being strategy-aware.
 
@@ -157,7 +179,8 @@ Each entry contains:
 - Applied deadline (if set)
 - RunTermination observed (for invoke decisions)
 - Retry count
-- Effects captured for replay/audit
+- No raw effect payloads; host later enriches capture records by
+  decision index after draining effects
 
 The DecisionLog enables:
 
@@ -175,15 +198,16 @@ variant is authoritative; `termination` is only valid for `Decision::Invoke`.
 
 ## 3. Invariants
 
-### CXT-1: ExecutionContext is adapter-only
+### CXT-1: ExecutionContext is externally supplied only
 
-ExecutionContext contains only adapter-provided external state and run metadata.
+ExecutionContext contains only externally supplied values for the
+current attempt.
 Supervisor-derived state in ExecutionContext is forbidden.
 
 | Aspect | Specification |
 |--------|---------------|
 | **Invariant** | ExecutionContext cannot contain Supervisor-derived or episode-derived data |
-| **Enforcement** | Type: private fields, constructor only accessible to adapter |
+| **Enforcement** | Supervisor has no API to inject prior outcomes; host builds context from incoming values and boundary-state merge |
 | **Violation** | Ontology breach: causality bypasses Source |
 
 ### SUP-1: Supervisor is graph-identity fixed
@@ -257,7 +281,8 @@ ErrKind variants must be interpretable without domain knowledge.
 
 ### SUP-6: Episode atomicity is invocation-scoped
 
-Episode atomicity means: one run() call, one RunTermination, one DecisionLog entry.
+Episode atomicity means: one invoke decision, one final RunTermination,
+one DecisionLog entry.
 
 | Aspect | Specification |
 |--------|---------------|
@@ -265,8 +290,10 @@ Episode atomicity means: one run() call, one RunTermination, one DecisionLog ent
 | **Enforcement** | Spec: inherits from execution.md §7 |
 | **Violation** | Expectation of outcome atomicity leads to incorrect compensation logic |
 
-Cancellation maps to `RunTermination::Aborted` and means "stop executing remaining actions."
-It does not mean "undo prior effects."
+Current prod uses `RunTermination::Aborted` for immediate mechanical
+abort paths such as `deadline == 0`. It does not implement general
+elapsed-time cancellation or rollback. Aborted means "stop executing
+remaining actions now," not "undo prior effects."
 
 ### SUP-7: DecisionLog is write-only
 
@@ -295,7 +322,8 @@ If `ErrKind::OrderRejected` exists, Supervisor can branch on it. This is policy.
 
 **Vector**: "Retry on failure" expands to "retry with adjusted parameters on rejection."
 
-Mechanical retry: bounded backoff on network timeout.
+Mechanical retry: bounded immediate retries on mechanical failure.
+Current prod does not implement backoff delays between attempts.
 Policy retry: "try again with smaller size if rejected."
 
 The latter requires semantic interpretation and is forbidden.
@@ -324,7 +352,7 @@ If Supervisor uses wall-clock time, randomness, or undocumented state, replay di
 
 "Pass running P&L to next episode" smuggles state into context.
 
-**Prevention**: CXT-1 (adapter-only) + type enforcement.
+**Prevention**: CXT-1 (externally supplied only) + type enforcement.
 
 ### 4.6 Intra-Episode Granularity Pressure
 
@@ -332,9 +360,11 @@ If Supervisor uses wall-clock time, randomness, or undocumented state, replay di
 
 This pressure pushes toward sub-episode callbacks or splitting episodes.
 
-**Response**: Cancellation is mechanical termination (Aborted). Time-based cancellation
-is a deadline constraint, not semantic logic. If finer control is needed, model it as
-multiple episodes with Source observation between them.
+**Response**: Immediate abort is mechanical termination. Current prod
+does not implement general elapsed-time cancellation/deadline
+enforcement, and finer control still belongs in multi-episode modeling
+with Source observation between episodes rather than intra-episode
+callbacks.
 
 ---
 
@@ -392,9 +422,9 @@ For clarity, the complete list of what the Supervisor may do:
 | Receive external events | ✅ | OnEvent handler |
 | Schedule episode at time T | ✅ | Timer/cron |
 | Rate-limit episodes | ✅ | max_per_window |
-| Limit concurrent episodes | ✅ | max_in_flight |
-| Enforce deadline per episode | ✅ | max_run_time → Aborted |
-| Retry on mechanical failure | ✅ | Bounded backoff on Err/Timeout |
+| Limit concurrent episodes | ⚠️ | bookkeeping exists (`max_in_flight`), but current supervisor is synchronous and does not execute multiple episodes simultaneously |
+| Enforce deadline per episode | ⚠️ | current prod only maps `deadline == 0` to immediate `Aborted`; no general elapsed-time deadline enforcement |
+| Retry on mechanical failure | ✅ | immediate bounded retries on mechanical failure; no backoff |
 | Invoke runtime.run() | ✅ | Core purpose |
 | Emit DecisionLog entry | ✅ | Mandatory |
 | Observe RunTermination | ✅ | Completion status only |
@@ -431,10 +461,10 @@ Anything not on this list is out of scope.
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Adapter  (FROZEN: adapter.md)                               │
-│  - Transport (HTTP, in-process, etc.)                       │
-│  - External state provision                                 │
-│  - Capture for replay                                       │
+│  Host Boundary + Adapter Contract  (current v1 architecture) │
+│  - Host owns ingress/egress orchestration and dispatch      │
+│  - Adapters declare event/effect/context/capture contracts  │
+│  - Boundary channels own real external transport/I/O        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -458,6 +488,7 @@ Changes require joint escalation per repository collaboration protocol (`.agents
 | v0.4 | 2025-12-27 | Claude Prime | Added lifecycle scope note (§2.1) — state is episode-scoped by construction |
 | v0.5 | 2026-01-11 | Claude (Structural Auditor) | Added provenance rule clarification (§2.2) — pins interpretation that "results of prior episodes" refers to Supervisor-injected outcomes, not adapter-provided environment state modified by prior Actions. Sebastian override authorization. |
 | v0.6 | 2026-03-04 | Claude (Structural Auditor) | §2.1 corrected: replaced "Trigger state is episode-scoped" with TRG-STATE-1-aligned language (triggers are stateless). Prior wording conflated ExecutionContext freshness with trigger state. Sebastian override authorization. |
+| v0.7 | 2026-03-26 | Codex (Docs) | Corrected current-prod retry/attempt semantics, context-store continuity path, DecisionLog/capture enrichment boundary, synchronous concurrency posture, and the host-vs-adapter boundary description. |
 
 ---
 

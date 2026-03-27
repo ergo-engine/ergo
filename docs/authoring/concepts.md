@@ -1,7 +1,7 @@
 ---
 Authority: STABLE
 Version: v0
-Last Updated: 2025-12-22
+Last Updated: 2026-03-26
 Scope: Cluster concepts, fractal composition, boundary kinds
 Change Rule: Additive only
 ---
@@ -144,31 +144,38 @@ Parameter exposure is an authoring-time construct only; expansion requires all p
 
 ## 6. Validation Timing
 
-Clusters are validated at three points:
+Current prod enforcement is split across multiple stages rather than a
+single authoring-time proof pass.
 
-### 6.1 Definition Time
+### 6.1 Loader / Decode Time
 
-When a cluster is saved:
+When graph text is decoded:
 
-- Internal graph is well-formed (DAG, wiring rules)
-- Boundary signature is inferred
-- Declared signature (if any) is compatible with inferred
-- All ports reference valid internal nodes/outputs
+- Graph text is parsed into `ClusterDefinition`
+- Format-level shorthand/default coercions are applied
+- Identifier constraints and declared external-input references are checked
 
 ### 6.2 Instantiation Time
 
 When a cluster is placed in a parent context:
 
-- Boundary kind is compatible with wiring context
 - Parameter bindings are complete (or explicitly re-exposed)
 - Version constraints are satisfied
+- Current prod does not directly validate parent/child wiring against
+  inferred `BoundaryKind` here; wiring legality is enforced later on
+  primitive edges after expansion
 
 ### 6.3 Expansion Time
 
 Before execution:
 
 - All clusters are recursively expanded to primitives
-- Full unified DAG is validated (cycles, types, all nodes present)
+- Parameter bindings, defaults, `derive_key`, and version selectors are resolved
+- Declared-signature wireability checks run when `declared_signature`
+  is present
+- Full unified DAG validation (cycles, wiring, types, primitive
+  existence, required inputs) happens on the expanded graph via
+  `runtime::validate()`
 - Global "validate all nodes before any action executes" check
 
 ---
@@ -179,13 +186,16 @@ Clusters are versioned artifacts.
 
 ### 7.1 Version Pinning
 
-By default, cluster instances reference a specific version:
+Cluster and implementation references use `id@selector` syntax, where
+the selector is either strict semver or a semver constraint:
 
 ```
 cluster_id@1.2.0
+cluster_id@^1.2
 ```
 
-Floating references (`@latest`, `@^1`) are opt-in and require explicit user choice.
+Selectors resolve to the highest satisfying available version.
+`@latest` is not a supported selector.
 
 ### 7.2 Breaking Change Detection
 
@@ -206,39 +216,41 @@ Before execution, all clusters must be expanded to primitives.
 expand(graph):
     for each node in graph:
         if node is ClusterInstance:
-            subgraph = load_cluster_definition(node.cluster_id, node.version)
-            subgraph = apply_parameter_bindings(subgraph, node.parameters)
-            subgraph = expand(subgraph)  # recursive
+            resolved_version = resolve_cluster_version(node.cluster_id, node.version)
+            subgraph = load_cluster_definition(node.cluster_id, resolved_version)
+            validate_parameter_bindings(subgraph, node.parameters)
+            resolved_params = build_resolved_params(subgraph, node.parameters)
+            subgraph = expand(subgraph, resolved_params)  # recursive
             graph = inline_subgraph(graph, node, subgraph)
     return graph
 ```
 
 ### 8.2 Node Identity
 
-After expansion, each primitive node has a unique identity derived from:
+After expansion, each primitive node carries two identities:
 
-- Original cluster path (for debugging/tracing)
-- Local node ID within the cluster
+- A deterministic sequential `runtime_id` used by the runtime
+- An `authoring_path` used for debugging/tracing
 
-This allows error messages and traces to reference the authoring structure, even though it no longer exists at runtime.
+This allows error messages and traces to reference the authoring
+structure, even though it no longer exists at runtime.
 
 ---
 
-## 9. Two-Phase Type Enforcement
+## 9. Current Type Enforcement
 
-Type enforcement operates at two levels:
+### 9.1 Current Prod Validation Path
 
-### 9.1 IR Validation (UI/Build Time)
+Current prod does not ship a separate UI/build-time IR validator that
+fully proves DAG, wiring, and type correctness for authored clusters.
+Instead, enforcement is split across:
 
-For user-authored clusters:
+- loader decode
+- `validate_cluster_definition()`
+- expansion
+- `runtime::validate()` on the expanded graph
 
-- Boundary kind compatibility checked against wiring matrix
-- Port type compatibility checked at each connection
-- Cycles, missing nodes, and invalid wiring rejected
-
-This validation is fast and provides immediate feedback.
-
-IR validation is the enforcement path. A compile-time Rust DSL
+That split is the real enforcement path today. A compile-time Rust DSL
 encoding boundary kinds as marker types is not implemented.
 
 ---

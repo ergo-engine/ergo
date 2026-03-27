@@ -1,3 +1,12 @@
+---
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-03-26
+Owner: Documentation
+Scope: Cross-phase invariants and shared execution guards
+Change Rule: Operational log
+---
+
 ## 0. Cross-Phase Invariants
 
 These invariants hold across all phases. Violation at any point is a system-level failure.

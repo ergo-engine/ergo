@@ -40,16 +40,17 @@ The term **"implementation"** refers to a concrete, executable unit within an on
 
 | Role | Example Implementations |
 |------|------------------------|
-| Source | `price_series`, `account_equity`, `timestamp` |
-| Compute | `add`, `multiply`, `sma`, `ema` |
-| Trigger | `gt`, `crossover`, `once`, `debounce` |
-| Action | `submit_order`, `cancel_order` |
+| Source | `number_source`, `boolean_source`, `context_number_source` |
+| Compute | `add`, `multiply`, `gt` |
+| Trigger | `emit_if_true`, `emit_if_event_and_true` |
+| Action | `ack_action`, `annotate_action`, `context_set_number` |
 
 **Usage:** "The `add` implementation." "Register a new Compute implementation."
 
 **Code symbol:** `ImplementationInstance` (not `PrimitiveInstance`)
 
-**Directory:** `src/compute/implementations/` (not `src/compute/primitives/`)
+**Directories:** `crates/kernel/runtime/src/{source,compute,trigger,action}/implementations/`
+(not `crates/kernel/runtime/src/*/primitives/`)
 
 ---
 
@@ -93,7 +94,7 @@ Clusters are the primary abstraction for modularity and reuse in the authoring l
 
 The term **"operator"** may be used interchangeably with **"implementation"** when emphasizing the algebraic or functional nature of a node.
 
-**Usage:** "The `add` operator." "Compute operators are pure functions."
+**Usage:** "The `add` operator." "Compute operators are deterministic, side-effect-free nodes."
 
 This term is optional. "Implementation" is preferred in technical documentation.
 
@@ -118,9 +119,9 @@ This term is optional. "Implementation" is preferred in technical documentation.
 | `PrimitiveInstance` | `ImplementationInstance` | Clarity |
 | `NodeKind::Primitive` | `NodeKind::Impl` | Clarity |
 | `primitive_id` | `impl_id` | Clarity |
-| `src/*/primitives/` | `src/*/implementations/` | Clarity |
+| `crates/kernel/runtime/src/*/primitives/` | `crates/kernel/runtime/src/*/implementations/` | Clarity |
 
-Migration of code symbols is tracked in invariants/INDEX.md.
+Migration of code symbols is documented in the cluster-spec changelog.
 
 ---
 

@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use crate::common::value::{PrimitiveKind, ValueType};
-use crate::common::{ErrorInfo, Phase};
+use crate::common::{doc_anchor_for_rule, ErrorInfo, Phase};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ValidationError {
@@ -112,28 +112,7 @@ impl ErrorInfo for ValidationError {
     }
 
     fn doc_anchor(&self) -> &'static str {
-        match self.rule_id() {
-            "CMP-1" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-1",
-            "CMP-2" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-2",
-            "CMP-3" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-3",
-            "CMP-4" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-4",
-            "CMP-5" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-5",
-            "CMP-6" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-6",
-            "CMP-7" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-7",
-            "CMP-8" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-8",
-            "CMP-9" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-9",
-            "CMP-10" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-10",
-            "CMP-11" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-11",
-            "CMP-13" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-13",
-            "CMP-14" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-14",
-            "CMP-15" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-15",
-            "CMP-16" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-16",
-            "CMP-17" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-17",
-            "CMP-18" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-18",
-            "CMP-19" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-19",
-            "CMP-20" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-20",
-            _ => "CANONICAL/PHASE_INVARIANTS.md",
-        }
+        doc_anchor_for_rule(self.rule_id())
     }
 
     fn summary(&self) -> Cow<'static, str> {
@@ -304,7 +283,7 @@ mod tests {
         assert_eq!(err.rule_id(), "CMP-15");
         assert_eq!(
             err.doc_anchor(),
-            "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-15"
+            "docs/primitives/compute.md#4-enforcement-mapping"
         );
         assert_eq!(err.path().as_deref(), Some("$.parameters[].type"));
         assert_eq!(
@@ -324,7 +303,7 @@ mod tests {
         assert_eq!(err.rule_id(), "CMP-19");
         assert_eq!(
             err.doc_anchor(),
-            "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-19"
+            "docs/primitives/compute.md#4-enforcement-mapping"
         );
         assert_eq!(err.path().as_deref(), Some("$.parameters[].default"));
         assert_eq!(
@@ -344,7 +323,7 @@ mod tests {
         assert_eq!(err.rule_id(), "CMP-20");
         assert_eq!(
             err.doc_anchor(),
-            "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-20"
+            "docs/primitives/compute.md#4-enforcement-mapping"
         );
         assert_eq!(err.path().as_deref(), Some("$.outputs[].type"));
         assert_eq!(

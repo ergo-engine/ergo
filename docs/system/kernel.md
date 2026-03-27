@@ -54,10 +54,10 @@ crates/
     clients/
       cli/            # Thin CLI adapter over loader + host
       sdk-rust/       # Rust SDK adapter over host
-      sdk-types/      # Shared SDK interface types
+      sdk-types/      # Standalone SDK transport/version types
   shared/
     test-support/     # Test utilities (dev-dependency only)
-    fixtures/         # Fixture data (dev-dependency only)
+    fixtures/         # Fixture parsing/reporting helpers shared with product tooling
 ```
 
 ### Boundary Rules
@@ -65,8 +65,8 @@ crates/
 | Rule | Constraint | Enforcement |
 |------|-----------|-------------|
 | LAYER-1 | Kernel crates must not depend on `prod/*` or `shared/*` at runtime | `tools/verify_layer_boundaries.sh` |
-| LAYER-2 | `RuleViolation` is kernel-owned; loader and clients must not define or return rule violations | `tools/verify_layer_boundaries.sh` |
-| LAYER-3 | Clients must not import loader/parser internals | `tools/verify_layer_boundaries.sh` |
+| LAYER-2 | `RuleViolation` is kernel-owned; loader must not define or return rule violations | `tools/verify_layer_boundaries.sh` |
+| LAYER-3 | Clients must not import loader/parser internals or bypass host orchestration boundaries | `tools/verify_layer_boundaries.sh` |
 | LAYER-DEV | `shared/*` is allowed in kernel `[dev-dependencies]` only | `tools/verify_layer_boundaries.sh` |
 
 ### Loader / Kernel Split
@@ -81,7 +81,7 @@ The catalog-access boundary (yaml-format.md §8.3) defines the loader/kernel div
 The host (`prod/core/host`) owns:
 
 - Adapter dependency scan, composition validation, and live egress/handler validation
-- Usecase API surface: `run_graph_from_paths`, `replay_graph_from_paths`, `validate_graph_from_paths`, `prepare_hosted_runner_from_paths`, `finalize_hosted_runner_capture` (canonical client entrypoints); `run_graph_from_assets`, `run_graph`, `replay_graph`, `run_fixture` (lower-level)
+- Usecase API surface: `run_graph_from_paths`, `replay_graph_from_paths`, `validate_run_graph_from_paths`, `prepare_hosted_runner_from_paths`, `finalize_hosted_runner_capture` (canonical path-backed client entrypoints); `validate_graph_from_paths`, `run_graph_from_assets`, `run_graph`, `replay_graph`, `run_fixture` (lower-level)
 - Canonical run ingress selection through host-owned `DriverConfig`
   (current implementation term for ingress-channel configuration);
   replay remains capture-driven and takes no live channel config
@@ -129,14 +129,18 @@ New semantics are allowed, but must be:
 
 ## Compatibility Posture
 
-- Backward compatibility is required only for explicitly versioned persisted formats (e.g., capture bundles).
-- Renames affecting persisted formats require a compatibility plan (serde alias + legacy test).
+- Compatibility is required only for explicitly versioned persisted formats on versions the runtime still declares support for.
+- Capture bundles are currently strict to `v3`; legacy shapes such as `adapter_version` are intentionally rejected rather than silently aliased.
+- Renames affecting a supported persisted format require a compatibility plan (for example, serde alias + legacy test).
 
 ---
 
 ## Reference Clients
 
-The reference client (`crates/reference-client`) has been removed from the workspace. Its invariant (UI-REF-CLIENT-1: UI authoring is non-canonical) is documented in invariants/08-replay.md. Future reference clients must follow the same rules:
+The old reference-client experiment is no longer part of the workspace.
+Its invariant (UI-REF-CLIENT-1: UI authoring is non-canonical) is
+documented in invariants/08-replay.md. Future reference clients must
+follow the same rules:
 
 - They must reflect contracts accurately
 - They must not define runtime semantics

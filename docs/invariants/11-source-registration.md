@@ -1,8 +1,17 @@
+---
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-03-26
+Owner: Documentation
+Scope: Source registration invariants
+Change Rule: Operational log
+---
+
 ## 11. Source Registration Phase
 
 **Scope:** When a source manifest is registered with the system.
 
-**Source:** EXTENSION_CONTRACTS_ROADMAP.md Phase 2, source.md (stable)
+**Source:** `docs/primitives/source.md`
 
 **Entry invariants:**
 
@@ -23,7 +32,7 @@
 | SRC-8 | State not allowed | source.md #SRC-8 | — | — | ✓ | src_8_source_has_state_rejected |
 | SRC-9 | Side effects not allowed | source.md #SRC-9 | — | — | ✓ | src_9_source_has_side_effects_rejected |
 | SRC-10 | Required context keys exist in adapter | source.md #SRC-10 | — | — | ✓ | src_10_missing_context_key_rejected |
-| SRC-11 | Required context types match adapter | source.md #SRC-11 | — | — | ✓ | src_11_context_type_mismatch_rejected |
+| SRC-11 | Provided context types match adapter | source.md #SRC-11 | — | — | ✓ | src_11_context_type_mismatch_rejected |
 | SRC-12 | Execution deterministic | source.md #SRC-12 | — | — | ✓ | src_12_non_deterministic_execution_rejected |
 | SRC-13 | Cadence is continuous | source.md #SRC-13 | — | — | ✓ | (structurally enforced) |
 | SRC-14 | ID unique in registry | source.md #SRC-14 | — | — | ✓ | src_14_duplicate_id_rejected |
@@ -36,7 +45,8 @@
 - **SRC-1 through SRC-9, SRC-12, SRC-14, SRC-15:** Registration-time manifest validation.
 - **SRC-16/SRC-17:** Registration-time cross-check for parameter-bound manifest names (`$key` convention). Ensures `$`-prefixed context requirement names reference declared String-typed parameters.
 - **SRC-13:** Structurally enforced — `Cadence` enum only has `Continuous` variant. Enforcement code at `registry.rs:77-78` will be exercised when cadence variants expand.
-- **SRC-10/SRC-11:** Composition-time validation. Same predicate and enforcement as COMP-1/COMP-2 (§10). Alias tests provide source-contract traceability.
+- **SRC-10:** Composition-time validation that required context keys exist.
+- **SRC-11:** Composition-time validation that any source-required key the adapter does provide matches type, including optional keys whose existence is allowed but not guaranteed. Alias tests provide source-contract traceability through COMP-2 (§10).
 - **Registration enforcement location:** `crates/kernel/runtime/src/source/registry.rs`
 - **Registration test location:** `crates/kernel/runtime/src/source/tests.rs`
 - **Composition enforcement location:** `crates/kernel/adapter/src/composition.rs` (invoked by `ergo_adapter::RuntimeHandle::run` after graph validation, before execution)

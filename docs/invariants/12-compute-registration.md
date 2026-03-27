@@ -1,8 +1,17 @@
+---
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-03-26
+Owner: Documentation
+Scope: Compute registration invariants
+Change Rule: Operational log
+---
+
 ## 12. Compute Registration Phase
 
 **Scope:** When a compute manifest is registered with the system.
 
-**Source:** EXTENSION_CONTRACTS_ROADMAP.md Phase 3, compute.md (stable)
+**Source:** `docs/primitives/compute.md`
 
 **Entry invariants:**
 

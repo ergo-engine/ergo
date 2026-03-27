@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use std::borrow::Cow;
 
-use crate::common::{ErrorInfo, Phase, Value, ValueType};
+use crate::common::{doc_anchor_for_rule, ErrorInfo, Phase, Value, ValueType};
 use crate::runtime::ExecutionContext;
 
 pub mod implementations;
@@ -176,24 +176,7 @@ impl ErrorInfo for SourceValidationError {
     }
 
     fn doc_anchor(&self) -> &'static str {
-        match self.rule_id() {
-            "SRC-1" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-1",
-            "SRC-2" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-2",
-            "SRC-3" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-3",
-            "SRC-4" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-4",
-            "SRC-5" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-5",
-            "SRC-6" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-6",
-            "SRC-7" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-7",
-            "SRC-8" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-8",
-            "SRC-9" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-9",
-            "SRC-12" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-12",
-            "SRC-13" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-13",
-            "SRC-14" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-14",
-            "SRC-15" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-15",
-            "SRC-16" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-16",
-            "SRC-17" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-17",
-            _ => "CANONICAL/PHASE_INVARIANTS.md",
-        }
+        doc_anchor_for_rule(self.rule_id())
     }
 
     fn summary(&self) -> Cow<'static, str> {

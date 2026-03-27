@@ -11,7 +11,9 @@ use ergo_runtime::action::{
     ParameterType as ActionParameterType, ParameterValue as ActionParameterValue,
 };
 use ergo_runtime::cluster::ParameterValue as ClusterParameterValue;
-use ergo_runtime::common::{ErrorInfo, Phase, PrimitiveKind, RuleViolation, Value, ValueType};
+use ergo_runtime::common::{
+    doc_anchor_for_rule, ErrorInfo, Phase, PrimitiveKind, RuleViolation, Value, ValueType,
+};
 use ergo_runtime::compute::{
     Cadence as ComputeCadence, Cardinality as ComputeCardinality, ComputePrimitiveManifest,
     ErrorType as ComputeErrorType, ExecutionSpec as ComputeExecutionSpec,
@@ -67,7 +69,7 @@ impl HostManifestError {
             Self::UnsupportedComposeTargetKind { kind } => HostRuleViolation {
                 rule_id: "COMP-1".to_string(),
                 phase: "composition".to_string(),
-                doc_anchor: "STABLE/PRIMITIVE_MANIFESTS/adapter.md#COMP-1".to_string(),
+                doc_anchor: doc_anchor_for_rule("COMP-1").to_string(),
                 summary: format!("unsupported manifest kind for composition: '{kind}'"),
                 path: Some("$.kind".to_string()),
                 fix: Some("Use a source or action manifest as the composition target".to_string()),
@@ -462,14 +464,7 @@ impl ErrorInfo for SourceParseError {
     }
 
     fn doc_anchor(&self) -> &'static str {
-        match self.rule_id() {
-            "SRC-3" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-3",
-            "SRC-4" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-4",
-            "SRC-7" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-7",
-            "SRC-13" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-13",
-            "SRC-15" => "STABLE/PRIMITIVE_MANIFESTS/source.md#SRC-15",
-            _ => "CANONICAL/PHASE_INVARIANTS.md",
-        }
+        doc_anchor_for_rule(self.rule_id())
     }
 
     fn summary(&self) -> Cow<'static, str> {
@@ -577,16 +572,7 @@ impl ErrorInfo for ComputeParseError {
     }
 
     fn doc_anchor(&self) -> &'static str {
-        match self.rule_id() {
-            "CMP-3" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-3",
-            "CMP-13" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-13",
-            "CMP-20" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-20",
-            "CMP-14" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-14",
-            "CMP-15" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-15",
-            "CMP-19" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-19",
-            "CMP-16" => "STABLE/PRIMITIVE_MANIFESTS/compute.md#CMP-16",
-            _ => "CANONICAL/PHASE_INVARIANTS.md",
-        }
+        doc_anchor_for_rule(self.rule_id())
     }
 
     fn summary(&self) -> Cow<'static, str> {
@@ -703,14 +689,7 @@ impl ErrorInfo for TriggerParseError {
     }
 
     fn doc_anchor(&self) -> &'static str {
-        match self.rule_id() {
-            "TRG-3" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-3",
-            "TRG-6" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-6",
-            "TRG-8" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-8",
-            "TRG-12" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-12",
-            "TRG-14" => "STABLE/PRIMITIVE_MANIFESTS/trigger.md#TRG-14",
-            _ => "CANONICAL/PHASE_INVARIANTS.md",
-        }
+        doc_anchor_for_rule(self.rule_id())
     }
 
     fn summary(&self) -> Cow<'static, str> {
@@ -813,14 +792,7 @@ impl ErrorInfo for ActionParseError {
     }
 
     fn doc_anchor(&self) -> &'static str {
-        match self.rule_id() {
-            "ACT-3" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-3",
-            "ACT-6" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-6",
-            "ACT-9" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-9",
-            "ACT-15" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-15",
-            "ACT-19" => "STABLE/PRIMITIVE_MANIFESTS/action.md#ACT-19",
-            _ => "CANONICAL/PHASE_INVARIANTS.md",
-        }
+        doc_anchor_for_rule(self.rule_id())
     }
 
     fn summary(&self) -> Cow<'static, str> {
@@ -881,7 +853,7 @@ fn parse_error_violation(message: String) -> RuleViolation {
     RuleViolation {
         rule_id: "INTERNAL",
         phase: Phase::Registration,
-        doc_anchor: "CANONICAL/PHASE_INVARIANTS.md",
+        doc_anchor: doc_anchor_for_rule("INTERNAL"),
         summary: Cow::Owned(message),
         path: None,
         fix: None,

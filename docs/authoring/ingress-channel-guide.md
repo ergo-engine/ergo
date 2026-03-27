@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-15
+Last Updated: 2026-03-26
 Owner: Codex (Implementation Assistant)
 Scope: Project-level guidance for host ingress channels
 Change Rule: Tracks implementation
@@ -81,9 +81,11 @@ pub struct HostedEvent {
   must match a declared `event_kinds[].name` in `adapter.yaml`. Omit it
   for non-adapter runs.
 - `payload`
-  Semantic payload object. It is optional, but when present it must be
-  a JSON object and must validate against the matching manifest
-  `payload_schema` after host context merge.
+  Semantic payload object. For adapter-bound process ingress it is
+  required and must be a JSON object that validates against the
+  matching manifest `payload_schema` after host context merge. Fixture
+  ingress may omit payload; the fixture path synthesizes `{}` when
+  needed.
 
 ### How `semantic_kind` And `payload` Connect To `adapter.yaml`
 
@@ -124,8 +126,8 @@ then host will:
 6. execute the graph through the canonical host step path
 
 If `semantic_kind` is missing for an adapter-bound run, or if the
-payload does not satisfy the schema after host context merge, host
-rejects the event before execution.
+adapter-bound payload is missing or does not satisfy the schema after
+host context merge, host rejects the event before execution.
 
 ## After Handoff: What Host Does
 
@@ -148,10 +150,12 @@ Ingress channels do not participate in any of those stages.
 The current canonical host surface accepts one ingress-channel config
 per run.
 
-This branch supports two ingress shapes in current code:
+This branch supports three ingress shapes in current code:
 
 - `DriverConfig::Fixture` — built-in reference ingress for deterministic
   testing and local runs
+- `DriverConfig::FixtureItems` — in-memory fixture ingress used by SDK
+  in-memory project paths
 - `DriverConfig::Process` — the public live ingress-channel model
 
 If you need multiple live sources, combine them upstream into one
@@ -203,8 +207,8 @@ Rules:
 
 - `command` is argv-based, not a shell string
 - host launches a direct child process
-- v0 lifecycle management covers that direct child process only; full
-  descendant process-tree containment is not part of this branch
+- on Unix, host-managed process ingress also uses a separate process
+  group, so stop/abort handling may target more than the direct child
 - `stdout` is the protocol channel
 - `stderr` is diagnostics only
 - `stdin` is unused in v0 for ingress; egress-channel protocol is not
@@ -270,9 +274,11 @@ first protocol observation / `hello`, and an internal
 observe the terminal process state. Those grace windows are host
 operational policy, not protocol law.
 
-The host reads one event at a time through the canonical step path, so
-ingress-channel backpressure is synchronous. If the host is busy stepping, the
-child may block on `stdout`. That is the v0 backpressure mechanism.
+Host still processes events one step at a time through the canonical
+step path, but `stdout` is drained by a dedicated reader thread into an
+internal channel. That means ingress backpressure is not strictly
+synchronous with host step latency; the child is not expected to block
+per event merely because host is currently stepping.
 
 Do not write extra protocol frames after `end`.
 Do not assume that non-zero exit after `end` is still completion; host

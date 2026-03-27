@@ -1,15 +1,22 @@
 ---
 Authority: STABLE
 Version: v1
-Last Updated: 2026-02-01
-Last Amended: 2026-02-01
+Last Updated: 2026-03-26
+Last Amended: 2026-03-26
 ---
 
 > **Amended 2026-02-01** by Claude (Structural Auditor)
 > Added `requires.context` schema (§2.7), validation rules table (§4), enforcement mapping (§4.2),
 > composition rules (§4.3). Removed `context` from output types (§2.2) — context access is via
 > `requires.context`. Added example source manifest with context requirements (§6).
-> Origin: Phase 2 (Source Contract) of EXTENSION_CONTRACTS_ROADMAP.md
+> Origin: historical Phase 2 of `docs/contracts/extension-roadmap.md`
+>
+> **Amended 2026-03-26** by Codex (Implementation Assistant)
+> Clarified current prod/runtime behavior: sources participate in
+> dependency-driven evaluation passes rather than a global tick phase,
+> optional context requirements suppress missing-key prechecks without
+> introducing a generic runtime default, and direct Source -> Action
+> payload wiring remains legal when a Trigger still provides the gate.
 
 # Source Primitive Manifest — v1
 
@@ -76,7 +83,7 @@ Rules:
 - Output types must be valid ValueType: `Number`, `Bool`, `String`, or `Series`
 - Output names must be unique
 - At least one output is required
-- Outputs must always be produced when evaluated
+- Source manifests declare the outputs a primitive is expected to produce; if an implementation omits one, downstream lookup or boundary export fails later
 
 ---
 
@@ -117,8 +124,8 @@ execution:
 
 Rules:
 
-- Sources are evaluated on every engine tick
-- Cadence is always continuous in v0
+- Sources participate in dependency-driven topological order within each evaluation pass
+- Cadence is an orchestration concern; current source manifest cadence is continuous in v0
 - Determinism is required
 
 ---
@@ -171,9 +178,9 @@ Rules:
 
 - `requires.context` declares what adapter-provided context keys this source needs
 - Keys with `required: true` must exist in the adapter's `context_keys` with matching type
-- Keys with `required: false` may be absent at runtime; the source uses a default value
-- Type must match adapter's declared type exactly (enforced at composition time via COMP-1/COMP-2)
-- At runtime, missing required keys produce `ExecError::MissingRequiredContextKey`; type mismatches produce `ExecError::ContextKeyTypeMismatch`
+- Keys with `required: false` may be absent at runtime; this suppresses missing-key prechecks, but the runtime does not inject a generic default value
+- Type must match adapter's declared type exactly when the key is provided (COMP-2 still applies to optional keys)
+- At runtime, missing required keys produce `ExecError::MissingRequiredContextKey`; execution-time type mismatch checks also apply only to required keys
 
 ---
 
@@ -183,7 +190,7 @@ Source primitives take no inputs.
 
 Hard rule:
 
-- No `inputs` section allowed
+- No functional inputs are allowed; current file-backed surfaces still accept an explicit empty `inputs: []`
 - No graph wiring into sources
 - All dependencies must be parameters or adapter context (via `requires.context`)
 
@@ -224,7 +231,7 @@ These rules are checked when a source is composed with an adapter.
 | Rule ID | Rule | Predicate |
 |---------|------|-----------|
 | SRC-10 | Required context keys exist in adapter | `source.requires.context.filter(required).keys ⊆ adapter.provides.context.keys` |
-| SRC-11 | Required context types match adapter | `∀ k where required: source.requires.context[k].ty == adapter.provides.context[k].ty` |
+| SRC-11 | Provided context types match adapter | `∀ k in source.requires.context where adapter provides k: source.requires.context[k].ty == adapter.provides.context[k].ty` |
 
 **Note:** SRC-10 and SRC-11 are enforced by the same composition function as COMP-1 and COMP-2 (see adapter.md §5). The predicates are identical; SRC-10/SRC-11 are the source contract's declaration of these requirements.
 
@@ -263,10 +270,10 @@ These rules are checked when a source is composed with an adapter.
 
 The orchestrator guarantees:
 
-- Source outputs are available before compute evaluation
-- Values are correctly typed
-- Data is aligned to the evaluation clock
-- Source execution is deterministic per tick
+- Source outputs are available before downstream consumers that depend on them
+- Source execution participates in dependency-driven topological order within each evaluation pass
+- Runtime applies the finite-number guard to source outputs, but missing outputs or undeclared type mismatches surface later when consumers or boundary outputs look them up
+- Source execution is deterministic per evaluation pass
 
 The orchestrator does not:
 
@@ -327,7 +334,9 @@ side_effects: false
 ```
 
 This source reads the context key named by parameter `key` (default `"x"`). Since
-`required: false`, the source uses a default value when the resolved key is absent.
+`required: false`, missing-key prechecks are skipped. The built-in
+`context_number_source` implementation falls back to its own default
+when the resolved key is absent.
 
 ### Source with bool context requirements
 
@@ -362,7 +371,9 @@ side_effects: false
 ```
 
 This source reads the context key named by parameter `key` (default `"x"`). Since
-`required: false`, missing keys and wrong-type values resolve to the source default
+`required: false`, missing-key prechecks are skipped. The built-in
+`context_bool_source` implementation falls back to its own default
+when the resolved key is absent
 (`false`).
 
 ### Source with string context requirements
@@ -398,7 +409,9 @@ side_effects: false
 ```
 
 This source reads the context key named by parameter `key` (default `"x"`). Since
-`required: false`, missing keys and wrong-type values resolve to the source default
+`required: false`, missing-key prechecks are skipped. The built-in
+`context_string_source` implementation falls back to its own default
+when the resolved key is absent
 (`""`).
 
 ### Source without context requirements
@@ -706,11 +719,11 @@ context_keys:
 
 ## 8. Composition Rule
 
-Sources start the graph.
+Sources originate payload values for the graph.
 
 - Source → Compute (COMP-4: output type must match input type)
 - Source → Trigger (via compute)
-- Source → Action (via compute + trigger)
+- Source → Action (payload inputs only; a Trigger still must satisfy the Action gate)
 
 Sources may not consume anything downstream.
 

@@ -1,8 +1,17 @@
+---
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-03-26
+Owner: Documentation
+Scope: Trigger registration invariants
+Change Rule: Operational log
+---
+
 ## 13. Trigger Registration Phase
 
 **Scope:** When a trigger manifest is registered with the system.
 
-**Source:** EXTENSION_CONTRACTS_ROADMAP.md Phase 4, trigger.md (stable)
+**Source:** `docs/primitives/trigger.md`
 
 **Entry invariants:**
 

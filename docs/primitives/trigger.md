@@ -1,13 +1,18 @@
 ---
 Authority: STABLE
 Version: v1
-Last Updated: 2026-02-02
-Last Amended: 2026-02-02
+Last Updated: 2026-03-26
+Last Amended: 2026-03-26
 ---
 
 > **Amended 2026-02-02** by Codex (Implementation Assistant)
 > Phase 4 (Trigger Contract) completion: schema updates, rule table, enforcement mapping,
 > composition rules, and examples.
+>
+> **Amended 2026-03-26** by Codex (Docs)
+> Corrected current prod manifest-surface defaults and clarified that
+> `execution.cadence` is parsed/stored but does not currently affect
+> runtime scheduling.
 
 # Trigger Primitive Manifest — v1
 
@@ -77,7 +82,8 @@ Rules:
 - At least one input is required
 - Input names must be unique
 - Input types must be `Number`, `Bool`, `Series`, or `Event` (no `String`)
-- Cardinality must be `single` (multiple is reserved)
+- Cardinality defaults to `single` on the current prod file-manifest
+  surface; explicit `multiple` remains invalid/reserved
 
 ---
 
@@ -113,6 +119,8 @@ Rules:
 - Parameters are static presets
 - Parameters must be serializable
 - No runtime mutation allowed
+- Parameters may be omitted entirely on the current prod file-manifest
+  surface; omitted `parameters` defaults to `[]`
 - If `default` is present, its type must match the declared parameter `type`
 
 ---
@@ -128,8 +136,9 @@ execution:
 Rules:
 
 - Determinism is required
-- `continuous` = evaluated every tick
-- `event` = evaluated only when upstream event occurs
+- `continuous` and `event` are parsed/stored manifest values
+- Current prod runtime still evaluates every node once per pass in
+  topological order; `cadence` does not currently alter scheduling
 
 ---
 
@@ -187,10 +196,10 @@ side_effects: false
 |---------|-------|---------------|-----------|
 | TRG-1 | Registration | `TriggerValidationError::InvalidId` | `trg_1_invalid_id_rejected` |
 | TRG-2 | Registration | `TriggerValidationError::InvalidVersion` | `trg_2_invalid_version_rejected` |
-| TRG-3 | Registration | Type (TriggerKind::Trigger only) | `trg_3_kind_trigger_accepted` |
+| TRG-3 | Registration | `TriggerParseError::WrongKind` (file-manifest surface) / `TriggerValidationError::WrongKind` (runtime registry) | `trg_3_kind_trigger_accepted` |
 | TRG-4 | Registration | `TriggerValidationError::NoInputsDeclared` | `trg_4_no_inputs_rejected` |
 | TRG-5 | Registration | `TriggerValidationError::DuplicateInput` | `trg_5_duplicate_input_rejected` |
-| TRG-6 | Registration | Type (TriggerValueType enum) | `trg_6_input_types_valid` |
+| TRG-6 | Registration | `TriggerParseError::InvalidInputType` (file-manifest surface) / type-backed validation in the runtime registry | `trg_6_input_types_valid` |
 | TRG-7 | Registration | `TriggerValidationError::TriggerWrongOutputCount` | `trg_7_wrong_output_count_rejected` |
 | TRG-8 | Registration | `TriggerValidationError::InvalidOutputType` | `trg_8_output_not_event_rejected` |
 | TRG-9 | Registration | `TriggerValidationError::StatefulTriggerNotAllowed` | `trg_9_trigger_has_state_rejected` |

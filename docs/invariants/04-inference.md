@@ -1,3 +1,12 @@
+---
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-03-26
+Owner: Documentation
+Scope: Inference-phase invariants for signature derivation
+Change Rule: Operational log
+---
+
 ## 4. Inference Phase
 
 **Scope:** Deriving signature from expanded graph.

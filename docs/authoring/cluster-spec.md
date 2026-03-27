@@ -1,7 +1,7 @@
 ---
 Authority: STABLE
-Version: v0.2
-Last Updated: 2025-12-22
+Version: v0.3
+Last Updated: 2026-03-26
 Scope: Data structures, inference algorithm, validation rules
 Change Rule: Additive only
 ---
@@ -10,6 +10,13 @@ Change Rule: Additive only
 
 ---
 
+> **Changelog (v0.3):** Accuracy corrections to match the current implementation surface.
+>
+> - `ParameterSpec.default` now documents `ParameterDefault`
+> - signature inference/declared-signature enforcement text now matches current runtime behavior
+> - expansion pseudocode now reflects version selector resolution and `derive_key` handling
+> - signature hashing is marked as design-only, not currently implemented
+>
 > **Changelog (v0.2):** Terminology alignment with terminology.md. No semantic changes.
 >
 > - `NodeKind::Primitive` → `NodeKind::Impl`
@@ -108,9 +115,13 @@ GraphInputPlaceholder {
 ParameterSpec {
     name: String,
     ty: ParameterType,
-    default: Option<ParameterValue>,
+    default: Option<ParameterDefault>,
     required: bool,
 }
+
+ParameterDefault =
+    | Literal(ParameterValue)
+    | DeriveKey { slot_name: String }
 
 ParameterBinding =
     | Literal { value: ParameterValue }
@@ -196,8 +207,12 @@ For each input port `p` in `B_in`:
 
 ```
 p.ty = p.maps_to.ty
-p.cardinality = inferred from usage or declared
+p.cardinality = Single
+p.wireable = false
 ```
+
+Current implementation hard-sets every inferred boundary input port to
+`Cardinality::Single` and `wireable: false`. Input cardinality is not inferred from usage today.
 
 ### Step 3: Infer Flags
 
@@ -248,29 +263,17 @@ Signature {
 
 ## 4. Declared Signature Verification
 
-If a cluster declares an explicit signature, it must be **compatible** with the inferred signature.
-
-Compatibility rules:
+Current implementation does not yet perform a full declared-signature compatibility check.
+Today it enforces one compatibility rule:
 
 ```
-declared.kind == inferred.kind
-
-declared.inputs ⊆ inferred.inputs  
-    (declared may omit optional inputs)
-
-declared.outputs ⊆ inferred.outputs  
-    (declared may expose fewer outputs)
-
-declared.has_side_effects == inferred.has_side_effects
-    (cannot hide side effects)
-
-declared.is_origin == inferred.is_origin
-    (cannot claim origin if it isn't)
+for every declared port:
+    declared.wireable must not exceed inferred.wireable
 ```
 
-A declared signature may not mark a port as wireable if the inferred port is non-wireable. Declarations constrain; they cannot grant capabilities.
-
-If declared signature is incompatible, the cluster definition is invalid.
+A declared signature may therefore restrict wireability, but it cannot grant it.
+Kind equality, input/output subset checks, `has_side_effects`, and `is_origin`
+remain design intent rather than current prod enforcement.
 
 ---
 
@@ -306,39 +309,37 @@ This matrix applies at every nesting level.
 
 ### 6.1 Definition-Time Validation
 
-When a cluster is saved, validate:
+Current prod validation is split across four stages:
 
-1. **Internal DAG structure**
-   - Cluster must contain at least one node
-   - No cycles
-   - All edges reference existing nodes and ports
-   - All edges satisfy wiring matrix (including nested cluster boundary kinds)
+1. **Loader decode**
+   - graph text is parsed
+   - shorthand edges, typed defaults, and version coercions are normalized
+   - identifier constraints and declared external-input references are checked
 
-2. **Port validity**
-   - Every output port references a valid internal node output
-   - Every input port has a unique name
-   - Every output port has a unique name
+2. **`validate_cluster_definition()`**
+   - duplicate input/output/parameter names are rejected
+   - parameter defaults are type-checked
+   - malformed `derive_key` defaults are rejected
 
-3. **Parameter validity**
-   - All parameters have valid types
-   - Defaults are type-compatible
-   - No duplicate parameter names
+3. **Expansion**
+   - empty clusters are rejected
+   - parameter bindings are validated
+   - version selectors are resolved
+   - boundary-output references are mapped
 
-4. **Signature inference succeeds**
-   - Algorithm completes without error
-   - If declared signature exists, compatibility check passes
-   - Declared wireable must not exceed inferred wireability (declared.wireable ⇒ inferred.wireable)
+4. **`runtime::validate()`**
+   - cycles, wiring legality, type checks, required-input checks, and catalog-backed primitive existence checks are enforced on the expanded graph
 
-5. **Context independence**
-   - Definition-time validation must not depend on parent context. A cluster is valid or invalid independent of where it is instantiated.
+Definition-time validation is therefore context-independent in intent, but it is not a single
+"save-time" pass that fully proves executable correctness before expansion/runtime validation.
 
 ### 6.2 Instantiation-Time Validation
 
 When a cluster is placed in a parent context, validate:
 
 1. **Wiring compatibility**
-   - Parent edge source's kind allows wiring to this cluster's kind
-   - Port types match at connection points
+   - Current prod enforcement happens after expansion on primitive edges and primitive kinds
+   - `BoundaryKind` is inferred/parsed, but parent/child wiring is not directly validated against cluster boundary kinds at instantiation time
 
 2. **Parameter completeness**
    - All required parameters are either bound or exposed
@@ -346,8 +347,8 @@ When a cluster is placed in a parent context, validate:
    - Exposed parameters exist in parent context
 
 3. **Version compatibility**
-   - Requested version exists
-   - Version constraints are satisfied
+   - Requested selectors must be valid strict semver or semver constraints
+   - Expansion resolves the highest satisfying available version
 
 ### 6.3 Expansion-Time Validation
 
@@ -408,7 +409,7 @@ the phase invariants in `docs/invariants/INDEX.md`.
 | E.4 | Authoring path preserved | `cluster.rs::expand_with_context` | Verified by tests; no error type |
 | E.5 | Empty clusters rejected | `cluster.rs::expand_with_context` | `ExpandError::EmptyCluster` |
 | E.6 | Definitions not mutated | Clone semantics | No runtime error |
-| E.7 | Boundary ports retained for inference only | `ExpandedGraph` doc contract | No runtime error |
+| E.7 | Expanded graph retains boundary ports and resolved parameters for later phases | `ExpandedGraph` / `ExpandedNode` data contract | No runtime error |
 | E.8 | Deterministic runtime IDs | `cluster.rs::expand_with_context` (sorted keys) | Verified by tests; no error type |
 | E.9 | Referenced nested clusters exist | `cluster.rs::expand_with_context` (`NodeKind::Cluster` load) | `ExpandError::MissingCluster` |
 
@@ -451,7 +452,7 @@ Behavior:
 ---
 
 **Action input split refinement (COMP-9):** `V.2` validation inspects destination Action input
-types to distinguish Trigger-gated `event` inputs from scalar payload inputs (`number|bool|string`)
+types to distinguish Trigger-gated `event` inputs from scalar payload inputs (`number|series|bool|string`)
 that may be wired from Source/Compute. Scalar payload inputs do not satisfy `V.5` trigger gating.
 
 ## 7. Expansion Algorithm
@@ -464,11 +465,20 @@ expand(cluster_def) -> ExpandedGraph:
     
     for node in cluster_def.nodes:
         if node.kind is Impl:
-            graph.add_implementation(node)
+            resolved_version = resolve_primitive_version(node.impl_id, node.version)
+            resolved_bindings = resolve_impl_parameters(...)
+            graph.add_implementation(
+                impl_id = node.impl_id,
+                requested_version = node.version,
+                version = resolved_version,
+                parameters = resolved_bindings,
+            )
         else if node.kind is Cluster:
-            nested_def = load_cluster(node.cluster_id, node.version)
-            nested_def = apply_bindings(nested_def, node.parameter_bindings)
-            nested_graph = expand(nested_def)  # Recursive
+            resolved_version = resolve_cluster_version(node.cluster_id, node.version)
+            nested_def = load_cluster(node.cluster_id, resolved_version)
+            validate_parameter_bindings(nested_def, node.parameter_bindings)
+            nested_params = build_resolved_params(...)  # includes defaults + derive_key
+            nested_graph = expand(nested_def, nested_params)  # Recursive
             graph.inline(node.id, nested_graph)
     
     for edge in cluster_def.edges:
@@ -486,6 +496,7 @@ ExpandedNode {
     runtime_id: UniqueId,
     authoring_path: List<(ClusterId, NodeId)>,
     implementation: ImplementationInstance,
+    parameters: Map<String, ParameterValue>,
 }
 ```
 
@@ -496,34 +507,34 @@ The `authoring_path` traces back through the cluster hierarchy.
 The expansion process may introduce internal representation types for
 implementation convenience.
 
-However, the **expanded graph is a structural artifact only**.
+However, the **expanded graph is still a pre-validation artifact**.
 
-The expansion output MUST contain only:
+The expansion output currently contains:
 
 - Graph topology (nodes and edges)
-- Implementation identity (`impl_id`, `version`)
+- Implementation identity (`impl_id`, requested selector, resolved version)
+- Resolved parameter values
+- Boundary inputs and boundary outputs
 - Authoring trace information (`authoring_path` or equivalent)
 
 The expansion output MUST NOT contain:
 
 - Resolved types or manifests
-- Side-effect semantics
 - Execution behavior
 - Validation results
 - Inferred properties (including BoundaryKind, wireability, or flags)
 - Any other semantic or behavioral information
 
-All semantics beyond identity are introduced strictly in later phases:
-signature inference, validation, and execution.
-
-Any expansion output that carries semantic information beyond identity
-is non-compliant with this specification.
+Signature inference, validation, and execution still happen in later phases. The expanded graph
+may carry the resolved parameters and retained boundary metadata those later phases need, but it
+does not cache validation outcomes or inferred cluster semantics.
 
 ---
 
-## 8. Signature Hash
+## 8. Signature Hash (Design-Only, Not Implemented)
 
-The signature hash enables breaking change detection.
+The scheme below documents a possible signature-hash design for future breaking-change detection.
+Current prod runtime/loader/host code does not compute or enforce it.
 
 ### 8.1 Hash Computation
 

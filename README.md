@@ -2,7 +2,7 @@
 
 Ergo is a deterministic graph execution engine built in Rust.
 
-It implements a four-primitive ontological model — **Source, Compute, Trigger, Action** — representing universal causal roles. Graphs are declarative YAML. Execution is deterministic: same inputs, same decisions, same outputs. Every run produces a capture artifact that can be replayed for audit, debugging, or verification.
+It implements a four-primitive ontological model — **Source, Compute, Trigger, Action** — representing universal causal roles. Graphs are authored declaratively in YAML or JSON. Execution is deterministic: same inputs, same decisions, same outputs. Ergo can produce replayable capture artifacts or bundles for audit, debugging, and verification.
 
 Ergo is industry-agnostic by design. The primitives and execution model are domain-free. Verticals are built as user-space projects using the extension surface: custom implementations, graphs, adapters, and boundary channels.
 
@@ -27,13 +27,13 @@ See the full walkthrough in [Getting Started with Ergo SDK](docs/authoring/getti
 
 ## What You Author
 
-Every Ergo project is a Rust crate. You write five things:
+Every Ergo project is a Rust crate. Depending on the profile, you may author up to five things:
 
 1. **Implementations** — Source, Compute, Trigger, and Action primitives in Rust
-2. **Graphs** — declarative YAML wiring nodes and edges
-3. **Adapters** — declarative contracts defining event kinds, context keys, and accepted effects
-4. **Ingress channels** — programs that bring external data into the engine
-5. **Egress channels** — programs that realize external effects (e.g., placing orders)
+2. **Graphs** — declarative YAML or JSON wiring nodes and edges
+3. **Adapters** — optional declarative contracts defining event kinds, context keys, and accepted effects
+4. **Ingress channels** — optional programs that bring external data into the engine
+5. **Egress channels** — optional programs that realize external effects (e.g., placing orders)
 
 The SDK (`ergo-sdk-rust`) is the primary product surface. The CLI is development tooling.
 
@@ -98,7 +98,7 @@ crates/
     clients/
       cli/            # ergo CLI (init, run, validate, replay)
       sdk-rust/       # Rust SDK — primary product surface
-      sdk-types/      # Shared type definitions
+      sdk-types/      # Standalone SDK transport/version types
   shared/
     fixtures/         # Test fixture utilities
     test-support/     # Test infrastructure
@@ -125,13 +125,14 @@ Documentation lives in `docs/` with a single-source rule: every fact has exactly
 
 ## Current State
 
-Ergo v1 is shipped. The engine, SDK, CLI, and scaffold are all live. The first vertical (EUR/USD moving-average crossover trading system) is built and running as a user-space project against the extension surface.
+Ergo v1 is shipped. The engine, SDK, CLI, and scaffold are all live.
 
 **Current limits:**
 
 - The SDK dependency is local-checkout based until the crate is published
 - One ingress channel per profile
-- The `Ergo` handle is one-shot (build a fresh value per operation)
+- The generated live sample ingress and egress channels require a local `python3`
+- The built `Ergo` handle is same-thread reusable across run, replay, validation, and manual-runner operations
 
 ## License
 

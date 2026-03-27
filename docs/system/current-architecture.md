@@ -49,14 +49,16 @@ In practice that means:
 
 - a production Ergo application is a Rust crate
 - user code registers custom primitives in-process
-- named profiles live in `ergo.toml`
+- filesystem named profiles live in `ergo.toml`, and the SDK also
+  supports named in-memory profiles
 - CLI remains supporting tooling for validation, replay, and explicit
   path-based runs
 
-The SDK crate itself is now delivered by `feat/sdk-rust`, and the
-engine architecture supports it cleanly through the host + loader
-library boundaries. `ergo init` now provides Rust-crate scaffolding
-and generated sample-project UX on top of that surface.
+The SDK crate itself now lives at
+`crates/prod/clients/sdk-rust`, and the engine architecture exposes it
+cleanly through the host + loader library boundaries. `ergo init`
+provides Rust-crate scaffolding and generated sample-project UX on top
+of that surface.
 
 ---
 

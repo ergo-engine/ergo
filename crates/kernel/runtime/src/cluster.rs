@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use crate::common::{ErrorInfo, Phase};
+use crate::common::{doc_anchor_for_rule, ErrorInfo, Phase};
 use semver::{Version as SemverVersion, VersionReq};
 
 pub type Version = String;
@@ -377,7 +377,7 @@ impl ErrorInfo for SignatureInferenceError {
     }
 
     fn doc_anchor(&self) -> &'static str {
-        "STABLE/CLUSTER_SPEC.md#D.4"
+        doc_anchor_for_rule(self.rule_id())
     }
 
     fn summary(&self) -> Cow<'static, str> {
@@ -420,7 +420,7 @@ impl ErrorInfo for ClusterValidationError {
     }
 
     fn doc_anchor(&self) -> &'static str {
-        "STABLE/CLUSTER_SPEC.md#D.11"
+        doc_anchor_for_rule(self.rule_id())
     }
 
     fn summary(&self) -> Cow<'static, str> {
@@ -472,23 +472,7 @@ impl ErrorInfo for ExpandError {
     }
 
     fn doc_anchor(&self) -> &'static str {
-        match self.rule_id() {
-            "D.1" => "STABLE/CLUSTER_SPEC.md#D.1",
-            "D.4" => "STABLE/CLUSTER_SPEC.md#D.4",
-            "D.5" => "STABLE/CLUSTER_SPEC.md#D.5",
-            "D.6" => "STABLE/CLUSTER_SPEC.md#D.6",
-            "D.8" => "STABLE/CLUSTER_SPEC.md#D.8",
-            "D.9" => "STABLE/CLUSTER_SPEC.md#D.9",
-            "D.10" => "STABLE/CLUSTER_SPEC.md#D.10",
-            "D.11" => "STABLE/CLUSTER_SPEC.md#D.11",
-            "I.3" => "STABLE/CLUSTER_SPEC.md#I.3",
-            "I.4" => "STABLE/CLUSTER_SPEC.md#I.4",
-            "I.5" => "STABLE/CLUSTER_SPEC.md#I.5",
-            "I.6" => "STABLE/CLUSTER_SPEC.md#I.6",
-            "I.7" => "STABLE/CLUSTER_SPEC.md#I.7",
-            "E.9" => "STABLE/CLUSTER_SPEC.md#E.9",
-            _ => "CANONICAL/PHASE_INVARIANTS.md",
-        }
+        doc_anchor_for_rule(self.rule_id())
     }
 
     fn summary(&self) -> Cow<'static, str> {

@@ -1,90 +1,68 @@
-# ergo-cli Placement Guide
+# ergo-cli
 
-This README defines the target CLI shape: thin adapter only.
+`ergo-cli` is the workspace CLI surface over host, loader, fixtures, and
+project scaffolding.
 
-If code is domain logic (validation rules, YAML parsing, composition policy, fixture semantics), it does **not** belong in `ergo-cli`.
+It owns:
 
-## Target Structure
+- command parsing and dispatch
+- scaffold/template generation for `ergo init`
+- CLI-only fixture, render, and conversion helpers
+- text and JSON output formatting
+
+It does not own:
+
+- runtime semantics
+- loader decode/discovery rules
+- adapter registration or composition policy
+- host run/replay orchestration truth
+
+Those remain owned by `ergo-runtime`, `ergo-loader`, `ergo-adapter`, and
+`ergo-host`.
+
+## Current Structure
 
 ```text
 ergo-cli/
   src/
-    main.rs
-    init_project.rs
+    main.rs                 # binary entrypoint
+    lib.rs                  # shared CLI test surface
     cli/
-      args.rs
-      dispatch.rs
+      args.rs               # option parsing helpers
+      dispatch.rs           # top-level command routing
+      handlers.rs           # CLI use-case glue
     output/
-      text.rs
-      json.rs
-      errors.rs
-    exit_codes.rs
+      text.rs               # human-readable output and help
+      json.rs               # machine-readable output
+      errors.rs             # stderr + exit mapping
+    init_project.rs         # scaffold generation/templates for `ergo init`
+    graph_yaml.rs           # explicit path-based graph run helpers
+    graph_to_dot.rs         # DOT rendering
+    render.rs               # SVG rendering via Graphviz
+    validate.rs             # manifest validation helpers
+    fixture_ops.rs          # fixture inspect/validate helpers
+    csv_fixture.rs          # CSV -> fixture conversion
+    gen_docs.rs             # generated docs wrapper
+    error_format.rs         # typed CLI error rendering
+    exit_codes.rs           # stable exit codes
 ```
 
-## What Goes Where
+## Placement Rules
 
-### `src/main.rs`
+- `main.rs` stays wiring-only: parse, dispatch, render, exit.
+- `cli/` owns command grammar and top-level routing, not semantic rules.
+- `init_project.rs` owns scaffold templates and init-time path checks.
+- `graph_yaml.rs`, `validate.rs`, `fixture_ops.rs`, and `render.rs` may call
+  host, loader, or fixtures use-cases, but they should not redefine product
+  policy.
+- `output/` and `error_format.rs` own presentation only.
 
-- Use for: app wiring/composition root only.
-- Register here: startup flow (`parse -> dispatch -> render -> exit`).
-- Do not put here: command/domain business logic.
+## Current CLI Notes
 
-### `src/init_project.rs`
-
-- Use for: project scaffold generation and template assembly for
-  `ergo init`.
-- Register here: generated file contents, scaffold directory layout,
-  and init-specific validation of target paths.
-- Current sample channel scripts target POSIX `sh`, and the generated
-  SDK dependency path stays local-checkout based until the SDK is
-  published.
-- Do not put here: runtime/host semantics or project-resolution logic
-  that belongs to SDK + loader.
-
-### `src/cli/args.rs`
-
-- Use for: CLI argument and flag definitions, parsing, `--help` text.
-- Register here: new command names, subcommands, flags, aliases.
-- Do not put here: runtime/adapter rules or filesystem/domain transforms.
-
-### `src/cli/dispatch.rs`
-
-- Use for: mapping parsed commands to application/use-case calls.
-- Register here: which use-case function each command invokes.
-- Do not put here: parsing manifests/graphs, fixture validation, policy checks.
-
-### `src/output/text.rs`
-
-- Use for: human-readable output formatting.
-- Register here: command success summaries and text reports.
-- Do not put here: domain decisions or validation branches.
-
-### `src/output/json.rs`
-
-- Use for: machine-readable output formatting (`--json`).
-- Register here: JSON response envelopes/shapes.
-- Do not put here: business logic or policy checks.
-
-### `src/output/errors.rs`
-
-- Use for: converting typed domain errors into CLI-facing messages.
-- Register here: error code/message templates and display shape.
-- Do not put here: new domain rules; only map existing domain errors.
-
-### `src/exit_codes.rs`
-
-- Use for: stable exit code definitions and error-to-exit-code mapping.
-- Register here: any new exit code constants.
-- Do not put here: message formatting or domain rule implementation.
-
-## Quick Placement Checks
-
-- "Does this parse command-line flags?" -> `src/cli/args.rs`
-- "Does this decide which use-case to call?" -> `src/cli/dispatch.rs`
-- "Does this generate the scaffolded Rust project files?" -> `src/init_project.rs`
-- "Does this call runtime/host/adapter APIs?" -> `src/cli/dispatch.rs`
-- "Does this format text output?" -> `src/output/text.rs`
-- "Does this format JSON output?" -> `src/output/json.rs`
-- "Does this map domain errors to CLI errors?" -> `src/output/errors.rs`
-- "Does this define process exit status?" -> `src/exit_codes.rs`
-- "Does this enforce domain semantics?" -> move to `runtime`/`adapter`/`ergo-host`, not CLI
+- The workspace binary uses `ergo help`; top-level `--help` is not a canonical
+  command.
+- `ergo init` generates Python 3 sample ingress/egress channels, not POSIX `sh`
+  scripts.
+- The generated sample app exposes `cargo run -- profiles` and
+  `cargo run -- doctor`; those are scaffolded app commands, not workspace
+  `ergo-cli` subcommands.

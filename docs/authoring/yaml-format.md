@@ -1,9 +1,18 @@
+---
+Authority: STABLE
+Version: v1
+Last Updated: 2026-03-26
+Owner: Documentation
+Scope: YAML graph authoring format and loader-facing decode contract
+Change Rule: Additive only
+---
+
 # YAML Graph Format — Specification
 
-**Status:** STABLE — implemented in `ergo-loader` decode/discovery; canonically consumed via `ergo-host` path APIs (`run_graph_from_paths`, `replay_graph_from_paths`, `validate_graph_from_paths`, `prepare_hosted_runner_from_paths`) with clients delegating
+**Status:** STABLE — implemented in `ergo-loader` decode/discovery; canonically consumed via `ergo-host` path APIs (`run_graph_from_paths`, `replay_graph_from_paths`, `validate_run_graph_from_paths`, `prepare_hosted_runner_from_paths`) with clients delegating
 **Scope:** How `ClusterDefinition` maps to YAML for hand-authoring and tooling
 **Litmus test:** Demo 1 graph (15 nodes, 16 edges, 4 boundary outputs)
-**Current CLI contract:** `ergo run <graph.yaml> (--fixture <events.jsonl> | --driver-cmd <program> [--driver-arg <value> ...]) [--adapter <adapter.yaml>] [--capture-output <path>] [--cluster-path <path> ...]` and `ergo fixture run <events.jsonl> [--capture-output <path>] [--pretty-capture]` (current flag names retain legacy `driver` terminology)
+**Current CLI contract:** `ergo run <graph.yaml> (-f|--fixture <events.jsonl> | --driver-cmd <program> [--driver-arg <value> ...]) [-a|--adapter <adapter.yaml>] [--egress-config <egress.toml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path|--search-path <path> ...]` and `ergo fixture run <events.jsonl> [-o|--capture|--capture-output <path>] [-p|--pretty-capture]` (current flag names retain legacy `driver` terminology)
 **Related ingress guidance:** [ingress-channel-guide](ingress-channel-guide.md) documents `HostedEvent`, process-channel protocol, and fixture/process authoring expectations.
 **Future work:** Workspace-level project discovery now exists through
 `ergo-loader` + `ergo-sdk-rust` and `ergo init` now scaffolds the
@@ -16,8 +25,8 @@ future extension.
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Node implementation reference | `impl: id@version` packed string | Concise, readable, mirrors `ImplementationInstance` |
-| Cluster node reference | `cluster: id@version` | Discriminator field determines `NodeKind::Impl` vs `NodeKind::Cluster` |
+| Node implementation reference | `impl: id@selector` packed string | Concise, readable, mirrors `ImplementationInstance`; selector may be strict semver or a semver constraint |
+| Cluster node reference | `cluster: id@selector` | Discriminator field determines `NodeKind::Impl` vs `NodeKind::Cluster`; selector may be strict semver or a semver constraint |
 | Parameter bindings | Inferred — scalar = literal, `{ exposed: name }` = exposed | Avoids wrapping every constant in `{ literal: ... }` |
 | Edge representation | String shorthand preferred, structured objects supported | `node.port -> node.port` is dramatically more scannable; both deser to same `Edge` |
 | Boundary outputs | Map style — `name: node.port` | Clean, reads like what it means |
@@ -146,25 +155,25 @@ Every graph file is a `ClusterDefinition`. A top-level executable graph is simpl
 ```yaml
 nodes:
   <node_id>:
-    impl: <impl_id>@<version>
+    impl: <impl_id>@<version_or_constraint>
     params:                    # Optional. Omit if no parameters.
       <param_name>: <value>    # Scalar = literal binding
       <param_name>: { exposed: <parent_param> }  # Exposed binding
 ```
 
-The `impl` field uses `id@version` packed format. Presence of `impl` determines `NodeKind::Impl`.
+The `impl` field uses `id@selector` packed format. The selector may be a strict semver (`1.2.3`) or a semver constraint (`^1.2`). Expansion resolves the highest satisfying available version and preserves both the requested selector and the resolved concrete version. Presence of `impl` determines `NodeKind::Impl`.
 
 ### 4.2 Cluster Reference Nodes
 
 ```yaml
 nodes:
   <node_id>:
-    cluster: <cluster_id>@<version>
+    cluster: <cluster_id>@<version_or_constraint>
     params:
       <param_name>: <value>
 ```
 
-Presence of `cluster` determines `NodeKind::Cluster`. A node must have exactly one of `impl` or `cluster`, never both.
+Presence of `cluster` determines `NodeKind::Cluster`. The selector may be a strict semver or a semver constraint; expansion resolves the highest satisfying discovered cluster version. A node must have exactly one of `impl` or `cluster`, never both.
 
 ### 4.3 Parameter Binding Inference
 
@@ -184,11 +193,14 @@ This means:
 
 You never write `{ literal: 4.0 }`. Scalars are always literals.
 
-### 4.4 String vs Enum Ambiguity
+### 4.4 String vs Enum Handling
 
-`ParameterValue` has both `String` and `Enum` variants, but both are plain strings in YAML. The parser resolves all YAML strings as `ParameterValue::String`. It has no way to distinguish String from Enum without catalog access.
+`ParameterValue` has both `String` and `Enum` variants, but both are plain strings in YAML. For untyped node parameter bindings, the loader resolves YAML strings as `ParameterValue::String` because it has no catalog access. For typed cluster parameter defaults, the loader can use the locally declared `ParameterType`, so `type: Enum` defaults are decoded as `ParameterValue::Enum`.
 
-**Future work:** A post-parse coercion step could use catalog metadata to convert `ParameterValue::String` to `ParameterValue::Enum` where the catalog declares an Enum parameter type. This does not exist today and is not required for the parser to produce a valid `ClusterDefinition`. Until implemented, Enum parameters must be handled by the expansion or validation layer, or by convention in the primitive implementation itself.
+This means decode is intentionally asymmetric:
+
+- untyped graph bindings stay stringly typed until later catalog-backed phases
+- typed cluster defaults can already materialize `Enum` values during decode
 
 ---
 
@@ -204,7 +216,7 @@ edges:
 
 Format: `<from_node>.<from_port> -> <to_node>.<to_port>`
 
-The parser splits on ` -> ` (with spaces) and `.` (first dot only, splitting into node and port).
+The parser splits on `->` with optional surrounding whitespace and `.` (first dot only, splitting into node and port).
 
 #### External Input References
 
@@ -217,13 +229,13 @@ edges:
 
 Format: `$<input_name> -> <to_node>.<to_port>`
 
-Maps to `ExpandedEndpoint::ExternalInput { name }` on the `from` side.
+At decode time, this becomes an `Edge` whose source is stored as an `OutputRef { node_id: name, port_name: name }` plus external-input bookkeeping. Expansion may materialize `ExpandedEndpoint::ExternalInput { name }`, and runtime validation rejects any surviving external-input endpoints before execution.
 
 **Validation rules for external input edges:**
 
 1. External inputs can only appear as edge sources, never as targets.
-2. Every `$name` in the edge list must match a declared `inputs[].name`. A `$` reference to an undeclared input is a parse error.
-3. After expansion, no `ExpandedEndpoint::ExternalInput` may survive in the final executable `ExpandedGraph`. The E.3 invariant enforces this — external inputs are resolved during expansion and must not reach the runtime.
+2. Every `$name` in the edge list must match a declared `inputs[].name`. A `$` reference to an undeclared input is a decode error.
+3. After expansion, no `ExpandedEndpoint::ExternalInput` may survive into runtime execution. Validation rejects any surviving external-input endpoints before the graph becomes executable.
 
 ### 5.2 Structured Format (for tooling / codegen)
 
@@ -295,7 +307,7 @@ Omit entirely for top-level graphs. Defaults to empty list.
 
 ## 7. Cluster File Resolution
 
-When a node references `cluster: pricing_engine@0.2.0`, the `ClusterLoader` must resolve it to a file.
+When a node references `cluster: pricing_engine@0.2.0` or `cluster: pricing_engine@^0.2`, the loader/discovery path must resolve candidate files and expansion must resolve the selector against the discovered versions.
 
 **Convention:** Cluster files live in the same directory as the parent graph file, or in a declared search path. Resolution order:
 
@@ -303,9 +315,13 @@ When a node references `cluster: pricing_engine@0.2.0`, the `ClusterLoader` must
 2. Named subdirectory: `./clusters/pricing_engine.yaml`
 3. Explicit search paths (if provided via CLI flag or config)
 
-File naming convention: `<cluster_id>.yaml`. Version matching is by content — the file's `version` field must match the referenced version.
+File naming convention: `<cluster_id>.yaml`. Each discovered file's `version` field must be strict semver. Exact selectors match that concrete version; constraint selectors resolve to the highest satisfying discovered version.
 
-If no file matches, expansion fails with `ExpandError::MissingCluster`.
+Path-backed failures can surface in more than one place:
+
+- discovery may fail with `LoaderError::Discovery(...)` before expansion if the cluster tree cannot be assembled
+- expansion fails with I.6 selector errors if the requested version selector is invalid or no discovered version satisfies it
+- exact version loads still surface `ExpandError::MissingCluster` when a resolved nested cluster cannot be loaded
 
 **Note:** This convention is sufficient for v0. A registry or package manager for clusters is a v1 concern.
 
@@ -323,28 +339,31 @@ Implementation: The Raw struct's version field should use a custom deserializer 
 
 ### 8.2 Identifier Constraints
 
-The `node.port` and `id@version` shorthand formats impose constraints on identifiers:
+The `node.port` and `id@selector` shorthand formats impose constraints on identifiers:
 
 | Character | Forbidden in |
 |-----------|-------------|
-| `.` (dot) | Node IDs, port names |
-| `@` (at) | Implementation IDs, cluster IDs |
-| `$` (dollar) | Node IDs (reserved for external input references in edges) |
+| `.` (dot) | General identifiers and port names |
+| `@` (at) | General identifiers |
+| `$` (dollar) | General identifiers that participate in graph identity or parameter/input naming; reserved for external-input edge shorthand |
+| `/` (slash) | General identifiers |
+| `\` (backslash) | General identifiers |
+| `:` (colon) | General identifiers |
 | ` ` (space) | All identifiers |
 
-**Rule:** The parser must validate all identifiers against these constraints and produce clear error messages on violation. These constraints are compatible with all existing identifiers in the codebase (alphanumeric + underscore).
+**Rule:** The loader validates node IDs, cluster IDs, implementation IDs, parameter/input names, and port names against these constraints and produces clear decode errors on violation. Port identifiers are narrower in practice: they reject `.` and spaces, while the general identifier rules additionally reject `@`, `/`, `\`, `:`, and, for most graph identifiers, `$`.
 
 ### 8.3 Parsing Strategy
 
-The parser operates without catalog access. It produces a `ClusterDefinition` from YAML alone. Type resolution, signature inference, and validation happen during `expand()` and `validate()`, which have catalog access.
+The parser operates without catalog access. It produces a `ClusterDefinition` from YAML alone. Signature inference and semantic validation happen later during cluster expansion and runtime validation.
 
 This means the parser cannot:
 
 - Validate that an `impl_id` exists in the catalog
-- Distinguish String vs Enum parameters
+- Distinguish String vs Enum for untyped node parameter bindings
 - Check port names against primitive manifests
 
-All of which is correct — those are expansion/validation concerns, not parsing concerns.
+Loader-facing failures surface as `LoaderError::{Io, Decode, Discovery}`. Those errors do not implement `ErrorInfo` or carry invariant IDs; rule-tagged semantic failures begin after the loader boundary.
 
 ---
 
@@ -374,7 +393,7 @@ The CLI already parses YAML manifests with these patterns, and the graph parser 
 - Lowercase type names in port specs: `number`, `event`, `bool`, `series`, `string`
 - Uppercase type names in parameter specs: `Number`, `Int`, `Bool`, `String`, `Enum`
 - `Raw*` bridge structs handle deserialization → domain conversion
-- Error types implement `ErrorInfo` with rule IDs, doc anchors, and fix suggestions
+- Loader decode/discovery errors stay on the `LoaderError::{Io, Decode, Discovery}` surface; later host/runtime semantic errors may implement `ErrorInfo`
 
 ---
 
@@ -389,7 +408,7 @@ ExpandedGraph          ← flat DAG, X.9 enforced
     ↓  (validate, with PrimitiveCatalog)
 ValidatedGraph         ← wiring matrix, types, action gating checked
     ↓  (execute, with Registries + ExecutionContext)
-ExecutionReport        ← boundary outputs + per-node trace
+ExecutionReport        ← boundary outputs + emitted effects
     ↓  (format)
 CLI output
 ```
