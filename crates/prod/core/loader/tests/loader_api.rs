@@ -118,6 +118,62 @@ edges: []
 }
 
 #[test]
+fn load_graph_assets_from_memory_missing_required_field_preserves_specific_decode_error() {
+    let err = load_graph_assets_from_memory(
+        "mem/root.yaml",
+        &[InMemorySourceInput {
+            source_id: "mem/root.yaml".to_string(),
+            source_label: "memory-root".to_string(),
+            content: r#"
+kind: cluster
+id: bad_root
+nodes: {}
+edges: []
+"#
+            .to_string(),
+        }],
+        &[],
+    )
+    .expect_err("missing version must error");
+
+    match err {
+        LoaderError::Decode(inner) => {
+            assert!(inner.message.contains("memory-root"));
+            assert!(inner.message.contains("missing field"));
+            assert!(inner.message.contains("version"));
+            assert!(!inner
+                .message
+                .contains("expected valid YAML or JSON authoring content"));
+        }
+        _ => panic!("expected decode error"),
+    }
+}
+
+#[test]
+fn load_graph_assets_from_memory_malformed_content_uses_generic_dual_format_error() {
+    let err = load_graph_assets_from_memory(
+        "mem/root.yaml",
+        &[InMemorySourceInput {
+            source_id: "mem/root.yaml".to_string(),
+            source_label: "memory-root".to_string(),
+            content: "not: [valid: yaml".to_string(),
+        }],
+        &[],
+    )
+    .expect_err("malformed content must error");
+
+    match err {
+        LoaderError::Decode(inner) => {
+            assert!(inner.message.contains("memory-root"));
+            assert!(inner
+                .message
+                .contains("expected valid YAML or JSON authoring content"));
+        }
+        _ => panic!("expected decode error"),
+    }
+}
+
+#[test]
 fn load_graph_sources_returns_cluster_definition_root() {
     let temp_root = make_temp_dir("bundle_root");
     let graph_path = temp_root.join("graph.yaml");

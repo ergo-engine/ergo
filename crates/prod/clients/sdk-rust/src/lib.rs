@@ -1359,6 +1359,17 @@ fn validate_in_memory_profile_config(
                 "process ingress command must not be empty",
             ));
         }
+        InMemoryIngress::Process { command }
+            if command
+                .first()
+                .map(|program| program.trim().is_empty())
+                .unwrap_or(false) =>
+        {
+            return Err(invalid_in_memory_profile(
+                profile_name,
+                "process ingress executable must not be empty",
+            ));
+        }
         _ => {}
     }
 
@@ -2339,6 +2350,30 @@ outputs:
         .expect_err("empty process ingress must fail");
 
         assert!(matches!(err, ProjectError::ConfigInvalid { .. }));
+    }
+
+    #[test]
+    fn in_memory_project_snapshot_rejects_blank_process_executable() {
+        let err = InMemoryProfileConfig::process(
+            load_memory_graph_assets("sdk_memory_blank_process_ingress"),
+            ["", "--flag"],
+        )
+        .expect_err("blank process executable must fail");
+
+        assert!(matches!(err, ProjectError::ConfigInvalid { .. }));
+        assert!(err.to_string().contains("executable must not be empty"));
+    }
+
+    #[test]
+    fn in_memory_project_snapshot_rejects_whitespace_process_executable() {
+        let err = InMemoryProfileConfig::process(
+            load_memory_graph_assets("sdk_memory_whitespace_process_ingress"),
+            ["   ", "--flag"],
+        )
+        .expect_err("whitespace-only process executable must fail");
+
+        assert!(matches!(err, ProjectError::ConfigInvalid { .. }));
+        assert!(err.to_string().contains("executable must not be empty"));
     }
 
     #[test]
