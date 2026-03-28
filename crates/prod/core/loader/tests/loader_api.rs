@@ -1,3 +1,24 @@
+//! loader_api integration tests
+//!
+//! Purpose:
+//! - Verify the public `ergo-loader` API surface from the outside of the crate.
+//! - Lock caller-visible decode, discovery, bundle, and prepared-asset behavior across filesystem
+//!   and in-memory entrypoints.
+//!
+//! Owns:
+//! - Integration coverage for public loader contracts, error surfaces, compatibility re-exports,
+//!   and cross-format decode parity.
+//!
+//! Does not own:
+//! - Private discovery traversal behavior; that stays in `src/discovery/tests.rs`.
+//! - Host/runtime semantic validation or kernel invariants beyond the loader boundary.
+//!
+//! Safety notes:
+//! - Tests here should describe stable public loader behavior and error wording rather than
+//!   private implementation details.
+//! - In-memory entrypoint coverage should keep the three public entrypoints aligned on the same
+//!   validation and discovery contract.
+
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
