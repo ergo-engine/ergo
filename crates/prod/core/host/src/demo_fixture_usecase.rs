@@ -1,3 +1,29 @@
+//! demo_fixture_usecase
+//!
+//! Purpose:
+//! - Provide a small host-owned convenience wrapper that runs the built-in
+//!   `demo_1` graph against a fixture file and emits a capture artifact through the
+//!   host fixture utility path.
+//!
+//! Owns:
+//! - Building the built-in demo graph/runtime surfaces used by the CLI fixture demo
+//!   flow.
+//! - Default capture-path fallback for that demo fixture path.
+//!
+//! Does not own:
+//! - Canonical host run/replay/validation entrypoints.
+//! - Fixture parsing semantics or generic fixture execution behavior; those live in
+//!   adapter/kernel helpers and `usecases::run_fixture(...)`.
+//!
+//! Connects to:
+//! - CLI fixture/demo commands that want the built-in graph instead of a user graph.
+//! - `usecases::run_fixture(...)`, which performs the actual host fixture execution.
+//!
+//! Safety notes:
+//! - This is a demo convenience path, not a canonical host API surface.
+//! - `DEMO_GRAPH_ID` must stay aligned with the built-in `demo_1` graph identity and
+//!   related demo-fixture helpers elsewhere in the workspace.
+
 use std::path::PathBuf;
 use std::sync::Arc;
 

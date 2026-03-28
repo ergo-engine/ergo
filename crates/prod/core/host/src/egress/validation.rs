@@ -1,3 +1,35 @@
+//! egress::validation
+//!
+//! Purpose:
+//! - Validate host-owned egress routing configuration against adapter acceptance,
+//!   graph-emittable effect kinds, and handler ownership before live run setup
+//!   proceeds.
+//!
+//! Owns:
+//! - Route-to-channel existence checks within `EgressConfig`.
+//! - Rejection when a routed kind is not accepted by the adapter contract.
+//! - Delegation to host ownership coverage checks for graph-emittable kinds the
+//!   adapter accepts so each one is owned by either a handler or an egress route.
+//! - Warnings for configured routes that the current graph cannot emit.
+//!
+//! Does not own:
+//! - Parsing or provenance for `EgressConfig`.
+//! - Egress process startup/runtime protocol checks.
+//! - Adapter semantics beyond consuming the already-materialized `AdapterProvides`
+//!   acceptance surface.
+//!
+//! Connects to:
+//! - `runner::validate_hosted_runner_configuration(...)`, which uses this module as
+//!   the canonical live-egress validation seam.
+//! - `ergo_adapter::host::ensure_handler_coverage(...)` for HST-5 ownership checks.
+//!
+//! Safety notes:
+//! - Warning order is deterministic because `EgressConfig.routes` is a `BTreeMap`.
+//! - Coverage still includes handler-owned kinds such as `set_context`; routing one
+//!   of those kinds through egress conflicts with host-owned handler coverage.
+//! - Non-emittable routes are warnings, not errors; they describe dead config for
+//!   the current graph but do not prevent live setup.
+
 use std::collections::{BTreeSet, HashSet};
 
 use ergo_adapter::host::{ensure_handler_coverage, HandlerCoverageError};
@@ -110,143 +142,4 @@ pub fn validate_egress_config(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::egress::{EgressChannelConfig, EgressRoute};
-    use ergo_adapter::host::HandlerCoverageError;
-    use ergo_adapter::ContextKeyProvision;
-    use std::collections::{BTreeMap, HashMap};
-    use std::time::Duration;
-
-    fn adapter_with_effects(effects: &[&str]) -> AdapterProvides {
-        AdapterProvides {
-            context: HashMap::from([(
-                "k".to_string(),
-                ContextKeyProvision {
-                    ty: "String".to_string(),
-                    required: false,
-                    writable: true,
-                },
-            )]),
-            events: HashSet::new(),
-            effects: effects.iter().map(|item| item.to_string()).collect(),
-            effect_schemas: HashMap::new(),
-            event_schemas: HashMap::new(),
-            capture_format_version: "v2".to_string(),
-            adapter_fingerprint: "adapter:test".to_string(),
-        }
-    }
-
-    fn baseline_config() -> EgressConfig {
-        EgressConfig {
-            default_ack_timeout: Duration::from_secs(5),
-            channels: BTreeMap::from([(
-                "broker".to_string(),
-                EgressChannelConfig::Process {
-                    command: vec!["sh".to_string(), "-c".to_string(), "echo ready".to_string()],
-                },
-            )]),
-            routes: BTreeMap::from([(
-                "place_order".to_string(),
-                EgressRoute {
-                    channel: "broker".to_string(),
-                    ack_timeout: None,
-                },
-            )]),
-        }
-    }
-
-    #[test]
-    fn valid_config_passes() {
-        let config = baseline_config();
-        let adapter = adapter_with_effects(&["place_order"]);
-        let emittable = HashSet::from(["place_order".to_string()]);
-        let handlers = BTreeSet::new();
-
-        let warnings = validate_egress_config(&config, &adapter, &emittable, &handlers)
-            .expect("config should be valid");
-        assert!(warnings.is_empty());
-    }
-
-    #[test]
-    fn missing_channel_fails() {
-        let mut config = baseline_config();
-        config.routes.get_mut("place_order").expect("route").channel = "missing".to_string();
-        let adapter = adapter_with_effects(&["place_order"]);
-        let emittable = HashSet::from(["place_order".to_string()]);
-        let handlers = BTreeSet::new();
-
-        let err = validate_egress_config(&config, &adapter, &emittable, &handlers)
-            .expect_err("missing channel must fail");
-        assert!(matches!(
-            err,
-            EgressValidationError::RouteReferencesMissingChannel { .. }
-        ));
-    }
-
-    #[test]
-    fn non_accepted_kind_fails() {
-        let config = baseline_config();
-        let adapter = adapter_with_effects(&["set_context"]);
-        let emittable = HashSet::from(["place_order".to_string()]);
-        let handlers = BTreeSet::new();
-
-        let err = validate_egress_config(&config, &adapter, &emittable, &handlers)
-            .expect_err("non-accepted kind must fail");
-        assert!(matches!(
-            err,
-            EgressValidationError::RoutedKindNotAcceptedByAdapter { .. }
-        ));
-    }
-
-    #[test]
-    fn missing_route_for_emittable_kind_fails_via_coverage() {
-        let config = EgressConfig {
-            default_ack_timeout: Duration::from_secs(5),
-            channels: BTreeMap::new(),
-            routes: BTreeMap::new(),
-        };
-        let adapter = adapter_with_effects(&["place_order"]);
-        let emittable = HashSet::from(["place_order".to_string()]);
-        let handlers = BTreeSet::new();
-
-        let err = validate_egress_config(&config, &adapter, &emittable, &handlers)
-            .expect_err("coverage should fail");
-        assert!(matches!(
-            err,
-            EgressValidationError::Coverage(HandlerCoverageError::MissingHandler { .. })
-        ));
-    }
-
-    #[test]
-    fn non_emittable_route_yields_warning() {
-        let config = baseline_config();
-        let adapter = adapter_with_effects(&["place_order"]);
-        let emittable = HashSet::new();
-        let handlers = BTreeSet::new();
-
-        let warnings = validate_egress_config(&config, &adapter, &emittable, &handlers)
-            .expect("non-emittable route should be warning");
-        assert_eq!(
-            warnings,
-            vec![EgressValidationWarning::RouteForNonEmittableKind {
-                intent_kind: "place_order".to_string(),
-            }]
-        );
-    }
-
-    #[test]
-    fn handler_and_egress_conflict_fails() {
-        let config = baseline_config();
-        let adapter = adapter_with_effects(&["place_order"]);
-        let emittable = HashSet::from(["place_order".to_string()]);
-        let handlers = BTreeSet::from(["place_order".to_string()]);
-
-        let err = validate_egress_config(&config, &adapter, &emittable, &handlers)
-            .expect_err("conflict should fail");
-        assert!(matches!(
-            err,
-            EgressValidationError::Coverage(HandlerCoverageError::ConflictingCoverage { .. })
-        ));
-    }
-}
+mod tests;

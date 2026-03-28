@@ -1,3 +1,41 @@
+//! error
+//!
+//! Purpose:
+//! - Define the host-owned step-boundary error surface used by `HostedRunner`,
+//!   replay, and embedded/manual-runner callers.
+//!
+//! Owns:
+//! - The public `HostedStepError` taxonomy for step-time validation, lifecycle,
+//!   effect-application, and egress failures.
+//! - The public `EgressDispatchFailure` taxonomy for in-run egress dispatch
+//!   failures that later map to interruption reasons.
+//! - Conversion bridges from lower-level adapter and egress errors into the
+//!   host step boundary.
+//!
+//! Does not own:
+//! - Top-level run/replay error shaping such as `HostRunError` or replay
+//!   descriptor rendering.
+//! - The underlying semantics of `EgressValidationError` or `EgressProcessError`.
+//!
+//! Connects to:
+//! - `runner.rs`, which is the dominant producer of `HostedStepError`.
+//! - `usecases.rs`, which maps `EgressDispatchFailure` into `InterruptionReason`.
+//! - `sdk-rust`, which re-exports these types and pattern-matches specific
+//!   variants as part of its manual-runner state machine.
+//!
+//! Safety notes:
+//! - `EgressDispatchFailure` is fully typed and intentionally mirrors the decided
+//!   in-run egress dispatch taxonomy.
+//! - `HostedStepError` mixes typed wrappers (`EffectApply`, `HandlerCoverage`,
+//!   `EgressDispatchFailure`) with string buckets (`BindingError`,
+//!   `EventBuildError`, `EgressValidation`, `EgressLifecycle`).
+//! - Those string buckets are not produced only by the `From` impls below:
+//!   `runner.rs` also constructs `EgressValidation(String)` directly for runner
+//!   precondition failures and constructs `EgressLifecycle(String)` by
+//!   destructuring `EgressProcessError` and adding host-owned channel context.
+//! - Variant names and field shapes are live public API because `ergo-host` and
+//!   `sdk-rust` both re-export them and downstream code pattern-matches them.
+
 use ergo_adapter::host::{EffectApplyError, HandlerCoverageError};
 
 use crate::egress::{EgressProcessError, EgressValidationError};
@@ -35,6 +73,8 @@ impl std::fmt::Display for EgressDispatchFailure {
         }
     }
 }
+
+impl std::error::Error for EgressDispatchFailure {}
 
 #[derive(Debug)]
 pub enum HostedStepError {
@@ -93,7 +133,16 @@ impl std::fmt::Display for HostedStepError {
     }
 }
 
-impl std::error::Error for HostedStepError {}
+impl std::error::Error for HostedStepError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::EffectApply(err) => Some(err),
+            Self::HandlerCoverage(err) => Some(err),
+            Self::EgressDispatchFailure(err) => Some(err),
+            _ => None,
+        }
+    }
+}
 
 impl From<EffectApplyError> for HostedStepError {
     fn from(value: EffectApplyError) -> Self {
@@ -118,3 +167,6 @@ impl From<EgressProcessError> for HostedStepError {
         Self::EgressLifecycle(value.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests;
