@@ -299,6 +299,56 @@ When debt is found, either:
 - record the risk clearly in the review output and explain why it is not
   being fixed in this pass
 
+### G. Research downstream imports and breakage before refactoring
+
+Before moving code, splitting modules, renaming types/functions, or
+changing visibility, do a concrete downstream usage audit first.
+
+This is a hard requirement. Do not refactor first and "see what breaks"
+afterward.
+
+For every candidate move or API-shape change, explicitly determine:
+
+- which files import or reference the item today
+- which crates depend on the current path, visibility, or module shape
+- whether the item is part of a public or cross-crate surface
+- whether tests, docs, fixtures, or serialized names rely on the current
+  spelling or location
+- whether the proposed refactor preserves those paths through
+  re-exports, or would require downstream edits
+
+Minimum required audit steps:
+
+- search the workspace for downstream imports and symbol references
+  before editing
+- identify whether callers are same-file, same-module, same-crate, or
+  cross-crate
+- list the exact paths that must remain stable unless an explicit API
+  change is approved
+- prefer preserving existing public paths through re-exports rather than
+  forcing broad call-site churn
+- escalate before proceeding if the refactor appears to require a public
+  API move, a semantic rename, or a broad compatibility sweep
+
+Required default posture:
+
+- preserve public import paths unless there is a stronger architectural
+  reason not to
+- preserve visibility contracts unless tightening them is clearly safe
+  and all downstream usage has been checked
+- do not move kernel-owned seams into prod just because the code would
+  "look cleaner"
+- do not rely on compiler errors alone as the dependency audit
+
+When presenting a refactor proposal, state all of the following
+concretely:
+
+- what is moving
+- what is not moving
+- which downstream imports were checked
+- whether existing paths will stay valid
+- what verification will prove the refactor did not break dependents
+
 ---
 
 ## 5. What "Safe" Means Here
@@ -371,6 +421,8 @@ After hardening a file:
 
 - run the most relevant tests for the touched crate/module
 - run broader verification when the change affects boundaries or shared behavior
+- when code moved or public paths were involved, run focused verification
+  for each downstream crate or module that imports the moved surface
 - confirm moved tests still execute from their new location
 - confirm docs/comments still match actual behavior
 
@@ -414,6 +466,7 @@ When reporting work on a file, cover:
 - larger-shape clarification added
 - enforcement boundaries clarified
 - technical debt found
+- downstream imports checked and whether public paths changed
 - verification run
 
 Concise is good. Vague is not.
