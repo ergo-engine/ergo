@@ -272,6 +272,54 @@ edges: []
 }
 
 #[test]
+fn decode_graph_yaml_rejects_dollar_in_cluster_reference_id() {
+    let err = decode_graph_yaml(
+        r#"
+kind: cluster
+id: root_graph
+version: "1.0.0"
+nodes:
+  nested:
+    cluster: foo$bar@1.0.0
+edges: []
+"#,
+    )
+    .expect_err("dollar in cluster reference id must error");
+
+    match err {
+        LoaderError::Decode(inner) => {
+            assert!(inner.message.contains("cluster id must not contain '$'"));
+        }
+        _ => panic!("expected decode error"),
+    }
+}
+
+#[test]
+fn decode_graph_json_rejects_dollar_in_impl_reference_id() {
+    let err = decode_graph_json(
+        r#"{
+  "kind": "cluster",
+  "id": "json_root",
+  "version": "1.0.0",
+  "nodes": {
+    "worker": {
+      "impl": "foo$bar@1.0.0"
+    }
+  },
+  "edges": []
+}"#,
+    )
+    .expect_err("dollar in impl reference id must error");
+
+    match err {
+        LoaderError::Decode(inner) => {
+            assert!(inner.message.contains("impl id must not contain '$'"));
+        }
+        _ => panic!("expected decode error"),
+    }
+}
+
+#[test]
 fn decode_graph_yaml_accepts_special_characters_in_internal_node_port_references() {
     let graph = decode_graph_yaml(
         r#"
@@ -286,16 +334,68 @@ nodes:
 edges:
   - from:
       node: producer
-      port: foo@bar
+      port: foo$bar@baz
     to:
       node: consumer
-      port: in@bar
+      port: in$bar@baz
 "#,
     )
     .expect("internal node.port reference segments should keep the narrower parser rule");
 
-    assert_eq!(graph.edges[0].from.port_name, "foo@bar");
-    assert_eq!(graph.edges[0].to.port_name, "in@bar");
+    assert_eq!(graph.edges[0].from.port_name, "foo$bar@baz");
+    assert_eq!(graph.edges[0].to.port_name, "in$bar@baz");
+}
+
+#[test]
+fn decode_graph_yaml_external_input_shorthand_keeps_leading_dollar_only() {
+    let graph = decode_graph_yaml(
+        r#"
+kind: cluster
+id: external_inputs
+version: "1.0.0"
+nodes:
+  consumer:
+    impl: consume@1.0.0
+edges:
+  - $threshold -> consumer.input
+inputs:
+  - name: threshold
+    type: number
+"#,
+    )
+    .expect("leading external-input shorthand dollar should remain valid");
+
+    assert_eq!(graph.edges[0].from.node_id, "threshold");
+    assert_eq!(graph.edges[0].from.port_name, "threshold");
+}
+
+#[test]
+fn decode_graph_yaml_rejects_dollar_inside_external_input_name() {
+    let err = decode_graph_yaml(
+        r#"
+kind: cluster
+id: external_inputs
+version: "1.0.0"
+nodes:
+  consumer:
+    impl: consume@1.0.0
+edges:
+  - $threshold$extra -> consumer.input
+inputs:
+  - name: threshold
+    type: number
+"#,
+    )
+    .expect_err("dollar inside external input names must error");
+
+    match err {
+        LoaderError::Decode(inner) => {
+            assert!(inner
+                .message
+                .contains("external input name must not contain '$'"));
+        }
+        _ => panic!("expected decode error"),
+    }
 }
 
 #[test]
@@ -326,6 +426,63 @@ signature:
             assert!(inner
                 .message
                 .contains("declared signature port name must not contain '@'"));
+        }
+        _ => panic!("expected decode error"),
+    }
+}
+
+#[test]
+fn decode_graph_yaml_rejects_dollar_in_declared_input_names() {
+    let err = decode_graph_yaml(
+        r#"
+kind: cluster
+id: input_names
+version: "1.0.0"
+nodes: {}
+edges: []
+inputs:
+  - name: threshold$raw
+    type: number
+"#,
+    )
+    .expect_err("declared input names should reject dollar");
+
+    match err {
+        LoaderError::Decode(inner) => {
+            assert!(inner.message.contains("input name must not contain '$'"));
+        }
+        _ => panic!("expected decode error"),
+    }
+}
+
+#[test]
+fn decode_graph_yaml_rejects_dollar_in_declared_signature_port_names() {
+    let err = decode_graph_yaml(
+        r#"
+kind: cluster
+id: signature_ports
+version: "1.0.0"
+nodes: {}
+edges: []
+signature:
+  kind: compute_like
+  inputs:
+    - name: foo$bar
+      type: number
+      cardinality: single
+      wireable: true
+  outputs: []
+  has_side_effects: false
+  is_origin: false
+"#,
+    )
+    .expect_err("declared signature port names should reject dollar");
+
+    match err {
+        LoaderError::Decode(inner) => {
+            assert!(inner
+                .message
+                .contains("declared signature port name must not contain '$'"));
         }
         _ => panic!("expected decode error"),
     }
@@ -572,6 +729,10 @@ fn resolve_cluster_candidates_rejects_invalid_cluster_ids() {
     let err = resolve_cluster_candidates(&temp_root, "../outside", &[])
         .expect_err("path-like cluster ids must error");
     assert!(err.to_string().contains("invalid cluster_id '../outside'"));
+
+    let err = resolve_cluster_candidates(&temp_root, "foo$bar", &[])
+        .expect_err("dollar-bearing cluster ids must error");
+    assert!(err.to_string().contains("cluster id must not contain '$'"));
 
     let _ = fs::remove_dir_all(&temp_root);
 }
@@ -1016,6 +1177,22 @@ fn in_memory_entrypoints_reject_invalid_non_root_source_ids() {
         &sources,
         &[],
         "in-memory source_id must use '/' separators",
+    );
+}
+
+#[test]
+fn in_memory_entrypoints_reject_missing_root_source_id() {
+    let sources = vec![InMemorySourceInput {
+        source_id: "graphs/other.yaml".to_string(),
+        source_label: "other-row".to_string(),
+        content: "kind: cluster\nid: other\nversion: \"1.0.0\"\nnodes: {}\nedges: []\n".to_string(),
+    }];
+
+    assert_in_memory_entrypoints_reject(
+        "graphs/root.yaml",
+        &sources,
+        &[],
+        "root in-memory source_id 'graphs/root.yaml' was not provided",
     );
 }
 

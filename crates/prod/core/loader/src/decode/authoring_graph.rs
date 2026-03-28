@@ -21,8 +21,11 @@
 //!
 //! Safety notes:
 //! - This file stays on the loader decode surface and must not invent kernel or host semantics.
-//! - Internal `node.port` endpoint-reference parsing is intentionally narrower than the general
-//!   identifier rules used by boundary/signature names.
+//! - Authored identifiers reject loader syntax characters such as `$`; only the leading external
+//!   input edge shorthand sigil uses `$`, and the remaining name still follows the authored
+//!   identifier rule.
+//! - Internal `node.port` endpoint-reference parsing is intentionally narrower than the authored
+//!   identifier rule used by graph IDs, names, and declared signature ports.
 
 use std::collections::{HashMap, HashSet};
 
@@ -38,7 +41,7 @@ use ergo_runtime::cluster::{
 };
 
 pub(crate) fn validate_cluster_reference_id(cluster_id: &str) -> Result<(), LoaderError> {
-    validate_general_identifier(cluster_id, "cluster id", false).map_err(decode_error)
+    validate_authored_identifier(cluster_id, "cluster id").map_err(decode_error)
 }
 
 pub(crate) fn decode_raw_graph(
@@ -87,7 +90,7 @@ impl RawClusterDefinition {
         if !self.kind.eq_ignore_ascii_case("cluster") {
             return Err(format!("kind must be 'cluster', got '{}'", self.kind));
         }
-        validate_general_identifier(&self.id, "cluster id", true)?;
+        validate_authored_identifier(&self.id, "cluster id")?;
         let version = parse_version_value(&self.version)?;
 
         let input_ports = self
@@ -144,7 +147,7 @@ impl RawClusterDefinition {
 
         let mut output_ports = Vec::with_capacity(self.outputs.len());
         for (name, target) in self.outputs {
-            validate_general_identifier(&name, "output name", false)?;
+            validate_authored_identifier(&name, "output name")?;
             let (node_id, port_name) = parse_node_port_ref(&target, "output target")?;
             output_ports.push(OutputPortSpec {
                 name,
@@ -215,7 +218,7 @@ impl RawNodeSpec {
 
         let mut parameter_bindings = HashMap::new();
         for (name, raw_binding) in self.params {
-            validate_general_identifier(&name, "parameter binding name", false)?;
+            validate_authored_identifier(&name, "parameter binding name")?;
             let binding = raw_binding.into_binding()?;
             parameter_bindings.insert(name, binding);
         }
@@ -239,7 +242,7 @@ impl RawParamBinding {
     fn into_binding(self) -> Result<ParameterBinding, String> {
         match self {
             Self::Exposed { exposed } => {
-                validate_general_identifier(&exposed, "exposed parameter name", false)?;
+                validate_authored_identifier(&exposed, "exposed parameter name")?;
                 Ok(ParameterBinding::Exposed {
                     parent_param: exposed,
                 })
@@ -304,7 +307,7 @@ fn parse_output_endpoint_ref(raw: RawEndpointRef) -> Result<(OutputRef, Option<S
             ))
         }
         RawEndpointRef::External { external } => {
-            validate_general_identifier(&external, "external input name", true)?;
+            validate_authored_identifier(&external, "external input name")?;
             Ok((
                 OutputRef {
                     node_id: external.clone(),
@@ -345,7 +348,7 @@ fn parse_shorthand_edge(text: &str) -> Result<ParsedEdge, String> {
 
     let (from, external_source) = if let Some(external) = from_raw.strip_prefix('$') {
         let name = external.trim();
-        validate_general_identifier(name, "external input name", true)?;
+        validate_authored_identifier(name, "external input name")?;
         (
             OutputRef {
                 node_id: name.to_string(),
@@ -385,7 +388,7 @@ struct RawInputPortSpec {
 
 impl RawInputPortSpec {
     fn into_input_port(self) -> Result<InputPortSpec, String> {
-        validate_general_identifier(&self.name, "input name", true)?;
+        validate_authored_identifier(&self.name, "input name")?;
         let ty = parse_value_type(&self.ty)?;
         let required = self.required.unwrap_or(true);
         Ok(InputPortSpec {
@@ -410,7 +413,7 @@ struct RawParameterSpec {
 
 impl RawParameterSpec {
     fn into_parameter_spec(self) -> Result<ParameterSpec, String> {
-        validate_general_identifier(&self.name, "parameter name", false)?;
+        validate_authored_identifier(&self.name, "parameter name")?;
         let ty = parse_parameter_type(&self.ty)?;
         let default = self
             .default
@@ -470,7 +473,7 @@ struct RawPortSpec {
 
 impl RawPortSpec {
     fn into_port_spec(self) -> Result<PortSpec, String> {
-        validate_general_identifier(&self.name, "declared signature port name", false)?;
+        validate_authored_identifier(&self.name, "declared signature port name")?;
         let ty = parse_value_type(&self.ty)?;
         let cardinality = parse_cardinality(&self.cardinality)?;
         Ok(PortSpec {
@@ -542,7 +545,7 @@ fn parse_packed_id_version(value: &str, field: &str) -> Result<(String, String),
             field, value
         ));
     }
-    validate_general_identifier(id, &format!("{field} id"), false)?;
+    validate_authored_identifier(id, &format!("{field} id"))?;
     let version = parse_version_selector(version, &format!("{field} version selector"))?;
     Ok((id.to_string(), version))
 }
@@ -700,7 +703,7 @@ fn parse_boundary_kind(raw: &str) -> Result<BoundaryKind, String> {
 }
 
 fn validate_node_identifier(value: &str, label: &str) -> Result<(), String> {
-    validate_general_identifier(value, label, true)
+    validate_authored_identifier(value, label)
 }
 
 fn validate_node_port_reference_segment(value: &str, label: &str) -> Result<(), String> {
@@ -716,11 +719,7 @@ fn validate_node_port_reference_segment(value: &str, label: &str) -> Result<(), 
     Ok(())
 }
 
-fn validate_general_identifier(
-    value: &str,
-    label: &str,
-    forbid_dollar: bool,
-) -> Result<(), String> {
+fn validate_authored_identifier(value: &str, label: &str) -> Result<(), String> {
     if value.is_empty() {
         return Err(format!("{label} must not be empty"));
     }
@@ -742,7 +741,7 @@ fn validate_general_identifier(
     if value.contains(':') {
         return Err(format!("{label} must not contain ':'"));
     }
-    if forbid_dollar && value.contains('$') {
+    if value.contains('$') {
         return Err(format!("{label} must not contain '$'"));
     }
     Ok(())

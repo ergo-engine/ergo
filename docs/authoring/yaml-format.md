@@ -229,6 +229,8 @@ edges:
 
 Format: `$<input_name> -> <to_node>.<to_port>`
 
+The leading `$` is loader syntax, not part of the input name. After stripping that sigil, `<input_name>` still follows the general authored identifier rules from §8.2.
+
 At decode time, this becomes an `Edge` whose source is stored as an `OutputRef { node_id: name, port_name: name }` plus external-input bookkeeping. Expansion may materialize `ExpandedEndpoint::ExternalInput { name }`, and runtime validation rejects any surviving external-input endpoints before execution.
 
 **Validation rules for external input edges:**
@@ -345,16 +347,16 @@ The `node.port` and `id@selector` shorthand formats impose constraints on identi
 |-----------|-------------|
 | `.` (dot) | General identifiers and port names |
 | `@` (at) | General identifiers |
-| `$` (dollar) | General identifiers that participate in graph identity or parameter/input naming; reserved for external-input edge shorthand |
+| `$` (dollar) | All authored general identifiers; reserved only as the leading external-input edge shorthand sigil |
 | `/` (slash) | General identifiers |
 | `\` (backslash) | General identifiers |
 | `:` (colon) | General identifiers |
 | ` ` (space) | All identifiers |
 
-**Rule:** The loader validates node IDs, cluster IDs, implementation IDs, parameter/input names, and port names against these constraints and produces clear decode errors on violation. Two related name classes matter here:
+**Rule:** The loader validates authored IDs and names against these constraints and produces clear decode errors on violation. Two related name classes matter here:
 
 - internal `node.port` endpoint-reference port segments use the narrower parser rule and reject only empty strings, `.` and spaces
-- declared signature boundary port names, plus the broader graph-identifier surfaces, use the general identifier rule and additionally reject `@`, `/`, `\`, `:`, and, for most graph identifiers, `$`
+- authored general identifiers, including node IDs, cluster IDs, implementation IDs, output/input names, parameter names, exposed/bound parameter names, declared signature port names, and the names that remain after external-input shorthand strips a leading `$`, reject `.`, `@`, `$`, `/`, `\`, `:`, and spaces
 
 ### 8.3 Parsing Strategy
 

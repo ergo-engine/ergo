@@ -46,7 +46,8 @@ pub use crate::in_memory::InMemorySourceInput;
 use crate::io::{LoaderDiscoveryError, LoaderError};
 use crate::resolver::{
     normalize_in_memory_source_id, validate_in_memory_inputs, ClusterResolver, FilesystemResolver,
-    InMemoryResolver, SourceRef, ValidatedInMemoryInputs,
+    InMemoryResolver, ResolvedSourceCandidate, SourceRef, ValidatedInMemoryInputs,
+    ValidatedInMemorySource,
 };
 
 #[derive(Debug, Clone)]
@@ -124,19 +125,19 @@ pub fn discover_in_memory_cluster_tree(
 ) -> Result<InMemoryClusterDiscovery, LoaderError> {
     let validated = validate_in_memory_inputs(sources, search_roots)?;
     let normalized_root_source_id = normalize_in_memory_source_id(root_source_id)?;
-    discover_in_memory_cluster_tree_validated(&normalized_root_source_id, &validated)
+    let root_source = validated.root_source(&normalized_root_source_id)?;
+    discover_in_memory_cluster_tree_validated(root_source, &validated)
 }
 
 pub(crate) fn discover_in_memory_cluster_tree_validated(
-    normalized_root_source_id: &str,
+    root_source: &ValidatedInMemorySource<'_>,
     validated: &ValidatedInMemoryInputs<'_>,
 ) -> Result<InMemoryClusterDiscovery, LoaderError> {
     let resolver = InMemoryResolver::from_validated_inputs(validated);
-    let root_source = resolver.root_source_normalized(normalized_root_source_id)?;
-    let root_source_text = resolver.read(&root_source)?;
-    let root = parse_graph_content(&root_source_text, &root_source.opened_label())?;
+    let root = parse_graph_content(root_source.content, root_source.source_label)?;
+    let root_source_ref = root_source.source_ref();
     let mut builder = ClusterTreeBuilder::new(&resolver);
-    builder.visit(root_source, root.clone())?;
+    builder.visit(root_source_ref, root.clone())?;
 
     let mut cluster_source_ids = HashMap::new();
     let mut cluster_source_labels = HashMap::new();
@@ -164,6 +165,8 @@ pub(crate) fn discover_in_memory_cluster_tree_validated(
 struct ClusterTreeBuilder<'a, R: ClusterResolver> {
     clusters: HashMap<(String, Version), DecodedAuthoringGraph>,
     cluster_sources: HashMap<(String, Version), SourceRef>,
+    decoded_sources: HashMap<SourceRef, DecodedAuthoringGraph>,
+    completed_sources: HashSet<SourceRef>,
     visiting_sources: HashSet<SourceRef>,
     visiting_keys: HashSet<(String, Version)>,
     resolver: &'a R,
@@ -174,6 +177,8 @@ impl<'a, R: ClusterResolver> ClusterTreeBuilder<'a, R> {
         Self {
             clusters: HashMap::new(),
             cluster_sources: HashMap::new(),
+            decoded_sources: HashMap::new(),
+            completed_sources: HashSet::new(),
             visiting_sources: HashSet::new(),
             visiting_keys: HashSet::new(),
             resolver,
@@ -185,7 +190,13 @@ impl<'a, R: ClusterResolver> ClusterTreeBuilder<'a, R> {
         source_ref: SourceRef,
         def: DecodedAuthoringGraph,
     ) -> Result<(), LoaderError> {
+        self.decoded_sources
+            .entry(source_ref.clone())
+            .or_insert_with(|| def.clone());
         let cluster_key = self.record_cluster_definition(&source_ref, &def)?;
+        if self.completed_sources.contains(&source_ref) {
+            return Ok(());
+        }
 
         // Detect both source-level cycles and semantic cluster-key cycles so discovery reports the
         // truthful failure even when the same cluster is reached through different paths.
@@ -204,6 +215,21 @@ impl<'a, R: ClusterResolver> ClusterTreeBuilder<'a, R> {
             )));
         }
 
+        let visit_result = self.visit_nested_clusters(&source_ref, &def);
+
+        self.visiting_sources.remove(&source_ref);
+        self.visiting_keys.remove(&cluster_key);
+        if visit_result.is_ok() {
+            self.completed_sources.insert(source_ref);
+        }
+        visit_result
+    }
+
+    fn visit_nested_clusters(
+        &mut self,
+        source_ref: &SourceRef,
+        def: &DecodedAuthoringGraph,
+    ) -> Result<(), LoaderError> {
         for node in def.nodes.values() {
             let ergo_runtime::cluster::NodeKind::Cluster {
                 cluster_id,
@@ -212,31 +238,19 @@ impl<'a, R: ClusterResolver> ClusterTreeBuilder<'a, R> {
             else {
                 continue;
             };
-            let candidate_search = self.resolver.resolve(cluster_id, Some(&source_ref))?;
+            let candidate_search = self.resolver.resolve(cluster_id, Some(source_ref))?;
             if candidate_search.found.is_empty() {
                 return Err(missing_cluster_error(
                     cluster_id,
                     version,
                     &node.id,
-                    &source_ref,
+                    source_ref,
                     &candidate_search.search_trace,
                 ));
             }
 
             for candidate in candidate_search.found {
-                let nested_content = self.resolver.read(&candidate.source_ref).map_err(|err| {
-                    discovery_error(format!(
-                        "failed parsing nested cluster '{}@{}' at '{}': {}",
-                        cluster_id, version, candidate.opened_label, err
-                    ))
-                })?;
-                let nested = parse_graph_content(&nested_content, &candidate.opened_label)
-                    .map_err(|err| {
-                        discovery_error(format!(
-                            "failed parsing nested cluster '{}@{}' at '{}': {}",
-                            cluster_id, version, candidate.opened_label, err
-                        ))
-                    })?;
+                let nested = self.decode_candidate_source(&candidate, cluster_id, version)?;
 
                 if nested.id != *cluster_id {
                     return Err(id_mismatch_error(
@@ -245,7 +259,7 @@ impl<'a, R: ClusterResolver> ClusterTreeBuilder<'a, R> {
                         &nested.id,
                         &candidate.source_ref,
                         &node.id,
-                        &source_ref,
+                        source_ref,
                     ));
                 }
 
@@ -259,9 +273,35 @@ impl<'a, R: ClusterResolver> ClusterTreeBuilder<'a, R> {
             }
         }
 
-        self.visiting_sources.remove(&source_ref);
-        self.visiting_keys.remove(&cluster_key);
         Ok(())
+    }
+
+    fn decode_candidate_source(
+        &mut self,
+        candidate: &ResolvedSourceCandidate,
+        cluster_id: &str,
+        version: &str,
+    ) -> Result<DecodedAuthoringGraph, LoaderError> {
+        if let Some(decoded) = self.decoded_sources.get(&candidate.source_ref) {
+            return Ok(decoded.clone());
+        }
+
+        let nested_content = self.resolver.read(&candidate.source_ref).map_err(|err| {
+            discovery_error(format!(
+                "failed parsing nested cluster '{}@{}' at '{}': {}",
+                cluster_id, version, candidate.opened_label, err
+            ))
+        })?;
+        let nested =
+            parse_graph_content(&nested_content, &candidate.opened_label).map_err(|err| {
+                discovery_error(format!(
+                    "failed parsing nested cluster '{}@{}' at '{}': {}",
+                    cluster_id, version, candidate.opened_label, err
+                ))
+            })?;
+        self.decoded_sources
+            .insert(candidate.source_ref.clone(), nested.clone());
+        Ok(nested)
     }
 
     fn record_cluster_definition(
@@ -399,3 +439,6 @@ fn conflict_source_display(source_ref: &SourceRef) -> String {
         } => format!("'{}' (source_id '{}')", source_label, source_id),
     }
 }
+
+#[cfg(test)]
+mod tests;

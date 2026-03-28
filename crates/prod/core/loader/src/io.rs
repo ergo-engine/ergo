@@ -181,8 +181,7 @@ pub fn load_in_memory_graph_sources(
     let normalized_root_source_id = normalize_in_memory_source_id(root_source_id)?;
     let validated = validate_in_memory_inputs(sources, search_roots)?;
     let root_source = validated.root_source(&normalized_root_source_id)?;
-    let discovery =
-        discover_in_memory_cluster_tree_validated(&normalized_root_source_id, &validated)?;
+    let discovery = discover_in_memory_cluster_tree_validated(root_source, &validated)?;
     let root = discovery.root.clone();
 
     let mut source_map = BTreeMap::new();
@@ -234,8 +233,8 @@ pub fn load_graph_assets_from_memory(
 ) -> Result<PreparedGraphAssets, LoaderError> {
     let validated = validate_in_memory_inputs(sources, search_roots)?;
     let normalized_root_source_id = normalize_in_memory_source_id(root_source_id)?;
-    let discovery =
-        discover_in_memory_cluster_tree_validated(&normalized_root_source_id, &validated)?;
+    let root_source = validated.root_source(&normalized_root_source_id)?;
+    let discovery = discover_in_memory_cluster_tree_validated(root_source, &validated)?;
     Ok(PreparedGraphAssets {
         root: discovery.root,
         clusters: discovery.clusters,

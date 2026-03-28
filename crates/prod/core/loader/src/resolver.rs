@@ -146,6 +146,16 @@ pub(crate) struct ValidatedInMemorySource<'a> {
     pub(crate) content: &'a str,
 }
 
+impl<'a> ValidatedInMemorySource<'a> {
+    pub(crate) fn source_ref(&self) -> SourceRef {
+        SourceRef::from_in_memory(
+            self.normalized_source_id.clone(),
+            self.logical_path.clone(),
+            self.source_label,
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ValidatedInMemoryInputs<'a> {
     ordered_sources: Vec<ValidatedInMemorySource<'a>>,
@@ -464,21 +474,6 @@ impl InMemoryResolver {
             search_roots: validated.search_roots().to_vec(),
             sources_by_id,
         }
-    }
-
-    pub(crate) fn root_source_normalized(
-        &self,
-        normalized_root_source_id: &str,
-    ) -> Result<SourceRef, LoaderError> {
-        self.sources_by_id
-            .get(normalized_root_source_id)
-            .map(|source| source.source_ref.clone())
-            .ok_or_else(|| {
-                discovery_error(format!(
-                    "root in-memory source_id '{}' was not provided",
-                    normalized_root_source_id
-                ))
-            })
     }
 }
 
