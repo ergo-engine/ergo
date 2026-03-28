@@ -1,3 +1,44 @@
+//! replay_error_surface
+//!
+//! Purpose:
+//! - Translate replay/setup failures from kernel replay and host orchestration
+//!   layers, plus host adapter-required diagnostics, into a shared
+//!   host-side descriptor shape for product-facing renderers.
+//! - Despite the file name, this is effectively the host error descriptor
+//!   factory for this slice of the public surface, not a replay-only mapper.
+//!
+//! Owns:
+//! - The host mapping table from `ReplayError`, `HostedReplayError`,
+//!   `HostReplayError`, and adapter-required summaries into `HostErrorDescriptor`.
+//! - Host-owned attachment of contextual fields such as the `RUN-CANON-2` rule id
+//!   when adapter-required failures are surfaced to clients.
+//!
+//! Does not own:
+//! - Replay semantics, invariant evaluation, or CLI formatting/output.
+//! - A public hosted-only translation API; `describe_hosted_replay_error(...)` is
+//!   intentionally private and only supports `describe_host_replay_error(...)`.
+//!
+//! Connects to:
+//! - Kernel replay failures from `ergo_supervisor::replay`.
+//! - Host replay/setup failures from `crate::replay` and `crate::usecases`.
+//! - Product renderers, currently CLI, that consume `HostErrorDescriptor`.
+//!
+//! Safety notes:
+//! - The `RUN-CANON-2` string is coupled to the invariant registry/docs and must
+//!   be updated here if that host-owned rule id changes.
+//! - Error codes are raw string literals with no shared constant authority; local
+//!   tests must lock the full code/message table so consumer-side string matches
+//!   fail loudly during host changes rather than drifting silently.
+//! - `HostErrorDescriptor` keeps public fields for downstream consumption, so the
+//!   private builder methods enforce construction conventions rather than hard
+//!   type guarantees.
+//! - Effect mismatch details serialize best-effort JSON for operator diagnostics
+//!   and fall back to placeholder text instead of panicking on serialization
+//!   failure.
+//! - Hosted replay `Preflight` and `Compare` currently collapse to the same
+//!   descriptor mapping, so callers cannot distinguish those phases through this
+//!   surface without a future API split.
+
 use crate::{HostReplayError, HostedReplayError};
 
 #[derive(Debug, Clone)]
@@ -251,3 +292,6 @@ pub fn describe_adapter_required(summary: &crate::AdapterDependencySummary) -> H
 
     info
 }
+
+#[cfg(test)]
+mod tests;
