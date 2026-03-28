@@ -1,3 +1,47 @@
+//! egress::process
+//!
+//! Purpose:
+//! - Run host-managed egress child processes for the `ergo-egress.v1` wire
+//!   protocol, translating intent records into outbound JSON frames and
+//!   validating durable-accept acknowledgments.
+//!
+//! Owns:
+//! - Process lifecycle for egress channels: spawn, ready handshake, dispatch,
+//!   pending-ack checks, bounded shutdown, and force-kill cleanup.
+//! - The wire contract for `OutboundMessage`, `InboundMessage`, and the host's
+//!   `Value` -> JSON projection sent to egress processes.
+//! - Host operational timing policy for this seam: 5s startup/shutdown bounds
+//!   plus a 20ms straggler probe with 1ms polling when finalization asserts
+//!   that no ack frames remain buffered.
+//!
+//! Does not own:
+//! - Egress route/provenance parsing; `config.rs` owns the authored config
+//!   surface.
+//! - Live-path validation; `validation.rs` owns pre-run egress checks.
+//! - Host interruption taxonomy or `HostedStepError` mapping; `runner.rs` and
+//!   `error.rs` decide how these failures surface at higher layers.
+//! - Replay semantics; replay never launches egress channels.
+//!
+//! Connects to:
+//! - `runner.rs`, which starts `EgressRuntime`, dispatches intents, and
+//!   finalizes hosted runs through pending-ack and shutdown checks.
+//! - Project-owned egress programs implementing the `ergo-egress.v1` child
+//!   process protocol.
+//! - `error.rs`, which currently stringifies `EgressProcessError` into
+//!   `HostedStepError`.
+//!
+//! Safety notes:
+//! - The ready handshake must attest the exact protocol version and all routed
+//!   kinds assigned to a channel before live execution begins.
+//! - Dispatch waits only for `status="accepted"` plus
+//!   `acceptance="durable"`; timeout/protocol/I/O failures quiesce the failing
+//!   channel and then all channels for consistency.
+//! - The straggler probe in `assert_no_pending_acks` is host operational
+//!   policy, not protocol truth: a short 20ms / 1ms heuristic to catch late
+//!   stdout frames before capture finalization.
+//! - `InboundMessage` currently spans both startup and dispatch phases; that
+//!   lack of phase-typed protocol messages is deferred second-pass debt.
+
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
@@ -15,6 +59,8 @@ const DEFAULT_EGRESS_STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_EGRESS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const CHANNEL_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const EGRESS_PROTOCOL: &str = "ergo-egress.v1";
+const PENDING_ACK_STRAGGLER_PROBE_WINDOW: Duration = Duration::from_millis(20);
+const PENDING_ACK_STRAGGLER_PROBE_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 #[derive(Debug)]
 pub enum EgressProcessError {
@@ -454,7 +500,7 @@ impl EgressChannelHandle {
 
         // Probe briefly for straggler frames so the invariant catches late acks
         // that arrive right after the last dispatch completes.
-        let deadline = std::time::Instant::now() + Duration::from_millis(20);
+        let deadline = std::time::Instant::now() + PENDING_ACK_STRAGGLER_PROBE_WINDOW;
         loop {
             match self.stdout_rx.try_recv() {
                 Ok(ChannelObservation::Line(line)) => {
@@ -496,7 +542,7 @@ impl EgressChannelHandle {
                     if std::time::Instant::now() >= deadline {
                         return Ok(());
                     }
-                    std::thread::sleep(Duration::from_millis(1));
+                    std::thread::sleep(PENDING_ACK_STRAGGLER_PROBE_POLL_INTERVAL);
                 }
             }
         }
@@ -759,488 +805,4 @@ fn take_stderr(handle: Option<JoinHandle<String>>) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt;
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-    fn temp_dir(prefix: &str) -> Result<PathBuf, String> {
-        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!(
-            "ergo-egress-process-{prefix}-{}-{}",
-            std::process::id(),
-            index
-        ));
-        fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
-        Ok(dir)
-    }
-
-    fn write_script(base: &Path, name: &str, body: &str) -> Result<PathBuf, String> {
-        let path = base.join(name);
-        fs::write(&path, body)
-            .map_err(|err| format!("write script '{}': {err}", path.display()))?;
-        let mut perms = fs::metadata(&path)
-            .map_err(|err| format!("read script metadata '{}': {err}", path.display()))?
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&path, perms)
-            .map_err(|err| format!("chmod script '{}': {err}", path.display()))?;
-        Ok(path)
-    }
-
-    fn wait_for_path(path: &Path, timeout: Duration) -> Result<(), String> {
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            if path.exists() {
-                return Ok(());
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        Err(format!("timed out waiting for '{}'", path.display()))
-    }
-
-    fn current_process_group_id() -> Result<u32, String> {
-        let output = Command::new("ps")
-            .args(["-o", "pgid=", "-p", &std::process::id().to_string()])
-            .output()
-            .map_err(|err| format!("run ps for parent pgid: {err}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "run ps for parent pgid exited with status {}",
-                output.status
-            ));
-        }
-        let raw = String::from_utf8(output.stdout)
-            .map_err(|err| format!("decode parent pgid output: {err}"))?;
-        raw.trim()
-            .parse::<u32>()
-            .map_err(|err| format!("parse parent pgid '{}': {err}", raw.trim()))
-    }
-
-    fn config_for_script(script: &Path, ack_timeout: Duration) -> EgressConfig {
-        EgressConfig {
-            default_ack_timeout: ack_timeout,
-            channels: BTreeMap::from([(
-                "broker".to_string(),
-                EgressChannelConfig::Process {
-                    command: vec!["sh".to_string(), script.display().to_string()],
-                },
-            )]),
-            routes: BTreeMap::from([(
-                "place_order".to_string(),
-                super::super::EgressRoute {
-                    channel: "broker".to_string(),
-                    ack_timeout: None,
-                },
-            )]),
-        }
-    }
-
-    fn sample_intent(intent_id: &str) -> IntentRecord {
-        IntentRecord {
-            kind: "place_order".to_string(),
-            intent_id: intent_id.to_string(),
-            fields: vec![
-                IntentField {
-                    name: "symbol".to_string(),
-                    value: Value::String("EURUSD".to_string()),
-                },
-                IntentField {
-                    name: "qty".to_string(),
-                    value: Value::Number(100.0),
-                },
-            ],
-        }
-    }
-
-    #[test]
-    fn dispatch_single_intent_ack_succeeds() -> Result<(), String> {
-        let dir = temp_dir("ack-ok")?;
-        let script = write_script(
-            &dir,
-            "egress.sh",
-            r#"#!/bin/sh
-printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
-while IFS= read -r line; do
-  echo "$line" | grep -q '"type":"end"' && exit 0
-  id=$(printf '%s\n' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
-  printf '{"type":"intent_ack","intent_id":"%s","status":"accepted","acceptance":"durable","egress_ref":"broker-1"}\n' "$id"
-done
-"#,
-        )?;
-
-        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
-        runtime
-            .start_channels()
-            .map_err(|err| format!("start channels: {err}"))?;
-        let ack = runtime
-            .dispatch_intent(&sample_intent("eid1:sha256:one"))
-            .map_err(|err| format!("dispatch: {err}"))?;
-        assert_eq!(ack.intent_id, "eid1:sha256:one");
-        assert_eq!(ack.channel, "broker");
-        assert_eq!(ack.status, "accepted");
-        assert_eq!(ack.acceptance, "durable");
-        assert_eq!(ack.egress_ref.as_deref(), Some("broker-1"));
-        runtime
-            .shutdown_channels()
-            .map_err(|err| format!("shutdown channels: {err}"))?;
-        let _ = fs::remove_dir_all(dir);
-        Ok(())
-    }
-
-    #[test]
-    fn dispatch_timeout_returns_timeout_error() -> Result<(), String> {
-        let dir = temp_dir("ack-timeout")?;
-        let script = write_script(
-            &dir,
-            "egress.sh",
-            r#"#!/bin/sh
-printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
-while IFS= read -r line; do
-  echo "$line" | grep -q '"type":"end"' && exit 0
-  sleep 1
-done
-"#,
-        )?;
-
-        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_millis(50)));
-        runtime
-            .start_channels()
-            .map_err(|err| format!("start channels: {err}"))?;
-        let err = runtime
-            .dispatch_intent(&sample_intent("eid1:sha256:timeout"))
-            .expect_err("timeout should fail dispatch");
-        assert!(matches!(err, EgressProcessError::Timeout { .. }));
-        runtime
-            .shutdown_channels()
-            .map_err(|err| format!("shutdown channels: {err}"))?;
-        let _ = fs::remove_dir_all(dir);
-        Ok(())
-    }
-
-    #[test]
-    fn invalid_ack_returns_protocol_error() -> Result<(), String> {
-        let dir = temp_dir("ack-invalid")?;
-        let script = write_script(
-            &dir,
-            "egress.sh",
-            r#"#!/bin/sh
-printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
-while IFS= read -r line; do
-  echo "$line" | grep -q '"type":"end"' && exit 0
-  printf '%s\n' '{"type":"intent_ack","intent_id":"wrong","status":"accepted","acceptance":"durable"}'
-done
-"#,
-        )?;
-
-        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
-        runtime
-            .start_channels()
-            .map_err(|err| format!("start channels: {err}"))?;
-        let err = runtime
-            .dispatch_intent(&sample_intent("eid1:sha256:expected"))
-            .expect_err("mismatched intent id should fail");
-        assert!(matches!(err, EgressProcessError::Protocol { .. }));
-        runtime
-            .shutdown_channels()
-            .map_err(|err| format!("shutdown channels: {err}"))?;
-        let _ = fs::remove_dir_all(dir);
-        Ok(())
-    }
-
-    #[test]
-    fn startup_without_ready_fails() -> Result<(), String> {
-        let dir = temp_dir("startup-fail")?;
-        let script = write_script(
-            &dir,
-            "egress.sh",
-            r#"#!/bin/sh
-exit 0
-"#,
-        )?;
-
-        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
-        let err = runtime
-            .start_channels()
-            .expect_err("missing ready frame must fail startup");
-        assert!(matches!(err, EgressProcessError::Startup { .. }));
-        let _ = fs::remove_dir_all(dir);
-        Ok(())
-    }
-
-    #[test]
-    fn startup_fails_when_ready_protocol_mismatches() -> Result<(), String> {
-        let dir = temp_dir("startup-proto-mismatch")?;
-        let script = write_script(
-            &dir,
-            "egress.sh",
-            r#"#!/bin/sh
-printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v0","handled_kinds":["place_order"]}'
-while IFS= read -r line; do
-  echo "$line" | grep -q '"type":"end"' && exit 0
-done
-"#,
-        )?;
-
-        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
-        let err = runtime
-            .start_channels()
-            .expect_err("protocol mismatch must fail startup");
-        assert!(matches!(err, EgressProcessError::Protocol { .. }));
-        let _ = fs::remove_dir_all(dir);
-        Ok(())
-    }
-
-    #[test]
-    fn startup_fails_when_ready_missing_routed_kind() -> Result<(), String> {
-        let dir = temp_dir("startup-missing-kind")?;
-        let script = write_script(
-            &dir,
-            "egress.sh",
-            r#"#!/bin/sh
-printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["cancel_order"]}'
-while IFS= read -r line; do
-  echo "$line" | grep -q '"type":"end"' && exit 0
-done
-"#,
-        )?;
-
-        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
-        let err = runtime
-            .start_channels()
-            .expect_err("missing routed kind must fail startup");
-        assert!(matches!(err, EgressProcessError::Protocol { .. }));
-        let _ = fs::remove_dir_all(dir);
-        Ok(())
-    }
-
-    #[test]
-    fn startup_fails_when_ready_contains_duplicate_handled_kinds() -> Result<(), String> {
-        let dir = temp_dir("startup-duplicate-kind")?;
-        let script = write_script(
-            &dir,
-            "egress.sh",
-            r#"#!/bin/sh
-printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order","place_order"]}'
-while IFS= read -r line; do
-  echo "$line" | grep -q '"type":"end"' && exit 0
-done
-"#,
-        )?;
-
-        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
-        let err = runtime
-            .start_channels()
-            .expect_err("duplicate handled kinds must fail startup");
-        assert!(matches!(err, EgressProcessError::Protocol { .. }));
-        let _ = fs::remove_dir_all(dir);
-        Ok(())
-    }
-
-    #[test]
-    fn multiple_intents_dispatch_and_ack() -> Result<(), String> {
-        let dir = temp_dir("ack-multi")?;
-        let script = write_script(
-            &dir,
-            "egress.sh",
-            r#"#!/bin/sh
-printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
-while IFS= read -r line; do
-  echo "$line" | grep -q '"type":"end"' && exit 0
-  id=$(printf '%s\n' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
-  printf '{"type":"intent_ack","intent_id":"%s","status":"accepted","acceptance":"durable"}\n' "$id"
-done
-"#,
-        )?;
-
-        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
-        runtime
-            .start_channels()
-            .map_err(|err| format!("start channels: {err}"))?;
-        let first = runtime
-            .dispatch_intent(&sample_intent("eid1:sha256:first"))
-            .map_err(|err| format!("dispatch first: {err}"))?;
-        let second = runtime
-            .dispatch_intent(&sample_intent("eid1:sha256:second"))
-            .map_err(|err| format!("dispatch second: {err}"))?;
-        assert_eq!(first.intent_id, "eid1:sha256:first");
-        assert_eq!(second.intent_id, "eid1:sha256:second");
-        runtime
-            .shutdown_channels()
-            .map_err(|err| format!("shutdown channels: {err}"))?;
-        let _ = fs::remove_dir_all(dir);
-        Ok(())
-    }
-
-    #[test]
-    fn timeout_quiesces_channels_for_consistency() -> Result<(), String> {
-        let dir = temp_dir("quiesce-timeout")?;
-        let script = write_script(
-            &dir,
-            "egress.sh",
-            r#"#!/bin/sh
-printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
-while IFS= read -r line; do
-  echo "$line" | grep -q '"type":"end"' && exit 0
-  sleep 1
-done
-"#,
-        )?;
-
-        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_millis(50)));
-        runtime
-            .start_channels()
-            .map_err(|err| format!("start channels: {err}"))?;
-        let err = runtime
-            .dispatch_intent(&sample_intent("eid1:sha256:timeout-quiesce"))
-            .expect_err("timeout should fail dispatch");
-        assert!(matches!(err, EgressProcessError::Timeout { .. }));
-
-        let second = runtime
-            .dispatch_intent(&sample_intent("eid1:sha256:after-timeout"))
-            .expect_err("quiesced runtime should reject further dispatch");
-        assert!(matches!(second, EgressProcessError::Startup { .. }));
-        assert!(
-            runtime.assert_no_pending_acks(false).is_ok(),
-            "quiesced runtime should not expose pending ack state"
-        );
-        let _ = fs::remove_dir_all(dir);
-        Ok(())
-    }
-
-    #[test]
-    fn pending_ack_assertion_fails_when_extra_stdout_frame_is_buffered() -> Result<(), String> {
-        let dir = temp_dir("pending-buffered-frame")?;
-        let script = write_script(
-            &dir,
-            "egress.sh",
-            r#"#!/bin/sh
-printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
-while IFS= read -r line; do
-  echo "$line" | grep -q '"type":"end"' && exit 0
-  id=$(printf '%s\n' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
-  printf '{"type":"intent_ack","intent_id":"%s","status":"accepted","acceptance":"durable"}\n' "$id"
-  printf '%s\n' '{"type":"intent_ack","intent_id":"unexpected","status":"accepted","acceptance":"durable"}'
-done
-"#,
-        )?;
-
-        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
-        runtime
-            .start_channels()
-            .map_err(|err| format!("start channels: {err}"))?;
-        runtime
-            .dispatch_intent(&sample_intent("eid1:sha256:buffered"))
-            .map_err(|err| format!("dispatch: {err}"))?;
-
-        let err = runtime
-            .assert_no_pending_acks(false)
-            .expect_err("buffered stdout frame must fail pending-ack invariant");
-        assert!(matches!(err, EgressProcessError::PendingAcks { .. }));
-
-        runtime
-            .shutdown_channels()
-            .map_err(|err| format!("shutdown channels: {err}"))?;
-        let _ = fs::remove_dir_all(dir);
-        Ok(())
-    }
-
-    #[test]
-    fn host_managed_egress_channel_uses_separate_process_group() -> Result<(), String> {
-        let dir = temp_dir("pgid-isolation")?;
-        let pgid_path = dir.join("egress.pgid");
-        let script = write_script(
-            &dir,
-            "egress.sh",
-            &format!(
-                r#"#!/bin/sh
-pgid_path='{pgid_path}'
-ps -o pgid= -p $$ | tr -d ' ' > "$pgid_path"
-printf '%s\n' '{{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}}'
-while IFS= read -r line; do
-  echo "$line" | grep -q '"type":"end"' && exit 0
-done
-"#,
-                pgid_path = pgid_path.display()
-            ),
-        )?;
-
-        let mut runtime = EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
-        runtime
-            .start_channels()
-            .map_err(|err| format!("start channels: {err}"))?;
-        wait_for_path(&pgid_path, Duration::from_secs(1))?;
-
-        let parent_pgid = current_process_group_id()?;
-        let child_pgid = fs::read_to_string(&pgid_path)
-            .map_err(|err| format!("read child pgid '{}': {err}", pgid_path.display()))?
-            .trim()
-            .parse::<u32>()
-            .map_err(|err| format!("parse child pgid '{}': {err}", pgid_path.display()))?;
-        assert_ne!(
-            child_pgid, parent_pgid,
-            "egress child should run in its own process group"
-        );
-
-        runtime
-            .shutdown_channels()
-            .map_err(|err| format!("shutdown channels: {err}"))?;
-        let _ = fs::remove_dir_all(dir);
-        Ok(())
-    }
-
-    #[test]
-    fn host_stop_pending_ack_check_tolerates_eof_after_child_exit() -> Result<(), String> {
-        let dir = temp_dir("host-stop-eof")?;
-        let script = write_script(
-            &dir,
-            "egress.sh",
-            r#"#!/bin/sh
-printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
-while IFS= read -r line; do
-  echo "$line" | grep -q '"type":"end"' && exit 0
-  id=$(printf '%s\n' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
-  printf '{"type":"intent_ack","intent_id":"%s","status":"accepted","acceptance":"durable"}\n' "$id"
-  exit 0
-done
-"#,
-        )?;
-
-        let mut strict_runtime =
-            EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
-        strict_runtime
-            .start_channels()
-            .map_err(|err| format!("start strict runtime: {err}"))?;
-        strict_runtime
-            .dispatch_intent(&sample_intent("eid1:sha256:strict"))
-            .map_err(|err| format!("dispatch strict intent: {err}"))?;
-        thread::sleep(Duration::from_millis(20));
-        let err = strict_runtime
-            .assert_no_pending_acks(false)
-            .expect_err("normal completion should still reject child EOF");
-        assert!(matches!(err, EgressProcessError::PendingAcks { .. }));
-
-        let mut stop_runtime =
-            EgressRuntime::new(config_for_script(&script, Duration::from_secs(1)));
-        stop_runtime
-            .start_channels()
-            .map_err(|err| format!("start stop runtime: {err}"))?;
-        stop_runtime
-            .dispatch_intent(&sample_intent("eid1:sha256:stop"))
-            .map_err(|err| format!("dispatch stop intent: {err}"))?;
-        thread::sleep(Duration::from_millis(20));
-        stop_runtime
-            .assert_no_pending_acks(true)
-            .map_err(|err| format!("host-stop pending-ack check: {err}"))?;
-        stop_runtime
-            .shutdown_channels()
-            .map_err(|err| format!("shutdown stop runtime: {err}"))?;
-
-        let _ = fs::remove_dir_all(dir);
-        Ok(())
-    }
-}
+mod tests;
