@@ -1,3 +1,44 @@
+//! capture_enrichment
+//!
+//! Purpose:
+//! - Finalize host-owned capture sidecars into supervisor-owned
+//!   `CaptureBundle.decisions[*]` records after canonical host execution has
+//!   drained effects and observed egress outcomes.
+//!
+//! Owns:
+//! - Mapping applied `ActionEffect`s, durable `CapturedIntentAck`s, and
+//!   per-decision interruption strings onto decision records by index.
+//! - The decision-indexed sidecar accumulators that `runner.rs` fills during
+//!   execution and finalization.
+//!
+//! Does not own:
+//! - `CaptureBundle` / `EpisodeInvocationRecord` schema or serde compatibility;
+//!   those live in `ergo-supervisor`.
+//! - Replay comparison semantics; replay compares canonical `effects`, while
+//!   `intent_acks` and `interruption` remain capture metadata.
+//! - Egress provenance, interruption taxonomy, or effect production.
+//!
+//! Connects to:
+//! - `runner.rs`, which records sidecars and calls
+//!   `enrich_bundle_with_host_artifacts(...)` while finalizing a hosted run.
+//! - `ergo-supervisor`, which owns the persisted capture types and
+//!   `hash_effect(...)`.
+//!
+//! Safety notes:
+//! - Enrichment is by decision index, not `event_id`, per the host/supervisor
+//!   orchestration contract.
+//! - Host-enriched `effects` overwrite supervisor-populated `record.effects`
+//!   and are the authoritative canonical effect records for host captures.
+//! - If a sidecar slice has no entry for a decision index, enrichment leaves
+//!   the existing bundle field untouched.
+//! - Sparse `record(...)` calls materialize explicit default gap entries
+//!   (`[]`/`None`), so later finalization clears earlier bundle slots back to
+//!   defaults rather than treating those gaps as missing.
+//! - Repeated `record(...)` calls for the same decision index are
+//!   last-write-wins.
+//! - The three decision-indexed sidecar wrappers are intentionally duplicated
+//!   today; the deferred internal refactor is tracked in issue #62.
+
 use ergo_runtime::common::ActionEffect;
 use ergo_supervisor::replay::hash_effect;
 use ergo_supervisor::{CaptureBundle, CapturedActionEffect, CapturedIntentAck};
@@ -82,3 +123,6 @@ impl StepInterruptionsByDecision {
         &self.inner
     }
 }
+
+#[cfg(test)]
+mod tests;

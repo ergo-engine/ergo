@@ -1,3 +1,39 @@
+//! graph_dot_usecase
+//!
+//! Purpose:
+//! - Expand an ergo graph through the cluster system and render the result as a
+//!   Graphviz DOT string for developer visualization and debugging.
+//!
+//! Owns:
+//! - Two public entry points: `graph_to_dot_from_paths` (discovers clusters
+//!   from the filesystem) and `graph_to_dot_from_assets` (uses pre-loaded
+//!   `PreparedGraphAssets`).
+//! - DOT output format: node shapes and colors by `PrimitiveKind`, edge layout,
+//!   external-input rendering, and optional port/impl/runtime-id labels.
+//! - `PreloadedClusterLoader`, a private in-memory `ClusterLoader` +
+//!   `ClusterVersionIndex` adapter used by both entry points.
+//! - User-facing expand-error summarization with file-path or diagnostic-label
+//!   context (two near-duplicate helpers; mild duplication, not worth extracting
+//!   today).
+//!
+//! Does not own:
+//! - Graph expansion semantics; `ergo_runtime::cluster::expand` owns those.
+//! - Cluster discovery or asset loading; `ergo_loader` owns those.
+//! - Primitive catalog contents; `ergo_runtime::catalog::build_core_catalog`
+//!   owns the canonical catalog.
+//!
+//! Connects to:
+//! - CLI `graph_to_dot_command` and `render` command, which are the only
+//!   downstream callers.
+//! - Re-exported through `lib.rs`; SDK does not use this surface.
+//!
+//! Safety notes:
+//! - Not on the runtime path; this is a developer/debug usecase only.
+//! - Node ordering is deterministic (sorted keys) so DOT output is stable for
+//!   the same input graph.
+//! - Error paths collapse to `String` via `.map_err(|e| e.to_string())`; same
+//!   string-bucket pattern documented as debt in `error.rs`.
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -408,50 +444,4 @@ fn quote_id(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{graph_to_dot_from_assets, GraphToDotFromAssetsRequest};
-    use ergo_loader::{load_graph_assets_from_memory, InMemorySourceInput};
-
-    #[test]
-    fn graph_to_dot_from_assets_renders_loaded_in_memory_graph() -> Result<(), String> {
-        let assets = load_graph_assets_from_memory(
-            "mem/root.yaml",
-            &[InMemorySourceInput {
-                source_id: "mem/root.yaml".to_string(),
-                source_label: "mem/root.yaml".to_string(),
-                content: r#"
-kind: cluster
-id: memory_visual
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 3
-  cmp:
-    impl: gt@0.1.0
-edges:
-  - src.value -> cmp.a
-outputs:
-  out: cmp.result
-"#
-                .to_string(),
-            }],
-            &[],
-        )
-        .map_err(|err| err.to_string())?;
-
-        let dot = graph_to_dot_from_assets(GraphToDotFromAssetsRequest {
-            assets,
-            show_ports: true,
-            show_impl: false,
-            show_runtime_id: false,
-        })?;
-
-        assert!(dot.contains("digraph \"memory_visual\""));
-        assert!(dot.contains("src"));
-        assert!(dot.contains("cmp"));
-        assert!(dot.contains("value -> a"));
-        Ok(())
-    }
-}
+mod tests;
