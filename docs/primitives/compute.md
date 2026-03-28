@@ -1,8 +1,8 @@
 ---
 Authority: STABLE
 Version: v1
-Last Updated: 2026-03-26
-Last Amended: 2026-03-26
+Last Updated: 2026-03-27
+Last Amended: 2026-03-27
 ---
 
 > **Amended 2026-02-02** by Codex (Implementation Assistant)
@@ -13,6 +13,11 @@ Last Amended: 2026-03-26
 > Corrected current prod manifest/runtime details for compute parameter
 > types, error variants, undeclared outputs, and the non-persisted
 > compute-state execution path.
+>
+> **Amended 2026-03-27** by Codex (Docs)
+> Restored the semantic contract boundary: parser/front-door quirks stay
+> in operational docs, while the primitive contract records the canonical
+> compute parameter rule (`Number | Bool`).
 
 # Compute Primitive Manifest — v1
 
@@ -215,7 +220,7 @@ Rules:
 | CMP-12 | No outputs produced on error | `compute() -> Err(_)` emits no outputs |
 | CMP-13 | Input types valid | `inputs[].type ∈ {Number, Bool, Series}` |
 | CMP-14 | Input cardinality single | `inputs[].cardinality == single` |
-| CMP-15 | Parameter types valid | `parameters[].type ∈ {Int, Number, Bool}` |
+| CMP-15 | Parameter types valid | `parameters[].type ∈ {Number, Bool}` |
 | CMP-16 | Cadence is continuous | `execution.cadence == continuous` |
 | CMP-17 | Execution deterministic | `execution.deterministic == true` |
 | CMP-18 | ID unique in registry | `id ∉ ComputeRegistry.ids` |

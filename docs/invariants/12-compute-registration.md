@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-26
+Last Updated: 2026-03-27
 Owner: Documentation
 Scope: Compute registration invariants
 Change Rule: Operational log
@@ -32,7 +32,7 @@ Change Rule: Operational log
 | CMP-8 | Side effects not allowed | compute.md #CMP-8 | — | — | ✓ | cmp_8_side_effects_rejected |
 | CMP-9 | State resettable if allowed | compute.md #CMP-9 | — | — | ✓ | cmp_9_state_not_resettable_rejected |
 | CMP-10 | Errors deterministic | compute.md #CMP-10 | — | — | ✓ | cmp_10_non_deterministic_errors_rejected |
-| CMP-11 | All outputs produced on success | compute.md #CMP-11 | — | — | ✓ | cmp_11_missing_output_fails |
+| CMP-11 | All outputs produced on success | compute.md #CMP-11 | — | — | — | cmp_11_missing_output_fails |
 | CMP-12 | No outputs produced on error | compute.md #CMP-12 | ✓ | — | — | cmp_12_compute_error_fails |
 | CMP-13 | Input types valid | compute.md #CMP-13 | — | — | ✓ | cmp_13_invalid_input_type_rejected |
 | CMP-14 | Input cardinality single | compute.md #CMP-14 | — | — | ✓ | cmp_14_invalid_input_cardinality_rejected |
@@ -53,12 +53,13 @@ Change Rule: Operational log
 
 ### Notes
 
-- **CMP-11/12:** Enforced at execution in `crates/kernel/runtime/src/runtime/execute.rs`. CMP-12 is structural — `compute()` returns `Result<Outputs, ComputeError>`, so errors have no outputs by construction.
-- **Registration enforcement location:** `crates/kernel/runtime/src/compute/registry.rs`
-- **Registration test location:** `crates/kernel/runtime/src/compute/registry.rs`
+- **CMP-11/12:** These are execution-owned invariants, not registration-time validation hooks. Enforcement lives in `crates/kernel/runtime/src/runtime/execute.rs`; CMP-12 is additionally structural because `compute()` returns `Result<Outputs, ComputeError>`, so errors have no outputs by construction.
+- **Registration enforcement location:** `crates/prod/core/host/src/manifest_usecases.rs` (file-manifest parse) and `crates/kernel/runtime/src/compute/registry.rs` (typed runtime registry)
+- **Registration test location:** `crates/kernel/runtime/src/compute/registry.rs` (typed runtime registry) and `crates/prod/clients/cli/tests/phase7_cli.rs` (file-manifest validation coverage)
 - **Execution test location:** `crates/kernel/runtime/src/runtime/tests.rs`
 - **COMP-4/COMP-5/COMP-6:** Compute-adjacent composition aliases enforced by Validation Phase invariant **V.4** (`ValidationError::TypeMismatch`) in `crates/kernel/runtime/src/runtime/validate.rs`.
-- **CMP-19:** Enforced in `compute/registry.rs::validate_manifest` by rejecting manifests where a parameter default value type does not match the declared parameter type (`ValidationError::InvalidParameterType`).
-- **CMP-20:** Structurally enforced in `compute/registry.rs::validate_manifest` by exhaustive `ValueType` matching for outputs (`Number | Series | Bool | String`).
+- **CMP-15:** The semantic contract is `Number | Bool`. On the file-backed front door, `crates/prod/core/host/src/manifest_usecases.rs` still accepts `int` as an alias for `Number` and can reject malformed parameter spellings before typed registration; the runtime registry then enforces the canonical contract by rejecting `String` and `Series`.
+- **CMP-19:** Current prod file-manifest validation rejects default mismatches in `crates/prod/core/host/src/manifest_usecases.rs` (`ComputeParseError::InvalidParameterDefault`). The typed runtime-registry path in `crates/kernel/runtime/src/compute/registry.rs` still rejects mismatched defaults as `ValidationError::InvalidParameterType`.
+- **CMP-20:** Invalid output type strings are rejected on the prod file-manifest surface during parse; the typed runtime layer only admits `Number | Series | Bool | String`.
 
 ---

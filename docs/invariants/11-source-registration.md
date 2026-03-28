@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-26
+Last Updated: 2026-03-27
 Owner: Documentation
 Scope: Source registration invariants
 Change Rule: Operational log
@@ -47,8 +47,9 @@ Change Rule: Operational log
 - **SRC-13:** Structurally enforced — `Cadence` enum only has `Continuous` variant. Enforcement code at `registry.rs:77-78` will be exercised when cadence variants expand.
 - **SRC-10:** Composition-time validation that required context keys exist.
 - **SRC-11:** Composition-time validation that any source-required key the adapter does provide matches type, including optional keys whose existence is allowed but not guaranteed. Alias tests provide source-contract traceability through COMP-2 (§10).
-- **Registration enforcement location:** `crates/kernel/runtime/src/source/registry.rs`
-- **Registration test location:** `crates/kernel/runtime/src/source/tests.rs`
+- **SRC-15:** Current prod file-manifest validation rejects default mismatches in `crates/prod/core/host/src/manifest_usecases.rs` (`SourceParseError::InvalidParameterDefault`). The typed runtime-registry path in `crates/kernel/runtime/src/source/registry.rs` still rejects mismatched defaults as `SourceValidationError::InvalidParameterType`.
+- **Registration enforcement location:** `crates/prod/core/host/src/manifest_usecases.rs` (file-manifest parse) and `crates/kernel/runtime/src/source/registry.rs` (typed runtime registry)
+- **Registration test location:** `crates/kernel/runtime/src/source/tests.rs` (typed runtime registry) and `crates/prod/clients/cli/tests/phase7_cli.rs` (file-manifest validation coverage)
 - **Composition enforcement location:** `crates/kernel/adapter/src/composition.rs` (invoked by `ergo_adapter::RuntimeHandle::run` after graph validation, before execution)
 - **Composition test location:** `crates/kernel/adapter/tests/composition_tests.rs`
 

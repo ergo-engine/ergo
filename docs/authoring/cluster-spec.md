@@ -1,7 +1,7 @@
 ---
 Authority: STABLE
 Version: v0.3
-Last Updated: 2026-03-26
+Last Updated: 2026-03-27
 Scope: Data structures, inference algorithm, validation rules
 Change Rule: Additive only
 ---
@@ -51,7 +51,7 @@ ClusterDefinition {
     output_ports: List<OutputPortSpec>,
     parameters: List<ParameterSpec>,
     
-    // Optional declared signature (verified against inferred)
+    // Optional declared signature (current prod validation is wireability-only)
     declared_signature: Option<Signature>,
 }
 ```
@@ -384,7 +384,7 @@ the phase invariants in `docs/invariants/INDEX.md`.
 | D.7 | Parameter types valid | Type (enum) | No runtime error |
 | D.8 | Parameter defaults type-compatible | `cluster.rs::validate_cluster_definition` | `ExpandError::ParameterDefaultTypeMismatch`, `ExpandError::InvalidDeriveKeySlot` |
 | D.9 | No duplicate parameter names | `cluster.rs::validate_cluster_definition` | `ExpandError::DuplicateParameter` |
-| D.10 | Declared signature compatible with inferred | `cluster.rs::expand` → `validate_declared_signature` | `ExpandError::DeclaredSignatureInvalid` (currently wireability-only) |
+| D.10 | Declared signature validation runs when present (currently wireability-only) | `cluster.rs::expand` → `validate_declared_signature` | `ExpandError::DeclaredSignatureInvalid` (currently wireability-only) |
 | D.11 | Declared wireability ≤ inferred | `cluster.rs::validate_declared_signature` | `ClusterValidationError::WireabilityExceedsInferred` |
 
 **Instantiation-Time (I.*)**
@@ -635,7 +635,7 @@ A cluster with inputs but no outputs:
 ```
 Cluster:
     inputs: [data: Number]
-    internal: [compute: LogValue(data)]  # logs but produces no output
+    internal: [compute: Add(data, data)]  # internal result is not exposed
     outputs: []
 ```
 
@@ -643,7 +643,7 @@ Inference:
 
 - `has_wireable_outputs = false`
 - `BoundaryKind = ActionLike`
-- `has_side_effects = false` (if LogValue is pure)
+- `has_side_effects = false`
 
 This is unusual but valid. The cluster is terminal from a wiring perspective.
 

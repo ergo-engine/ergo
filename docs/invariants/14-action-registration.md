@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-26
+Last Updated: 2026-03-27
 Owner: Documentation
 Scope: Action registration invariants
 Change Rule: Operational log
@@ -59,13 +59,13 @@ Change Rule: Operational log
 ### Notes
 
 - **ACT-12:** Composition-time validation. Same predicate and enforcement as **V.5** (`ValidationError::ActionNotGated` in `crates/kernel/runtime/src/runtime/validate.rs`). It remains documented in the `ACT-*` family file for action-contract traceability.
-- **ACT-19:** Enforced in `action/registry.rs::validate_manifest` by rejecting manifests where a parameter default value type does not match the declared parameter type (`ActionValidationError::InvalidParameterType`).
+- **ACT-19:** Current prod file-manifest validation rejects default mismatches in `crates/prod/core/host/src/manifest_usecases.rs` (`ActionParseError::InvalidParameterDefault`). The typed runtime-registry path in `crates/kernel/runtime/src/action/registry.rs` still rejects mismatched defaults as `ActionValidationError::InvalidParameterType`.
 - **ACT-20/ACT-21:** Registration-time cross-check for parameter-bound write names (`$key` convention). Ensures `$`-prefixed write spec names reference declared String-typed parameters.
 - **ACT-22/ACT-23:** Registration-time checks for write payload binding (`from_input`) and scalar type compatibility. These define the declarative "what" channel for action writes; they do not by themselves authorize upstream wiring.
 - **ACT-13:** Current file-backed prod parsing defaults a missing `effects` block to empty writes instead of rejecting the manifest. The richer runtime manifest still always carries `ActionEffects` after parse/normalization.
 - **ACT-24 through ACT-33:** Registration-time validation of first-class intent declarations. These checks enforce unique intent names, unique field names, exactly-one-source semantics for each field (`from_input` xor `from_param`), source existence/type compatibility, and `mirror_writes[].from_field` integrity when the richer runtime/custom manifest surface is used.
-- **Registration enforcement location:** `crates/kernel/runtime/src/action/registry.rs`
-- **Registration test location:** `crates/kernel/runtime/src/action/registry.rs`
+- **Registration enforcement location:** `crates/prod/core/host/src/manifest_usecases.rs` (file-manifest parse) and `crates/kernel/runtime/src/action/registry.rs` (typed runtime registry)
+- **Registration test location:** `crates/kernel/runtime/src/action/registry.rs` (typed runtime registry) and `crates/prod/clients/cli/tests/phase7_cli.rs` (file-manifest validation coverage)
 - **Validation test location:** `crates/kernel/runtime/src/runtime/tests.rs`
 
 ---

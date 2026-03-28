@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-26
+Last Updated: 2026-03-27
 Owner: Documentation
 Scope: Trigger registration invariants
 Change Rule: Operational log
@@ -47,9 +47,9 @@ Change Rule: Operational log
 ### Notes
 
 - **TRG-9 link:** TRG-STATE-1 (stateless triggers) remains enforced by registry validation.
-- **TRG-14:** Enforced in `trigger/registry.rs::validate_manifest` by rejecting manifests where a parameter default value type does not match the declared parameter type (`TriggerValidationError::InvalidParameterType`).
-- **Registration enforcement location:** `crates/kernel/runtime/src/trigger/registry.rs`
-- **Registration test location:** `crates/kernel/runtime/src/trigger/registry.rs`
+- **TRG-14:** Current prod file-manifest validation rejects default mismatches in `crates/prod/core/host/src/manifest_usecases.rs` (`TriggerParseError::InvalidParameterDefault`). The typed runtime-registry path in `crates/kernel/runtime/src/trigger/registry.rs` still rejects mismatched defaults as `TriggerValidationError::InvalidParameterType`.
+- **Registration enforcement location:** `crates/prod/core/host/src/manifest_usecases.rs` (file-manifest parse) and `crates/kernel/runtime/src/trigger/registry.rs` (typed runtime registry)
+- **Registration test location:** `crates/kernel/runtime/src/trigger/registry.rs` (typed runtime registry) and `crates/prod/clients/cli/tests/phase7_cli.rs` (file-manifest validation coverage)
 - **COMP-7/COMP-8:** Trigger-adjacent composition aliases enforced by Validation Phase invariant **V.2** (wiring matrix) in `crates/kernel/runtime/src/runtime/validate.rs`.
 
 ---

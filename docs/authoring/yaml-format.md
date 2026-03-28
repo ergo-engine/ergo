@@ -1,7 +1,7 @@
 ---
 Authority: STABLE
 Version: v1
-Last Updated: 2026-03-26
+Last Updated: 2026-03-27
 Owner: Documentation
 Scope: YAML graph authoring format and loader-facing decode contract
 Change Rule: Additive only
@@ -141,7 +141,7 @@ outputs: { ... }           # Optional. Boundary output map. Default: empty.
 # Optional — only used for reusable clusters with exposed interfaces:
 inputs: [ ... ]            # Input port specs. Default: empty.
 parameters: [ ... ]        # Cluster-level parameter specs. Default: empty.
-declared_signature: { ... } # Declared signature for validation. Default: inferred.
+declared_signature: { ... } # Optional declared signature. Omit to rely on inference only; current prod validation is wireability-only.
 ```
 
 Every graph file is a `ClusterDefinition`. A top-level executable graph is simply a cluster with no parent, no input ports, and no exposed parameters. The `expand()` function handles both cases identically.
