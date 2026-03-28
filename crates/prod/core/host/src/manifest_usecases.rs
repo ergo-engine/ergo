@@ -1,3 +1,40 @@
+//! manifest_usecases
+//!
+//! Purpose:
+//! - Host-owned file-manifest ingress for adapter, source, compute, trigger,
+//!   and action manifests.
+//! - Loads YAML/JSON, dispatches by `kind`, normalizes the current file-backed
+//!   manifest surface into typed runtime/adapter manifests, and projects
+//!   failures into host-facing rule violations.
+//!
+//! Owns:
+//! - Lower-level `*_text`, `*_value`, and path entrypoints used by CLI and
+//!   embedded host callers.
+//! - File-surface normalization such as `boolean`/`bool` aliases, compute
+//!   `int` parameter aliases, and action `effects` defaulting to empty writes
+//!   with no intents on the file-backed path.
+//!
+//! Does not own:
+//! - Primitive registration semantics in the runtime registries.
+//! - Adapter composition semantics enforced in `ergo_adapter`.
+//! - The richer runtime/custom action-intent manifest surface beyond the
+//!   current file-backed writes-only subset.
+//!
+//! Connects to:
+//! - `ergo_runtime` registries for typed primitive validation.
+//! - `ergo_adapter` composition checks for source/action adapter compatibility.
+//! - CLI `validate` / `check-compose` commands through the public host exports.
+//!
+//! Safety notes:
+//! - Parse/IO/decode failures are projected as `INTERNAL` host rule violations
+//!   and rendered downstream as-is.
+//! - Unsupported compose targets currently map to a host-synthesized `COMP-1`
+//!   violation to preserve the existing CLI contract.
+//! - This file is a tracked private refactor candidate because it contains four
+//!   parallel manifest-family pipelines in one implementation unit; see issue
+//!   #67 for the deferred submodule-extraction plan and related duplication
+//!   debt.
+
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
@@ -32,6 +69,9 @@ use ergo_runtime::trigger::{
     TriggerPrimitiveManifest, TriggerRegistry, TriggerValueType,
 };
 use serde::Deserialize;
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug, Clone)]
 pub struct ManifestSummary {
@@ -1057,142 +1097,6 @@ struct RawActionManifest {
     execution: RawActionExecution,
     state: RawActionState,
     side_effects: bool,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        check_compose_text, check_compose_values, validate_manifest_text, validate_manifest_value,
-    };
-
-    #[test]
-    fn validate_manifest_text_accepts_source_yaml() -> Result<(), String> {
-        let summary = validate_manifest_text(
-            "memory/source.yaml",
-            r#"
-kind: source
-id: mem_source
-version: "0.1.0"
-inputs: []
-outputs:
-  - name: value
-    type: number
-parameters: []
-requires:
-  context: []
-execution:
-  deterministic: true
-  cadence: continuous
-state:
-  allowed: false
-side_effects: false
-"#,
-        )
-        .map_err(|err| format!("{err:?}"))?;
-
-        assert_eq!(summary.kind, "source");
-        assert_eq!(summary.id, "mem_source");
-        Ok(())
-    }
-
-    #[test]
-    fn validate_manifest_value_reports_source_label_on_parse_error() {
-        let err = validate_manifest_value(
-            "memory/bad.yaml",
-            serde_json::json!({
-                "id": "broken",
-                "version": "0.1.0"
-            }),
-        )
-        .expect_err("missing kind should fail")
-        .into_rule_violation();
-
-        assert!(err.summary.contains("memory/bad.yaml"));
-    }
-
-    #[test]
-    fn check_compose_text_accepts_in_memory_manifests() -> Result<(), String> {
-        check_compose_text(
-            "memory/adapter.yaml",
-            r#"
-kind: adapter
-id: demo_adapter
-version: "0.1.0"
-runtime_compatibility: "0.1.0"
-context_keys:
-  - name: auth_token
-    type: String
-    required: true
-    writable: false
-event_kinds: []
-capture:
-  format_version: "1"
-  fields: []
-"#,
-            "memory/source.yaml",
-            r#"
-kind: source
-id: demo_source
-version: "0.1.0"
-inputs: []
-outputs:
-  - name: value
-    type: number
-parameters: []
-requires:
-  context:
-    - name: auth_token
-      type: string
-      required: true
-execution:
-  deterministic: true
-  cadence: continuous
-state:
-  allowed: false
-side_effects: false
-"#,
-        )
-        .map_err(|err| format!("{err:?}"))
-    }
-
-    #[test]
-    fn check_compose_values_rejects_unsupported_target_kind() {
-        let err = check_compose_values(
-            "memory/adapter.json",
-            serde_json::json!({
-                "kind": "adapter",
-                "id": "demo_adapter",
-                "version": "0.1.0",
-                "runtime_compatibility": "0.1.0",
-                "context_keys": [{
-                    "name": "auth_token",
-                    "type": "String",
-                    "required": true,
-                    "writable": false,
-                    "description": null
-                }],
-                "event_kinds": [],
-                "capture": {"format_version": "1", "fields": []}
-            }),
-            "memory/compute.json",
-            serde_json::json!({
-                "kind": "compute",
-                "id": "other",
-                "version": "0.1.0",
-                "inputs": [],
-                "outputs": [{"name":"value","type":"number"}],
-                "parameters": [],
-                "execution": {"deterministic": true, "cadence": "continuous", "may_error": false},
-                "errors": {"allowed": false, "types": [], "deterministic": true},
-                "state": {"allowed": false, "resettable": false, "description": null},
-                "side_effects": false
-            }),
-        )
-        .expect_err("compute target should be rejected")
-        .into_rule_violation();
-
-        assert_eq!(err.rule_id, "COMP-1");
-    }
 }
 
 #[derive(Debug, Deserialize)]
