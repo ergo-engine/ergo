@@ -1,3 +1,35 @@
+//! egress::config
+//!
+//! Purpose:
+//! - Define the canonical host-owned egress configuration model, its TOML parse
+//!   surface, and the deterministic normalization used for egress provenance.
+//!
+//! Owns:
+//! - The public `EgressConfig`, `EgressRoute`, and `EgressChannelConfig` shapes.
+//! - TOML decoding into that canonical internal model.
+//! - Canonical serde normalization used by `compute_egress_provenance(...)`.
+//!
+//! Does not own:
+//! - Startup validation of routes against adapters, handlers, or graph-emittable
+//!   kinds.
+//! - Egress process lifecycle, handshake, or dispatch semantics.
+//!
+//! Connects to:
+//! - CLI and SDK file-loading paths, which read TOML and call
+//!   `parse_egress_config_toml(...)`.
+//! - Egress validation and runtime startup, which consume the parsed object model.
+//! - Capture provenance, which hashes this file's normalized serde output.
+//!
+//! Safety notes:
+//! - Field names, serde tags, and duration serialization are part of the public
+//!   config/provenance contract; changing them changes compatibility or hashes.
+//! - `BTreeMap` is intentional: deterministic key order is required for canonical
+//!   serialization and provenance stability.
+//! - Duration parsing accepts `ms|s|m|h`, but canonical serialization normalizes
+//!   to `ms` or `s`.
+//! - Parser error wording is user-visible because CLI and SDK currently wrap the
+//!   returned string rather than replacing it.
+
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -127,119 +159,4 @@ fn format_duration(duration: Duration) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn sample_config() -> EgressConfig {
-        parse_egress_config_toml(
-            r#"
-default_ack_timeout = "5s"
-
-[channels.broker]
-type = "process"
-command = ["python3", "broker.py"]
-
-[routes.place_order]
-channel = "broker"
-ack_timeout = "10s"
-
-[routes.cancel_order]
-channel = "broker"
-"#,
-        )
-        .expect("sample config should parse")
-    }
-
-    #[test]
-    fn parse_example_toml() -> Result<(), String> {
-        let raw = r#"
-default_ack_timeout = "5s"
-
-[channels.broker]
-type = "process"
-command = ["python3", "broker.py"]
-
-[routes.place_order]
-channel = "broker"
-ack_timeout = "10s"
-
-[routes.cancel_order]
-channel = "broker"
-"#;
-
-        let config = parse_egress_config_toml(raw)?;
-        assert_eq!(config.default_ack_timeout, Duration::from_secs(5));
-        assert!(matches!(
-            config.channels.get("broker"),
-            Some(EgressChannelConfig::Process { command }) if command == &vec!["python3".to_string(), "broker.py".to_string()]
-        ));
-        assert_eq!(
-            config
-                .routes
-                .get("place_order")
-                .expect("place_order route")
-                .ack_timeout,
-            Some(Duration::from_secs(10))
-        );
-        assert_eq!(
-            config
-                .routes
-                .get("cancel_order")
-                .expect("cancel_order route")
-                .ack_timeout,
-            None
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn parse_missing_required_field_fails() {
-        let raw = r#"
-[channels.broker]
-type = "process"
-command = ["python3", "broker.py"]
-"#;
-        let err = parse_egress_config_toml(raw).expect_err("missing default/routes should fail");
-        assert!(
-            err.contains("default_ack_timeout"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn provenance_is_deterministic_for_same_config() {
-        let config = sample_config();
-        assert_eq!(
-            compute_egress_provenance(&config),
-            compute_egress_provenance(&config)
-        );
-    }
-
-    #[test]
-    fn provenance_changes_when_timeout_changes() {
-        let mut config = sample_config();
-        let base = compute_egress_provenance(&config);
-        config.default_ack_timeout = Duration::from_secs(8);
-        let changed = compute_egress_provenance(&config);
-        assert_ne!(base, changed);
-    }
-
-    #[test]
-    fn provenance_changes_when_route_changes() {
-        let mut config = sample_config();
-        let base = compute_egress_provenance(&config);
-        config.routes.remove("cancel_order");
-        let changed = compute_egress_provenance(&config);
-        assert_ne!(base, changed);
-    }
-
-    #[test]
-    fn provenance_golden_regression() {
-        let config = sample_config();
-        let actual = compute_egress_provenance(&config);
-        assert_eq!(
-            actual, "epv1:sha256:8f2d35f5153bc1e0f3e2e0309762c599bd22d14dfa7837f6b96a44934ec79d6e",
-            "update this golden when config serialization intentionally changes"
-        );
-    }
-}
+mod tests;
