@@ -1,10 +1,39 @@
+//! resolver
+//!
+//! Purpose:
+//! - Resolve referenced cluster sources for loader discovery across filesystem paths and
+//!   in-memory logical sources.
+//! - Validate and normalize in-memory `source_id` and `search_root` values before loader
+//!   discovery and I/O consume them.
+//! - Define source identity semantics used to dedupe candidates and detect discovery cycles.
+//!
+//! Owns:
+//! - Filesystem candidate search ordering and deduping.
+//! - In-memory logical path parsing, normalization, and source lookup.
+//! - Resolver abstractions consumed by loader discovery and loader I/O.
+//!
+//! Does not own:
+//! - YAML/JSON decode, semantic validation, catalog access, or kernel rule enforcement.
+//! - Public loader bundle types or top-level loader entrypoints.
+//!
+//! Connects to:
+//! - `discovery.rs` for cluster-tree assembly over filesystem and in-memory sources.
+//! - `io.rs` for in-memory source-id normalization and graph-asset loading.
+//!
+//! Safety notes:
+//! - Filesystem source identity is canonical-path based; lexical paths are kept for diagnostics.
+//! - In-memory source identity is normalized `source_id` based; diagnostic labels do not affect
+//!   deduping.
+//! - Error values in this file stay on the loader transport/discovery surface and must not become
+//!   semantic rule violations.
+
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use crate::discovery::InMemorySourceInput;
+use crate::in_memory::InMemorySourceInput;
 use crate::io::{canonicalize_or_self, LoaderDiscoveryError, LoaderError, LoaderIoError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -110,6 +139,97 @@ pub(crate) fn normalize_in_memory_source_id(source_id: &str) -> Result<String, L
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct ValidatedInMemorySource<'a> {
+    pub(crate) normalized_source_id: String,
+    logical_path: LogicalPath,
+    pub(crate) source_label: &'a str,
+    pub(crate) content: &'a str,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ValidatedInMemoryInputs<'a> {
+    ordered_sources: Vec<ValidatedInMemorySource<'a>>,
+    search_roots: Vec<LogicalPath>,
+}
+
+impl<'a> ValidatedInMemoryInputs<'a> {
+    pub(crate) fn ordered_sources(&self) -> &[ValidatedInMemorySource<'a>] {
+        &self.ordered_sources
+    }
+
+    pub(crate) fn search_roots(&self) -> &[LogicalPath] {
+        &self.search_roots
+    }
+
+    pub(crate) fn source(
+        &self,
+        normalized_source_id: &str,
+    ) -> Option<&ValidatedInMemorySource<'a>> {
+        self.ordered_sources
+            .iter()
+            .find(|source| source.normalized_source_id == normalized_source_id)
+    }
+
+    pub(crate) fn root_source(
+        &self,
+        normalized_root_source_id: &str,
+    ) -> Result<&ValidatedInMemorySource<'a>, LoaderError> {
+        self.source(normalized_root_source_id).ok_or_else(|| {
+            discovery_error(format!(
+                "root in-memory source_id '{}' was not provided",
+                normalized_root_source_id
+            ))
+        })
+    }
+}
+
+pub(crate) fn validate_in_memory_inputs<'a>(
+    sources: &'a [InMemorySourceInput],
+    search_roots: &[String],
+) -> Result<ValidatedInMemoryInputs<'a>, LoaderError> {
+    let mut ordered_sources = Vec::with_capacity(sources.len());
+    let mut seen_ids = HashSet::new();
+    let mut seen_labels = HashSet::new();
+
+    for source in sources {
+        let logical_path = LogicalPath::parse_source_id(&source.source_id)?;
+        let normalized_source_id = logical_path.to_source_id();
+        if source.source_label.is_empty() {
+            return Err(discovery_error(
+                "in-memory source_label must not be empty".to_string(),
+            ));
+        }
+        if !seen_ids.insert(normalized_source_id.clone()) {
+            return Err(discovery_error(format!(
+                "duplicate in-memory source_id '{}'",
+                normalized_source_id
+            )));
+        }
+        if !seen_labels.insert(source.source_label.clone()) {
+            return Err(discovery_error(format!(
+                "duplicate in-memory source_label '{}' (tranche 1 requires unique diagnostic labels per call)",
+                source.source_label
+            )));
+        }
+
+        ordered_sources.push(ValidatedInMemorySource {
+            normalized_source_id,
+            logical_path,
+            source_label: &source.source_label,
+            content: &source.content,
+        });
+    }
+
+    Ok(ValidatedInMemoryInputs {
+        ordered_sources,
+        search_roots: search_roots
+            .iter()
+            .map(|root| LogicalPath::parse_search_root(root))
+            .collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
+#[derive(Debug, Clone)]
 pub(crate) enum SourceRef {
     Filesystem {
         canonical_path: PathBuf,
@@ -178,6 +298,7 @@ enum IdentityKind<'a> {
 
 impl PartialEq for SourceRef {
     fn eq(&self, other: &Self) -> bool {
+        // Discovery dedupes by canonical filesystem path or normalized in-memory source ID.
         match (self.identity_kind(), other.identity_kind()) {
             (IdentityKind::Filesystem(left), IdentityKind::Filesystem(right)) => left == right,
             (IdentityKind::InMemory(left), IdentityKind::InMemory(right)) => left == right,
@@ -318,64 +439,39 @@ struct InMemorySourceRecord {
 }
 
 impl InMemoryResolver {
-    pub(crate) fn new(
-        sources: &[InMemorySourceInput],
-        search_roots: &[String],
-    ) -> Result<Self, LoaderError> {
+    pub(crate) fn from_validated_inputs(validated: &ValidatedInMemoryInputs<'_>) -> Self {
         let mut ordered_source_ids = Vec::new();
         let mut sources_by_id = HashMap::new();
-        let mut seen_ids = HashSet::new();
-        let mut seen_labels = HashSet::new();
 
-        for source in sources {
-            let logical_path = LogicalPath::parse_source_id(&source.source_id)?;
-            let normalized_source_id = logical_path.to_source_id();
-            if source.source_label.is_empty() {
-                return Err(discovery_error(
-                    "in-memory source_label must not be empty".to_string(),
-                ));
-            }
-            if !seen_ids.insert(normalized_source_id.clone()) {
-                return Err(discovery_error(format!(
-                    "duplicate in-memory source_id '{}'",
-                    normalized_source_id
-                )));
-            }
-            if !seen_labels.insert(source.source_label.clone()) {
-                return Err(discovery_error(format!(
-                    "duplicate in-memory source_label '{}' (tranche 1 requires unique diagnostic labels per call)",
-                    source.source_label
-                )));
-            }
-
+        for source in validated.ordered_sources() {
+            let normalized_source_id = source.normalized_source_id.clone();
             ordered_source_ids.push(normalized_source_id.clone());
             sources_by_id.insert(
                 normalized_source_id.clone(),
                 InMemorySourceRecord {
                     source_ref: SourceRef::from_in_memory(
                         normalized_source_id,
-                        logical_path,
-                        &source.source_label,
+                        source.logical_path.clone(),
+                        source.source_label,
                     ),
-                    content: source.content.clone(),
+                    content: source.content.to_string(),
                 },
             );
         }
 
-        Ok(Self {
+        Self {
             ordered_source_ids,
-            search_roots: search_roots
-                .iter()
-                .map(|root| LogicalPath::parse_search_root(root))
-                .collect::<Result<Vec<_>, _>>()?,
+            search_roots: validated.search_roots().to_vec(),
             sources_by_id,
-        })
+        }
     }
 
-    pub(crate) fn root_source(&self, root_source_id: &str) -> Result<SourceRef, LoaderError> {
-        let normalized_root_source_id = normalize_in_memory_source_id(root_source_id)?;
+    pub(crate) fn root_source_normalized(
+        &self,
+        normalized_root_source_id: &str,
+    ) -> Result<SourceRef, LoaderError> {
         self.sources_by_id
-            .get(&normalized_root_source_id)
+            .get(normalized_root_source_id)
             .map(|source| source.source_ref.clone())
             .ok_or_else(|| {
                 discovery_error(format!(
@@ -406,6 +502,7 @@ impl ClusterResolver for InMemoryResolver {
         let candidate_set: HashSet<LogicalPath> = candidate_paths.iter().cloned().collect();
 
         let mut found = Vec::new();
+        // Caller-provided source order is the precedence rule when multiple sources match.
         for source_id in &self.ordered_source_ids {
             let Some(source) = self.sources_by_id.get(source_id) else {
                 continue;
@@ -490,6 +587,8 @@ fn collect_candidate_paths(
 ) -> Vec<PathBuf> {
     let filename = format!("{cluster_id}.yaml");
 
+    // Search order is part of loader discovery behavior: base dir first, then base_dir/clusters,
+    // then explicit search roots with their implicit clusters/ peers.
     let mut candidates = vec![
         base_dir.join(&filename),
         base_dir.join("clusters").join(&filename),

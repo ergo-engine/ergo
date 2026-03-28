@@ -1,3 +1,38 @@
+//! discovery
+//!
+//! Purpose:
+//! - Discover referenced cluster definitions starting from a filesystem root path or an in-memory
+//!   root source ID.
+//! - Return loader-owned cluster trees plus source provenance needed for diagnostics and later
+//!   loader I/O handoff.
+//! - Expose public candidate-resolution helpers used by callers that need truthful discovery scope
+//!   without entering kernel semantics.
+//!
+//! Owns:
+//! - Filesystem and in-memory cluster-tree assembly over decoded `ClusterDefinition` values.
+//! - Duplicate-definition, circular-reference, missing-cluster, and cluster-id/path agreement
+//!   checks that belong to loader discovery rather than kernel validation.
+//! - Public discovery result shapes, including diagnostic labels and source provenance.
+//!
+//! Does not own:
+//! - Graph text decode details, raw source resolution mechanics, project/profile loading, or
+//!   kernel semantic validation.
+//! - Catalog access, rule IDs, or `RuleViolation` surfaces.
+//! - The shared in-memory source input carrier; that lives in `in_memory.rs` and is re-exported
+//!   here for compatibility.
+//!
+//! Connects to:
+//! - `decode` for graph parsing and cluster-reference selector checks.
+//! - `resolver` for filesystem and in-memory source lookup.
+//! - `io` and downstream host callers for graph-asset loading and diagnostics.
+//!
+//! Safety notes:
+//! - Discovery errors stay on the loader transport/discovery surface and must not become semantic
+//!   rule violations.
+//! - Source provenance is preserved separately for filesystem and in-memory discovery so later
+//!   diagnostics can remain truthful.
+//! - Duplicate and cycle detection rely on resolver-defined source identity semantics.
+
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -7,8 +42,12 @@ use crate::decode::{
     parse_graph_content, parse_graph_file, selector_matches_version, validate_cluster_reference_id,
     DecodedAuthoringGraph,
 };
+pub use crate::in_memory::InMemorySourceInput;
 use crate::io::{LoaderDiscoveryError, LoaderError};
-use crate::resolver::{ClusterResolver, FilesystemResolver, InMemoryResolver, SourceRef};
+use crate::resolver::{
+    normalize_in_memory_source_id, validate_in_memory_inputs, ClusterResolver, FilesystemResolver,
+    InMemoryResolver, SourceRef, ValidatedInMemoryInputs,
+};
 
 #[derive(Debug, Clone)]
 pub struct ClusterDiscovery {
@@ -16,13 +55,6 @@ pub struct ClusterDiscovery {
     pub clusters: HashMap<(String, Version), DecodedAuthoringGraph>,
     pub cluster_sources: HashMap<(String, Version), PathBuf>,
     pub cluster_diagnostic_labels: HashMap<(String, Version), String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct InMemorySourceInput {
-    pub source_id: String,
-    pub source_label: String,
-    pub content: String,
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +97,8 @@ pub fn discover_cluster_tree(
         .cluster_sources
         .into_iter()
         .map(|(key, source_ref)| {
+            // Diagnostics keep the opened label, while the public filesystem source map keeps the
+            // canonical path identity chosen by resolver/source_ref semantics.
             cluster_diagnostic_labels.insert(key.clone(), source_ref.opened_label());
             (
                 key,
@@ -88,8 +122,17 @@ pub fn discover_in_memory_cluster_tree(
     sources: &[InMemorySourceInput],
     search_roots: &[String],
 ) -> Result<InMemoryClusterDiscovery, LoaderError> {
-    let resolver = InMemoryResolver::new(sources, search_roots)?;
-    let root_source = resolver.root_source(root_source_id)?;
+    let validated = validate_in_memory_inputs(sources, search_roots)?;
+    let normalized_root_source_id = normalize_in_memory_source_id(root_source_id)?;
+    discover_in_memory_cluster_tree_validated(&normalized_root_source_id, &validated)
+}
+
+pub(crate) fn discover_in_memory_cluster_tree_validated(
+    normalized_root_source_id: &str,
+    validated: &ValidatedInMemoryInputs<'_>,
+) -> Result<InMemoryClusterDiscovery, LoaderError> {
+    let resolver = InMemoryResolver::from_validated_inputs(validated);
+    let root_source = resolver.root_source_normalized(normalized_root_source_id)?;
     let root_source_text = resolver.read(&root_source)?;
     let root = parse_graph_content(&root_source_text, &root_source.opened_label())?;
     let mut builder = ClusterTreeBuilder::new(&resolver);
@@ -144,6 +187,8 @@ impl<'a, R: ClusterResolver> ClusterTreeBuilder<'a, R> {
     ) -> Result<(), LoaderError> {
         let cluster_key = self.record_cluster_definition(&source_ref, &def)?;
 
+        // Detect both source-level cycles and semantic cluster-key cycles so discovery reports the
+        // truthful failure even when the same cluster is reached through different paths.
         if !self.visiting_sources.insert(source_ref.clone()) {
             return Err(discovery_error(format!(
                 "circular cluster reference detected at '{}'",

@@ -46,10 +46,12 @@ Module-public helper surfaces also include:
 - `discovery::ClusterDiscovery`
 - `discovery::InMemoryClusterDiscovery`
 - `InMemorySourceInput`
-- `io::canonicalize_or_self(...)`
 
 The two `discovery::...` helpers are advanced module-public surfaces under
 `ergo_loader::discovery`, not top-level re-exports.
+
+The crate root also re-exports `LoaderIoError`, `LoaderDecodeError`, and
+`LoaderDiscoveryError` alongside `LoaderError`.
 
 `decode_graph_yaml(...)` keeps the historical `<memory>` label for simple string
 use. `decode_graph_yaml_labeled(...)` should be used when the caller has a

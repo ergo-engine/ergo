@@ -1,13 +1,42 @@
+//! decode
+//!
+//! Purpose:
+//! - Expose the loader's graph decode surface for YAML and JSON authoring text.
+//! - Define the loader-owned `DecodedAuthoringGraph` alias used by discovery and I/O.
+//! - Coordinate dual-format in-memory parsing when callers provide unlabeled graph content that
+//!   may be either YAML or JSON.
+//!
+//! Owns:
+//! - Public decode entrypoint exports for graph authoring text and graph files.
+//! - The shared format-selection policy for `parse_graph_content(...)`.
+//! - Loader-local helpers that choose the most truthful decode error to return.
+//!
+//! Does not own:
+//! - File discovery, source resolution, project loading, or semantic validation.
+//! - Shared raw authoring normalization details; those live in `authoring_graph.rs`.
+//! - Transport-specific YAML/JSON parsing details; those live in the format-specific child
+//!   modules.
+//!
+//! Connects to:
+//! - `authoring_graph.rs` for shared raw authoring normalization reused across formats.
+//! - `yaml_graph.rs` and `json_graph.rs` for format-specific parsing.
+//! - `discovery.rs` and `io.rs` for decoded graph handoff to later loader stages.
+//!
+//! Safety notes:
+//! - This module stays on the loader decode surface and must not emit kernel rule violations.
+//! - Dual-format fallback must preserve specific structural decode errors when possible rather
+//!   than collapsing everything into a generic parse failure.
+
+mod authoring_graph;
 mod json_graph;
 mod yaml_graph;
 
 use crate::io::{LoaderDecodeError, LoaderError};
+pub(crate) use authoring_graph::{selector_matches_version, validate_cluster_reference_id};
 pub use json_graph::decode_graph_json;
 pub(crate) use json_graph::decode_graph_json_labeled;
+pub(crate) use yaml_graph::parse_graph_str;
 pub use yaml_graph::{decode_graph_yaml, decode_graph_yaml_labeled, parse_graph_file};
-pub(crate) use yaml_graph::{
-    parse_graph_str, selector_matches_version, validate_cluster_reference_id,
-};
 
 pub type DecodedAuthoringGraph = ergo_runtime::cluster::ClusterDefinition;
 
@@ -17,6 +46,8 @@ pub(crate) fn parse_graph_content(
 ) -> Result<DecodedAuthoringGraph, LoaderError> {
     match parse_graph_str(input, source_label) {
         Ok(graph) => Ok(graph),
+        // Try JSON only after YAML fails so callers can pass unlabeled in-memory content through
+        // one loader decode seam without inventing a separate format selector.
         Err(yaml_err) => match decode_graph_json_labeled(input, source_label) {
             Ok(graph) => Ok(graph),
             Err(json_err) => Err(select_best_graph_parse_error(

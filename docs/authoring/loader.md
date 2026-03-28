@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-26
+Last Updated: 2026-03-27
 Owner: Claude (Structural Auditor)
 Scope: Loader responsibility boundary, decode contract
 Change Rule: Tracks implementation
@@ -82,10 +82,6 @@ The loader does NOT:
 - `resolve_cluster_candidates`
   Base directory plus cluster ID plus search paths to deduplicated
   candidate file paths.
-- `io::canonicalize_or_self`
-  Module-public helper returning a canonical filesystem path when possible and
-  the original path otherwise.
-
 ---
 
 ## Output Type
@@ -200,8 +196,12 @@ Loader errors are transport and decode failures, exposed via `LoaderError`:
 - `LoaderDecodeError` — malformed YAML, missing required fields
   (and malformed JSON / labeled string decode failures)
 - `LoaderDiscoveryError` — discovery-time lookup and cluster-tree failures such
-  as missing clusters, nested parse failures, ID mismatches, duplicate
-  definitions, and circular references
+as missing clusters, nested parse failures, ID mismatches, duplicate
+definitions, and circular references
+
+The crate root re-exports `LoaderIoError`, `LoaderDecodeError`, and
+`LoaderDiscoveryError` alongside `LoaderError` so callers can name the
+payload types without reaching into `ergo_loader::io`.
 
 These are NOT rule violations. The loader never produces
 `RuleViolation` or references invariant IDs. Semantic errors begin at

@@ -1,15 +1,50 @@
+//! io
+//!
+//! Purpose:
+//! - Expose the loader's public bundle/error types and top-level load entrypoints for filesystem
+//!   and in-memory graph sources.
+//! - Convert decoded discovery output into caller-facing source bundles or sealed
+//!   `PreparedGraphAssets` handoff objects.
+//! - Keep filesystem reads and best-effort path canonicalization on the loader transport surface.
+//!
+//! Owns:
+//! - Open reporting/result DTOs (`FilesystemGraphBundle`, `InMemoryGraphBundle`) plus the sealed
+//!   invariant-bearing `PreparedGraphAssets` handoff.
+//! - `LoaderError` and its transport/decode/discovery variants.
+//! - Public loading APIs that read graph sources and assemble source maps or prepared assets.
+//! - Best-effort filesystem canonicalization for loader identity and bundle reporting.
+//!
+//! Does not own:
+//! - Graph text decode rules, cluster discovery traversal, project/profile loading, or kernel
+//!   semantic validation.
+//! - Host prep options, orchestration, or any runtime execution behavior.
+//!
+//! Connects to:
+//! - `discovery.rs` for filesystem and in-memory cluster discovery results.
+//! - `resolver.rs` for in-memory source-id normalization and filesystem canonical-path identity.
+//! - Host and SDK callers that consume loader bundles, prepared assets, and loader errors.
+//!
+//! Safety notes:
+//! - Public loader errors must remain transport/decode/discovery errors and must not become
+//!   kernel rule violations.
+//! - `PreparedGraphAssets` is externally immutable by construction; callers read through accessors
+//!   rather than constructing or mutating the sealed carrier directly.
+//! - In-memory bundle ordering and labeling must stay truthful to normalized source IDs and caller
+//!   supplied diagnostic labels.
+
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use ergo_runtime::cluster::Version;
 
-use crate::discovery::{
-    discover_cluster_tree, discover_in_memory_cluster_tree, InMemorySourceInput,
-};
-use crate::resolver::normalize_in_memory_source_id;
+use crate::discovery::{discover_cluster_tree, discover_in_memory_cluster_tree_validated};
+use crate::in_memory::InMemorySourceInput;
+use crate::resolver::{normalize_in_memory_source_id, validate_in_memory_inputs};
 use crate::DecodedAuthoringGraph;
 
+// Bundle DTOs stay open because they report discovered sources back to callers rather than
+// protecting loader-owned invariants.
 #[derive(Debug, Clone)]
 pub struct FilesystemGraphBundle {
     pub root: DecodedAuthoringGraph,
@@ -25,6 +60,8 @@ pub struct InMemoryGraphBundle {
     pub source_labels: BTreeMap<String, String>,
 }
 
+// `PreparedGraphAssets` stays sealed because host prep depends on loader-owned invariants rather
+// than caller-constructed reporting data.
 #[derive(Debug, Clone)]
 pub struct PreparedGraphAssets {
     root: DecodedAuthoringGraph,
@@ -99,6 +136,8 @@ pub fn load_graph_sources(
     let mut source_map = BTreeMap::new();
     source_map.insert(canonical.clone(), root_source_text);
 
+    // Bundle reporting is keyed by canonical filesystem identity so aliasing does not duplicate
+    // source entries once discovery has already resolved canonical source paths.
     for source_path in discovered.cluster_sources.values() {
         if source_map.contains_key(source_path) {
             continue;
@@ -140,72 +179,42 @@ pub fn load_in_memory_graph_sources(
     search_roots: &[String],
 ) -> Result<InMemoryGraphBundle, LoaderError> {
     let normalized_root_source_id = normalize_in_memory_source_id(root_source_id)?;
-    let mut seen_ids = std::collections::HashSet::new();
-    let mut seen_labels = std::collections::HashSet::new();
-    let mut normalized_sources = Vec::new();
-    for source in sources {
-        let normalized_source_id = normalize_in_memory_source_id(&source.source_id)?;
-        if source.source_label.is_empty() {
-            return Err(LoaderError::Discovery(LoaderDiscoveryError {
-                message: "in-memory source_label must not be empty".to_string(),
-            }));
-        }
-        if !seen_ids.insert(normalized_source_id.clone()) {
-            return Err(LoaderError::Discovery(LoaderDiscoveryError {
-                message: format!("duplicate in-memory source_id '{}'", normalized_source_id),
-            }));
-        }
-        if !seen_labels.insert(source.source_label.clone()) {
-            return Err(LoaderError::Discovery(LoaderDiscoveryError {
-                message: format!(
-                    "duplicate in-memory source_label '{}' (tranche 1 requires unique diagnostic labels per call)",
-                    source.source_label
-                ),
-            }));
-        }
-        normalized_sources.push((normalized_source_id, source));
-    }
-
-    let root_source = normalized_sources
-        .iter()
-        .find(|(source_id, _)| source_id == &normalized_root_source_id)
-        .ok_or_else(|| {
-            LoaderError::Discovery(LoaderDiscoveryError {
-                message: format!(
-                    "root in-memory source_id '{}' was not provided",
-                    normalized_root_source_id
-                ),
-            })
-        })?;
+    let validated = validate_in_memory_inputs(sources, search_roots)?;
+    let root_source = validated.root_source(&normalized_root_source_id)?;
     let discovery =
-        discover_in_memory_cluster_tree(&normalized_root_source_id, sources, search_roots)?;
+        discover_in_memory_cluster_tree_validated(&normalized_root_source_id, &validated)?;
     let root = discovery.root.clone();
 
     let mut source_map = BTreeMap::new();
     let mut source_labels = BTreeMap::new();
     source_map.insert(
         normalized_root_source_id.clone(),
-        root_source.1.content.clone(),
+        root_source.content.to_string(),
     );
     source_labels.insert(
         normalized_root_source_id.clone(),
-        root_source.1.source_label.clone(),
+        root_source.source_label.to_string(),
     );
 
+    // Public in-memory bundle order follows normalized source ID ordering because the BTreeMap is
+    // the canonical reporting surface, while caller order remains the resolver precedence rule.
     for source_id in discovery.cluster_source_ids.values() {
         if source_map.contains_key(source_id) {
             continue;
         }
-        let source = normalized_sources
-            .iter()
-            .find(|(normalized_source_id, _)| normalized_source_id == source_id)
-            .ok_or_else(|| {
-                LoaderError::Discovery(LoaderDiscoveryError {
-                    message: format!("in-memory source_id '{}' was not provided", source_id),
-                })
-            })?;
-        source_map.insert(source.0.clone(), source.1.content.clone());
-        source_labels.insert(source.0.clone(), source.1.source_label.clone());
+        let source = validated.source(source_id).ok_or_else(|| {
+            LoaderError::Discovery(LoaderDiscoveryError {
+                message: format!("in-memory source_id '{}' was not provided", source_id),
+            })
+        })?;
+        source_map.insert(
+            source.normalized_source_id.clone(),
+            source.content.to_string(),
+        );
+        source_labels.insert(
+            source.normalized_source_id.clone(),
+            source.source_label.to_string(),
+        );
     }
 
     let discovered_source_ids = source_map.keys().cloned().collect();
@@ -223,7 +232,10 @@ pub fn load_graph_assets_from_memory(
     sources: &[InMemorySourceInput],
     search_roots: &[String],
 ) -> Result<PreparedGraphAssets, LoaderError> {
-    let discovery = discover_in_memory_cluster_tree(root_source_id, sources, search_roots)?;
+    let validated = validate_in_memory_inputs(sources, search_roots)?;
+    let normalized_root_source_id = normalize_in_memory_source_id(root_source_id)?;
+    let discovery =
+        discover_in_memory_cluster_tree_validated(&normalized_root_source_id, &validated)?;
     Ok(PreparedGraphAssets {
         root: discovery.root,
         clusters: discovery.clusters,
@@ -232,6 +244,6 @@ pub fn load_graph_assets_from_memory(
     })
 }
 
-pub fn canonicalize_or_self(path: &Path) -> PathBuf {
+pub(crate) fn canonicalize_or_self(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }

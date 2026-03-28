@@ -1,3 +1,29 @@
+//! project
+//!
+//! Purpose:
+//! - Discover a filesystem-backed Ergo project root and parse `ergo.toml` into loader-owned project/profile data.
+//! - Resolve authored project profiles into path-backed run inputs consumed by higher prod layers.
+//!
+//! Owns:
+//! - Upward filesystem discovery for `ergo.toml`.
+//! - TOML decode of the path-backed project manifest and profile schema.
+//! - Resolution of authored relative paths and ingress config into `ResolvedProject*` values.
+//!
+//! Does not own:
+//! - In-memory project/profile products owned by SDK-side configuration.
+//! - Graph decode, cluster discovery, semantic validation, or runtime execution policy.
+//! - Host interpretation of adapter/egress/capture semantics beyond carrying resolved paths forward.
+//!
+//! Connects to:
+//! - `lib.rs` for the public loader re-export surface.
+//! - `sdk-rust` for filesystem project loading and profile-plan preparation.
+//! - Loader docs and `ergo.toml` authoring as the path-backed project contract.
+//!
+//! Safety notes:
+//! - `ProjectManifest` and `ProjectProfile` are unresolved authored config; `ResolvedProject*` joins authored strings against the project root, but does not reject absolute paths (callers control their own `ergo.toml`).
+//! - Profile resolution enforces exactly one ingress source so callers do not inherit ambiguous fixture/process behavior.
+//! - Loader project resolution stays path-backed and transport/config only; it does not become semantic authority for graph validity or run policy.
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -115,6 +141,8 @@ impl ResolvedProject {
 
         let ingress_count =
             usize::from(profile.fixture.is_some()) + usize::from(profile.ingress.is_some());
+        // Project profiles must resolve to exactly one driver source so downstream host/SDK
+        // prep never has to guess between fixture-backed and process-backed ingress.
         if ingress_count == 0 {
             return Err(ProjectError::ProfileInvalid {
                 name: name.to_string(),
@@ -153,6 +181,8 @@ impl ResolvedProject {
 
         Ok(ResolvedProjectProfile {
             graph_path: self.root.join(&profile.graph),
+            // Project resolution always adds the conventional `clusters/` directory; discovery
+            // decides later whether anything actually exists there.
             cluster_paths: vec![self.root.join("clusters")],
             ingress,
             adapter_path: profile.adapter.as_ref().map(|path| self.root.join(path)),
@@ -184,6 +214,8 @@ mod duration_option_serde {
     }
 
     fn parse_duration_literal(raw: &str) -> Result<Duration, String> {
+        // `ergo.toml` durations are intentionally simple integer literals with one unit suffix;
+        // richer policy remains outside the loader contract.
         if let Some(value) = raw.strip_suffix("ms") {
             let millis = value
                 .parse::<u64>()

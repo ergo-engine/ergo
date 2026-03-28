@@ -105,14 +105,86 @@ the canonical docs.
 
 ---
 
+## 3A. Evaluation Process For Where To Start
+
+Starting order is not arbitrary.
+
+Choose where to begin by blast radius and dependency shape, not by file
+size alone and not by whichever directory happens to be in front of you.
+
+Required evaluation process:
+
+1. Evaluate the workspace dependency graph first.
+2. Choose the crate with the lowest downstream blast radius that still
+   advances meaningful hardening work.
+3. Inside that crate, evaluate the local module/import graph before
+   picking a file.
+4. Start with low-fan-out private leaf files.
+5. Leave public facades, crate roots, re-export hubs, persisted-format
+   surfaces, and semantic authority files for later.
+
+Concretely, before choosing a crate:
+
+- inspect workspace dependencies through `cargo metadata`, `Cargo.toml`,
+  and real import usage
+- identify which crates are foundational and heavily imported
+- prefer starting in crates with fewer downstream dependents
+- if two crates have similar blast radius, prefer the one with lower
+  public API and serialization compatibility risk
+- do not start in kernel foundation crates just because they are large
+
+Concretely, before choosing a file inside a crate:
+
+- inspect module declarations, re-exports, and internal imports
+- identify whether the file is private, crate-visible, public, or
+  re-exported
+- identify whether the file owns persisted names, serde compatibility,
+  canonical error wording, or cross-crate types
+- prefer files with few dependents and clear ownership seams
+- treat crate roots and public API surfaces as late-stage targets unless
+  there is a compelling reason to begin there
+
+Priority order inside a crate:
+
+- private leaf modules first
+- private/internal support modules second
+- public but narrow modules after that
+- broad validation/composition hubs after that
+- crate roots, facade modules, and heavily re-exported files last
+
+Line count is only a secondary signal:
+
+- a very large file may still be the wrong place to start if it is a
+  central facade or dependency hub
+- a medium-sized leaf file is often the safer first move because it lets
+  you establish conventions and reduce risk before touching public seams
+
+Before any refactor proposal, state:
+
+- why this crate was chosen now
+- why this file was chosen now
+- which dependency/import checks informed that choice
+- why higher-blast-radius files are being deferred
+
+Work one file at a time. Re-run the blast-radius evaluation after each
+file rather than assuming the next target in the same directory is still
+the best next move.
+
+---
+
 ## 4. Required Work For Each File
 
 For each in-scope file, ensure all of the following are true.
 
 ### A. Add or improve a file header
 
-Every important source file should begin with a short header explaining
-what it is and why it exists.
+Every in-scope source file should begin with a short, concrete header
+explaining exactly what it does and why it exists.
+
+Do not treat this as optional for only "important" files. During this
+pass, headers are required for production files, kernel files, loader
+and host files, tests, and support files that are part of the in-scope
+surface.
 
 Use the local file's comment style:
 
@@ -123,11 +195,24 @@ Use the local file's comment style:
 The header should cover:
 
 - file name or module identity
-- what the file does
+- what the file does in direct, concrete terms
 - what layer owns it
 - what it connects to
 - what it explicitly does not own or enforce
 - the most important safety/invariant notes
+
+The header must be specific enough that a maintainer can understand the
+file's job without reconstructing it from surrounding modules.
+
+Avoid vague headers such as:
+
+- "helpers"
+- "utilities"
+- "shared logic"
+- "core functionality"
+
+If the file is small, the header can be short, but it still must state
+the exact role truthfully.
 
 Recommended Rust header shape:
 
@@ -152,6 +237,14 @@ Recommended Rust header shape:
 
 Keep headers short and truthful. If the explanation is long, the design
 likely still needs work.
+
+Exactness rule:
+
+- headers must describe the actual job of the file, not a fuzzy topic area
+- headers must not become alternate semantic specs that can drift from
+  canonical docs
+- if you cannot write a concrete header for a file, you do not yet
+  understand the file well enough to call it hardened
 
 ### B. Move non-essential tests out of production/kernel files
 
@@ -287,11 +380,30 @@ Identify whether the file still contains:
 - ambiguous ownership
 - duplicated enforcement
 - misleading names
+- phase/state distinctions encoded only in function-name suffixes
 - hidden semantic coupling
 - broad modules doing too many jobs
 - test scaffolding mixed into production logic
 - compatibility behavior that is accidental rather than explicit
 - boundary bleed between kernel and prod
+
+Specific smell to watch for:
+
+- a public/raw path plus a private sibling like `foo(...)` and
+  `foo_validated(...)`
+- one such pair can be acceptable when it truthfully bridges raw input
+  to an explicit validated state object
+- if that pattern starts to proliferate (`load_*_validated`,
+  `discover_*_validated`, `prepare_*_validated`, etc.), treat it as a
+  design smell rather than a naming convention
+- proliferation here usually means the real abstraction is the
+  intermediate phase/state, not the family of suffixed functions
+- preferred fix: introduce or strengthen the explicit phase abstraction
+  (validated type, internal module, operation object, or method on the
+  validated type) instead of multiplying parallel `*_validated`
+  entrypoints
+- do not let workflow phases live only in function names once there is
+  more than one meaningful instance
 
 When debt is found, either:
 

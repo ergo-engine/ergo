@@ -351,7 +351,10 @@ The `node.port` and `id@selector` shorthand formats impose constraints on identi
 | `:` (colon) | General identifiers |
 | ` ` (space) | All identifiers |
 
-**Rule:** The loader validates node IDs, cluster IDs, implementation IDs, parameter/input names, and port names against these constraints and produces clear decode errors on violation. Port identifiers are narrower in practice: they reject `.` and spaces, while the general identifier rules additionally reject `@`, `/`, `\`, `:`, and, for most graph identifiers, `$`.
+**Rule:** The loader validates node IDs, cluster IDs, implementation IDs, parameter/input names, and port names against these constraints and produces clear decode errors on violation. Two related name classes matter here:
+
+- internal `node.port` endpoint-reference port segments use the narrower parser rule and reject only empty strings, `.` and spaces
+- declared signature boundary port names, plus the broader graph-identifier surfaces, use the general identifier rule and additionally reject `@`, `/`, `\`, `:`, and, for most graph identifiers, `$`
 
 ### 8.3 Parsing Strategy
 

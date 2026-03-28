@@ -7,7 +7,8 @@ use ergo_loader::{
     decode_graph_json, decode_graph_yaml, decode_graph_yaml_labeled, load_cluster_tree,
     load_graph_assets_from_memory, load_graph_assets_from_paths, load_graph_sources,
     load_in_memory_graph_sources, resolve_cluster_candidates, FilesystemGraphBundle,
-    InMemoryGraphBundle, InMemorySourceInput, LoaderError, PreparedGraphAssets,
+    InMemoryGraphBundle, InMemorySourceInput, LoaderDecodeError, LoaderDiscoveryError, LoaderError,
+    LoaderIoError, PreparedGraphAssets,
 };
 
 fn make_temp_dir(prefix: &str) -> PathBuf {
@@ -22,6 +23,46 @@ fn make_temp_dir(prefix: &str) -> PathBuf {
     ));
     fs::create_dir_all(&dir).expect("create temp dir");
     dir
+}
+
+fn assert_in_memory_entrypoints_reject(
+    root_source_id: &str,
+    sources: &[InMemorySourceInput],
+    search_roots: &[String],
+    expected_message_fragment: &str,
+) {
+    let load_bundle_err = load_in_memory_graph_sources(root_source_id, sources, search_roots)
+        .expect_err("bundle entrypoint should reject invalid in-memory inputs");
+    assert!(
+        load_bundle_err
+            .to_string()
+            .contains(expected_message_fragment),
+        "bundle entrypoint error '{}' did not contain '{}'",
+        load_bundle_err,
+        expected_message_fragment
+    );
+
+    let discovery_err = discover_in_memory_cluster_tree(root_source_id, sources, search_roots)
+        .expect_err("discovery entrypoint should reject invalid in-memory inputs");
+    assert!(
+        discovery_err
+            .to_string()
+            .contains(expected_message_fragment),
+        "discovery entrypoint error '{}' did not contain '{}'",
+        discovery_err,
+        expected_message_fragment
+    );
+
+    let load_assets_err = load_graph_assets_from_memory(root_source_id, sources, search_roots)
+        .expect_err("assets entrypoint should reject invalid in-memory inputs");
+    assert!(
+        load_assets_err
+            .to_string()
+            .contains(expected_message_fragment),
+        "assets entrypoint error '{}' did not contain '{}'",
+        load_assets_err,
+        expected_message_fragment
+    );
 }
 
 #[test]
@@ -95,6 +136,119 @@ fn decode_graph_json_invalid_json_returns_decode_error() {
 }
 
 #[test]
+fn decode_graph_yaml_and_json_share_the_same_normalized_graph_shape() {
+    let yaml = decode_graph_yaml(
+        r#"
+kind: cluster
+id: parity_root
+version: "1.2.3"
+nodes:
+  producer:
+    impl: produce@1.0.0
+    params:
+      threshold: 7
+      mode:
+        exposed: root_mode
+  nested:
+    cluster: shared@^2.0
+edges:
+  - producer.out -> nested.in
+outputs:
+  final: nested.result
+inputs:
+  - name: incoming
+    type: number
+    required: false
+parameters:
+  - name: root_mode
+    type: string
+    default: fast
+signature:
+  kind: compute_like
+  inputs:
+    - name: incoming
+      type: number
+      cardinality: single
+      wireable: true
+  outputs:
+    - name: final
+      type: series
+      cardinality: single
+      wireable: true
+  has_side_effects: false
+  is_origin: false
+"#,
+    )
+    .expect("yaml decode");
+
+    let json = decode_graph_json(
+        r#"{
+  "kind": "cluster",
+  "id": "parity_root",
+  "version": "1.2.3",
+  "nodes": {
+    "producer": {
+      "impl": "produce@1.0.0",
+      "params": {
+        "threshold": 7,
+        "mode": {
+          "exposed": "root_mode"
+        }
+      }
+    },
+    "nested": {
+      "cluster": "shared@^2.0"
+    }
+  },
+  "edges": [
+    "producer.out -> nested.in"
+  ],
+  "outputs": {
+    "final": "nested.result"
+  },
+  "inputs": [
+    {
+      "name": "incoming",
+      "type": "number",
+      "required": false
+    }
+  ],
+  "parameters": [
+    {
+      "name": "root_mode",
+      "type": "string",
+      "default": "fast"
+    }
+  ],
+  "signature": {
+    "kind": "compute_like",
+    "inputs": [
+      {
+        "name": "incoming",
+        "type": "number",
+        "cardinality": "single",
+        "wireable": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "final",
+        "type": "series",
+        "cardinality": "single",
+        "wireable": true
+      }
+    ],
+    "has_side_effects": false,
+    "is_origin": false
+  }
+}"#,
+    )
+    .expect("json decode");
+
+    assert_eq!(yaml, json);
+}
+
+#[test]
 fn decode_graph_yaml_rejects_slash_in_cluster_reference_id() {
     let err = decode_graph_yaml(
         r#"
@@ -112,6 +266,66 @@ edges: []
     match err {
         LoaderError::Decode(inner) => {
             assert!(inner.message.contains("cluster id must not contain '/'"));
+        }
+        _ => panic!("expected decode error"),
+    }
+}
+
+#[test]
+fn decode_graph_yaml_accepts_special_characters_in_internal_node_port_references() {
+    let graph = decode_graph_yaml(
+        r#"
+kind: cluster
+id: port_refs
+version: "1.0.0"
+nodes:
+  producer:
+    impl: produce@1.0.0
+  consumer:
+    impl: consume@1.0.0
+edges:
+  - from:
+      node: producer
+      port: foo@bar
+    to:
+      node: consumer
+      port: in@bar
+"#,
+    )
+    .expect("internal node.port reference segments should keep the narrower parser rule");
+
+    assert_eq!(graph.edges[0].from.port_name, "foo@bar");
+    assert_eq!(graph.edges[0].to.port_name, "in@bar");
+}
+
+#[test]
+fn decode_graph_yaml_rejects_at_sign_in_declared_signature_port_names() {
+    let err = decode_graph_yaml(
+        r#"
+kind: cluster
+id: signature_ports
+version: "1.0.0"
+nodes: {}
+edges: []
+signature:
+  kind: compute_like
+  inputs:
+    - name: foo@bar
+      type: number
+      cardinality: single
+      wireable: true
+  outputs: []
+  has_side_effects: false
+  is_origin: false
+"#,
+    )
+    .expect_err("declared signature port names should still use the general identifier rule");
+
+    match err {
+        LoaderError::Decode(inner) => {
+            assert!(inner
+                .message
+                .contains("declared signature port name must not contain '@'"));
         }
         _ => panic!("expected decode error"),
     }
@@ -247,6 +461,32 @@ edges: []
     );
 
     let _ = fs::remove_dir_all(&temp_root);
+}
+
+#[test]
+fn loader_root_re_exports_error_payloads_and_in_memory_input_paths() {
+    let root_input = InMemorySourceInput {
+        source_id: "graphs/root.yaml".to_string(),
+        source_label: "root-row".to_string(),
+        content: "kind: cluster\nid: root\nversion: \"1.0.0\"\nnodes: {}\nedges: []\n".to_string(),
+    };
+    let discovery_input: ergo_loader::discovery::InMemorySourceInput = root_input.clone();
+    let _: InMemorySourceInput = discovery_input;
+
+    let io_err = LoaderIoError {
+        path: PathBuf::from("demo.yaml"),
+        message: "read failed".to_string(),
+    };
+    let decode_err = LoaderDecodeError {
+        message: "bad graph".to_string(),
+    };
+    let discovery_err = LoaderDiscoveryError {
+        message: "missing cluster".to_string(),
+    };
+
+    assert_eq!(io_err.path, PathBuf::from("demo.yaml"));
+    assert_eq!(decode_err.message, "bad graph");
+    assert_eq!(discovery_err.message, "missing cluster");
 }
 
 #[test]
@@ -752,6 +992,113 @@ fn load_in_memory_graph_sources_rejects_duplicate_source_labels() {
     let err = load_in_memory_graph_sources("graph-a.yaml", &sources, &[])
         .expect_err("duplicate source labels must error");
     assert!(err.to_string().contains("duplicate in-memory source_label"));
+}
+
+#[test]
+fn in_memory_entrypoints_reject_invalid_non_root_source_ids() {
+    let sources = vec![
+        InMemorySourceInput {
+            source_id: "graphs/root.yaml".to_string(),
+            source_label: "root-row".to_string(),
+            content: "kind: cluster\nid: root\nversion: \"1.0.0\"\nnodes: {}\nedges: []\n"
+                .to_string(),
+        },
+        InMemorySourceInput {
+            source_id: "graphs\\nested.yaml".to_string(),
+            source_label: "nested-row".to_string(),
+            content: "kind: cluster\nid: nested\nversion: \"1.0.0\"\nnodes: {}\nedges: []\n"
+                .to_string(),
+        },
+    ];
+
+    assert_in_memory_entrypoints_reject(
+        "graphs/root.yaml",
+        &sources,
+        &[],
+        "in-memory source_id must use '/' separators",
+    );
+}
+
+#[test]
+fn in_memory_entrypoints_reject_duplicate_normalized_source_ids() {
+    let sources = vec![
+        InMemorySourceInput {
+            source_id: "graphs/root.yaml".to_string(),
+            source_label: "root-row".to_string(),
+            content: "kind: cluster\nid: root\nversion: \"1.0.0\"\nnodes: {}\nedges: []\n"
+                .to_string(),
+        },
+        InMemorySourceInput {
+            source_id: "graphs/root.yaml".to_string(),
+            source_label: "duplicate-row".to_string(),
+            content: "kind: cluster\nid: duplicate\nversion: \"1.0.0\"\nnodes: {}\nedges: []\n"
+                .to_string(),
+        },
+    ];
+
+    assert_in_memory_entrypoints_reject(
+        "graphs/root.yaml",
+        &sources,
+        &[],
+        "duplicate in-memory source_id 'graphs/root.yaml'",
+    );
+}
+
+#[test]
+fn in_memory_entrypoints_reject_duplicate_source_labels() {
+    let sources = vec![
+        InMemorySourceInput {
+            source_id: "graphs/root.yaml".to_string(),
+            source_label: "shared-row".to_string(),
+            content: "kind: cluster\nid: root\nversion: \"1.0.0\"\nnodes: {}\nedges: []\n"
+                .to_string(),
+        },
+        InMemorySourceInput {
+            source_id: "graphs/other.yaml".to_string(),
+            source_label: "shared-row".to_string(),
+            content: "kind: cluster\nid: other\nversion: \"1.0.0\"\nnodes: {}\nedges: []\n"
+                .to_string(),
+        },
+    ];
+
+    assert_in_memory_entrypoints_reject(
+        "graphs/root.yaml",
+        &sources,
+        &[],
+        "duplicate in-memory source_label 'shared-row'",
+    );
+}
+
+#[test]
+fn in_memory_entrypoints_reject_empty_source_labels() {
+    let sources = vec![InMemorySourceInput {
+        source_id: "graphs/root.yaml".to_string(),
+        source_label: String::new(),
+        content: "kind: cluster\nid: root\nversion: \"1.0.0\"\nnodes: {}\nedges: []\n".to_string(),
+    }];
+
+    assert_in_memory_entrypoints_reject(
+        "graphs/root.yaml",
+        &sources,
+        &[],
+        "in-memory source_label must not be empty",
+    );
+}
+
+#[test]
+fn in_memory_entrypoints_reject_invalid_search_roots() {
+    let sources = vec![InMemorySourceInput {
+        source_id: "graphs/root.yaml".to_string(),
+        source_label: "root-row".to_string(),
+        content: "kind: cluster\nid: root\nversion: \"1.0.0\"\nnodes: {}\nedges: []\n".to_string(),
+    }];
+
+    assert_in_memory_entrypoints_reject(
+        "graphs/root.yaml",
+        &sources,
+        &["search\\root".to_string()],
+        "in-memory search_root must use '/' separators",
+    );
 }
 
 #[test]
