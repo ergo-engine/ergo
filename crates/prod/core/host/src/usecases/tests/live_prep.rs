@@ -1,3 +1,4 @@
+use super::super::process_driver::PROCESS_DRIVER_PROTOCOL_VERSION;
 use super::*;
 
 #[test]
@@ -988,7 +989,9 @@ fn replay_from_paths_handles_external_effect_capture_without_live_egress(
         &temp_dir,
         "driver.sh",
         &[
-            serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+            serde_json::to_string(
+                &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
+            )?,
             serde_json::to_string(&json!({
                 "type":"event",
                 "event": HostedEvent {
@@ -1146,7 +1149,9 @@ fn replay_from_paths_fails_when_capture_external_kind_is_not_representable(
         &temp_dir,
         "driver.sh",
         &[
-            serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+            serde_json::to_string(
+                &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
+            )?,
             serde_json::to_string(&json!({
                 "type":"event",
                 "event": HostedEvent {

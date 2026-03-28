@@ -1,3 +1,4 @@
+use super::super::process_driver::PROCESS_DRIVER_PROTOCOL_VERSION;
 use super::*;
 
 #[test]
@@ -19,7 +20,9 @@ fn process_driver_executes_via_canonical_host_path() -> Result<(), Box<dyn std::
         &temp_dir,
         "driver.sh",
         &[
-            serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+            serde_json::to_string(
+                &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
+            )?,
             serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?,
             serde_json::to_string(&json!({"type":"end"}))?,
         ],
@@ -78,7 +81,9 @@ fn process_driver_assets_lane_matches_path_lane_summary_and_capture_shape(
         &temp_dir,
         "driver.sh",
         &[
-            serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+            serde_json::to_string(
+                &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
+            )?,
             serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?,
             serde_json::to_string(&json!({"type":"end"}))?,
         ],
@@ -160,7 +165,8 @@ fn process_driver_host_stop_before_first_committed_event_returns_host_run_error_
         "graph.yaml",
         &number_source_graph_yaml("host_process_stop_zero_event", 2.5),
     )?;
-    let hello = serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?;
+    let hello =
+        serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
     let driver = write_process_driver_program(
         &temp_dir,
         "driver.sh",
@@ -226,7 +232,8 @@ fn process_driver_max_events_returns_host_stop_interruption_and_replayable_captu
         "graph.yaml",
         &number_source_graph_yaml("host_process_max_events", 2.5),
     )?;
-    let hello = serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?;
+    let hello =
+        serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
     let mut body = format!("#!/bin/sh\ncat <<'__ERGO_DRIVER__'\n{hello}\n");
     for index in 1..=64 {
         body.push_str(&serde_json::to_string(&json!({
@@ -295,7 +302,8 @@ fn process_driver_hot_stream_host_stop_does_not_wait_for_recv_timeout(
         &number_source_graph_yaml("host_process_hot_stop", 2.5),
     )?;
     let marker = temp_dir.join("emitted-events.log");
-    let hello = serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?;
+    let hello =
+        serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
     let mut body = format!(
         "#!/bin/sh\nmarker='{}'\nprintf '%s\\n' '{hello}'\n",
         marker.display()
@@ -428,7 +436,8 @@ fn process_driver_signal_race_after_stop_still_returns_host_stop_requested(
     let capture = temp_dir.join("capture.json");
     let pid_path = temp_dir.join("driver.pid");
     let emitted_path = temp_dir.join("driver.emitted");
-    let hello = serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?;
+    let hello =
+        serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
     let event = serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?;
     let driver = write_process_driver_program(
         &temp_dir,
@@ -609,7 +618,8 @@ fn process_driver_malformed_bytes_before_first_committed_step_return_driver_prot
         "graph.yaml",
         &number_source_graph_yaml("host_process_invalid_bytes_start", 2.5),
     )?;
-    let hello = serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?;
+    let hello =
+        serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
     let driver = write_process_driver_program(
         &temp_dir,
         "driver.sh",
@@ -655,7 +665,9 @@ fn process_driver_protocol_violation_after_start_returns_interrupted_and_replaya
         &temp_dir,
         "driver.sh",
         &[
-            serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+            serde_json::to_string(
+                &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
+            )?,
             serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?,
             "{not-json".to_string(),
         ],
@@ -721,7 +733,8 @@ fn process_driver_malformed_bytes_after_start_return_interrupted_and_replayable_
         "graph.yaml",
         &number_source_graph_yaml("host_process_invalid_bytes_after_start", 2.5),
     )?;
-    let hello = serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?;
+    let hello =
+        serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
     let event = serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?;
     let driver = write_process_driver_program(
         &temp_dir,
@@ -786,7 +799,8 @@ fn process_driver_non_zero_exit_after_end_returns_interrupted(
         "graph.yaml",
         &number_source_graph_yaml("host_process_nonzero_end", 2.5),
     )?;
-    let hello = serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?;
+    let hello =
+        serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
     let event = serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?;
     let end = serde_json::to_string(&json!({"type":"end"}))?;
     let driver = write_process_driver_program(
@@ -842,7 +856,8 @@ fn process_driver_delayed_clean_exit_within_grace_returns_completed(
         "graph.yaml",
         &number_source_graph_yaml("host_process_delayed_clean_exit", 2.5),
     )?;
-    let hello = serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?;
+    let hello =
+        serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
     let event = serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?;
     let end = serde_json::to_string(&json!({"type":"end"}))?;
     let driver = write_process_driver_program(
@@ -896,7 +911,8 @@ fn process_driver_extra_output_after_end_returns_protocol_violation(
         "graph.yaml",
         &number_source_graph_yaml("host_process_extra_after_end", 2.5),
     )?;
-    let hello = serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?;
+    let hello =
+        serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
     let event = serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?;
     let end = serde_json::to_string(&json!({"type":"end"}))?;
     let driver = write_process_driver_program(
@@ -952,7 +968,8 @@ fn process_driver_hang_after_end_is_bounded_and_interrupted(
         "graph.yaml",
         &number_source_graph_yaml("host_process_hang_after_end", 2.5),
     )?;
-    let hello = serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?;
+    let hello =
+        serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
     let event = serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?;
     let end = serde_json::to_string(&json!({"type":"end"}))?;
     let driver = write_process_driver_program(
@@ -1011,7 +1028,8 @@ fn process_driver_stdout_eof_before_exit_is_bounded_and_interrupted(
         "graph.yaml",
         &number_source_graph_yaml("host_process_eof_hang", 2.5),
     )?;
-    let hello = serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?;
+    let hello =
+        serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
     let event = serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?;
     let driver = write_process_driver_program(
         &temp_dir,

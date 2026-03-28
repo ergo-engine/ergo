@@ -1,3 +1,4 @@
+use super::super::process_driver::PROCESS_DRIVER_PROTOCOL_VERSION;
 use super::*;
 
 #[test]
@@ -256,7 +257,9 @@ fn egress_timeout_maps_to_typed_interruption_and_preserves_partial_acks(
         &temp_dir,
         "driver.sh",
         &[
-            serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+            serde_json::to_string(
+                &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
+            )?,
             serde_json::to_string(&json!({
                 "type":"event",
                 "event": HostedEvent {
@@ -415,7 +418,9 @@ fn capture_egress_provenance_is_present_even_when_no_intents_emitted(
         &temp_dir,
         "driver.sh",
         &[
-            serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+            serde_json::to_string(
+                &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
+            )?,
             serde_json::to_string(&json!({
                 "type":"event",
                 "event": HostedEvent {
@@ -497,7 +502,9 @@ fn egress_protocol_violation_maps_to_typed_interruption_reason(
         &temp_dir,
         "driver.sh",
         &[
-            serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+            serde_json::to_string(
+                &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
+            )?,
             serde_json::to_string(&json!({
                 "type":"event",
                 "event": HostedEvent {
@@ -565,7 +572,9 @@ fn egress_io_maps_to_typed_interruption_reason() -> Result<(), Box<dyn std::erro
         &temp_dir,
         "driver.sh",
         &[
-            serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+            serde_json::to_string(
+                &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
+            )?,
             serde_json::to_string(&json!({
                 "type":"event",
                 "event": HostedEvent {
@@ -630,7 +639,9 @@ fn egress_startup_failure_surfaces_host_run_error() -> Result<(), Box<dyn std::e
         &temp_dir,
         "driver.sh",
         &[
-            serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+            serde_json::to_string(
+                &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
+            )?,
             serde_json::to_string(&json!({
                 "type":"event",
                 "event": HostedEvent {
@@ -705,7 +716,9 @@ fn egress_shutdown_failure_surfaces_host_run_error() -> Result<(), Box<dyn std::
         &temp_dir,
         "driver.sh",
         &[
-            serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))?,
+            serde_json::to_string(
+                &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
+            )?,
             serde_json::to_string(&json!({
                 "type":"event",
                 "event": HostedEvent {

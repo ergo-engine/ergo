@@ -1,3 +1,49 @@
+//! process_driver
+//!
+//! Purpose:
+//! - Host-owned process-ingress v0 runtime seam for canonical live runs.
+//! - Launches a child process, enforces the stdout JSONL protocol handshake,
+//!   streams `HostedEvent` frames into `HostedRunner::step()`, and shapes
+//!   process-ingress completion versus interruption outcomes.
+//!
+//! Owns:
+//! - `ergo-driver.v0` hello ordering, protocol-version acceptance, and outer
+//!   `hello` / `event` / `end` message framing for the process-ingress path.
+//! - Host operational waiting policy for startup grace, event receive wakeups,
+//!   and termination grace.
+//! - Host-managed child-process lifecycle for process-group setup, abort, and
+//!   post-`end` drain behavior.
+//!
+//! Does not own:
+//! - Canonical run orchestration and final summary shaping in `live_run.rs`.
+//! - `HostedEvent` serde semantics in `runner.rs`; nested event-frame shape
+//!   changes there affect this wire protocol.
+//! - Fixture ingress semantics or any future bidirectional ingress protocol.
+//!
+//! Connects to:
+//! - `live_run.rs`, which selects process ingress under canonical run.
+//! - `HostedRunner::step(...)` for host-owned step execution.
+//! - The ingress channel guide and host-stop doctrine, which describe the v0
+//!   process-ingress protocol and its host-owned lifecycle policy.
+//!
+//! Safety notes:
+//! - `PROCESS_DRIVER_PROTOCOL_VERSION` is the host-local authority for the v0
+//!   protocol token; broader repo-wide constant extraction is tracked in issue
+//!   #70.
+//! - Before the first committed step, protocol/process failures are surfaced as
+//!   start/protocol/IO errors; after that boundary they become interrupted runs.
+//!   That lifecycle split is currently encoded through `committed_event_count`
+//!   rather than a typed phase object; broader structural cleanup is tracked in
+//!   issue #69.
+//! - Process ingress currently synthesizes a single episode count under `"E1"`
+//!   because v0 has no episode boundary frame. That is correct for v0 but
+//!   remains a latent correctness seam tracked in issue #69.
+//! - `ProcessDriverReadFailure` still stringifies IO/encoding failures before
+//!   classification, matching the broader string-bucket debt tracked in issue
+//!   #60.
+//! - On Unix, abort kills the host-managed process group configured during
+//!   spawn, not just the direct child.
+
 use super::*;
 
 #[cfg(unix)]
@@ -10,6 +56,8 @@ enum ProcessDriverMessage {
     Event { event: HostedEvent },
     End,
 }
+
+pub(super) const PROCESS_DRIVER_PROTOCOL_VERSION: &str = "ergo-driver.v0";
 
 #[derive(Debug)]
 enum ProcessDriverStreamObservation {
@@ -319,7 +367,9 @@ pub(super) fn run_process_driver(
 
         if !hello_received {
             match message {
-                ProcessDriverMessage::Hello { protocol } if protocol == "ergo-driver.v0" => {
+                ProcessDriverMessage::Hello { protocol }
+                    if protocol == PROCESS_DRIVER_PROTOCOL_VERSION =>
+                {
                     hello_received = true;
                     continue;
                 }
@@ -542,6 +592,11 @@ fn configure_host_managed_child(command: &mut Command) {
 pub(super) fn kill_host_managed_child(child: &mut Child) {
     #[cfg(unix)]
     {
+        // SAFETY: `configure_host_managed_child` places the spawned ingress
+        // process into its own process group. `Child::id()` returns the OS pid
+        // for that still-owned child handle, and `killpg(pid, SIGKILL)` targets
+        // that host-managed process group so abort tears down the full ingress
+        // subtree instead of only the direct child.
         let _ = unsafe { libc::killpg(child.id() as libc::pid_t, libc::SIGKILL) };
     }
 
@@ -697,3 +752,6 @@ fn process_message_name(message: &ProcessDriverMessage) -> &'static str {
         ProcessDriverMessage::End => "end",
     }
 }
+
+#[cfg(test)]
+mod tests;
