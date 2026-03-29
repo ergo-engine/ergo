@@ -1,3 +1,20 @@
+//! usecases shared tests
+//!
+//! Purpose:
+//! - Provide shared test infrastructure for the out-of-line `usecases` submodule suites and the
+//!   facade-level contract tests.
+//!
+//! Owns:
+//! - Common injected runtime primitives, temp-file helpers, process-driver helpers, and host test
+//!   harness utilities reused by `live_prep`, `live_run`, `process_driver`, and `contract`.
+//!
+//! Does not own:
+//! - Production host semantics, which remain owned by `usecases.rs` and its child modules.
+//!
+//! Safety notes:
+//! - `normalize_cluster_graph_yaml(...)` is a fragile heuristic YAML rewriter kept only for the
+//!   current shared test fixtures; broader cleanup is tracked in issue #74.
+
 use super::live_prep::{prepare_adapter_setup, prepare_graph_runtime, replay_owned_external_kinds};
 use super::live_run::{run_graph_from_assets_internal, run_graph_from_paths_internal};
 use super::process_driver::{kill_host_managed_child, spawn_process_driver};
@@ -769,6 +786,8 @@ fn current_process_group_id() -> Result<u32, Box<dyn std::error::Error>> {
 }
 
 fn send_sigint_to_process_group(pgid: u32) -> Result<(), Box<dyn std::error::Error>> {
+    // SAFETY: Tests only call this with a process-group id obtained from `ps` for a child group
+    // they created, and `killpg` is the required libc API for delivering SIGINT to that group.
     let rc = unsafe { libc::killpg(pgid as libc::pid_t, libc::SIGINT) };
     if rc == 0 {
         Ok(())
@@ -799,6 +818,7 @@ fn run_graph_from_assets_with_process_policy(
     run_graph_from_assets_internal(request, None, process_policy, RunControl::default())
 }
 
+mod contract;
 mod live_prep;
 mod live_run;
 mod process_driver;

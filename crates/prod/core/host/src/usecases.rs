@@ -1,3 +1,36 @@
+//! usecases
+//!
+//! Purpose:
+//! - Serve as the parent module, public type facade, and shared import authority for the host
+//!   usecase subsystem.
+//! - Define the public request/response/error/status types consumed through canonical host run,
+//!   replay, validation, and manual-runner entrypoints.
+//!
+//! Owns:
+//! - `HostRunError`, `HostReplayError`, `InterruptionReason`, `DriverConfig`, `RunControl`, and
+//!   the public host request/response DTOs.
+//! - Adapter dependency scanning and adapter composition checks over expanded graphs.
+//! - The `pub(super)` prelude consumed by `live_prep`, `live_run`, and `process_driver`.
+//!
+//! Does not own:
+//! - Live-run, replay, or process-driver mechanics, which live in the child modules.
+//! - Hosted-runner execution semantics, which live in `runner.rs`.
+//! - Manifest validation/composition surfaces owned by `manifest_usecases.rs`.
+//!
+//! Connects to:
+//! - `live_prep.rs`, `live_run.rs`, and `process_driver.rs` as this subsystem's module root.
+//! - `lib.rs`, CLI, and SDK through the re-exported public usecase and error surfaces.
+//!
+//! Safety notes:
+//! - This file is a public compatibility seam: CLI and SDK pattern-match on `HostRunError`,
+//!   `HostReplayError`, `InterruptionReason`, and request/response field names directly.
+//! - `HostRunError` and `HostReplayError::Setup(...)` remain string-bucket surfaces; broader
+//!   typing cleanup is tracked in issue #60.
+//! - `interruption_from_egress_dispatch_failure(...)` intentionally drops protocol/I/O detail and
+//!   maps into status-oriented interruption reasons.
+//! - The broad `pub(super)` prelude and helper duplication in this facade, plus the shared
+//!   `usecases/tests` infrastructure cleanup, are tracked in issue #74.
+
 pub(super) use ergo_adapter::{
     adapter_fingerprint, compile_event_binder, fixture, validate_action_adapter_composition,
     validate_capture_format, validate_source_adapter_composition, AdapterManifest, AdapterProvides,
@@ -311,7 +344,14 @@ impl std::fmt::Display for HostReplayError {
     }
 }
 
-impl std::error::Error for HostReplayError {}
+impl std::error::Error for HostReplayError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Hosted(err) => Some(err),
+            _ => None,
+        }
+    }
+}
 
 impl From<HostedReplayError> for HostReplayError {
     fn from(value: HostedReplayError) -> Self {
