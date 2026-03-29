@@ -1,3 +1,32 @@
+//! ergo_host
+//!
+//! Purpose:
+//! - Crate facade for the production host layer.
+//! - Expose the canonical client-facing host seams plus the lower-level
+//!   building blocks used by advanced embedded callers and tests.
+//!
+//! Owns:
+//! - The top-level public re-export surface for canonical run, replay,
+//!   validation, manual-runner preparation/finalization, and selected lower-level
+//!   host building blocks.
+//!
+//! Does not own:
+//! - Kernel execution or replay semantics from `ergo_supervisor` /
+//!   `ergo_runtime`.
+//! - Loader transport and asset discovery from `ergo_loader`.
+//! - Adapter contracts and capture semantics from `ergo_adapter`.
+//!
+//! Connects to:
+//! - CLI and SDK as the direct downstream consumers of the host public API.
+//! - The internal host submodules that provide the concrete implementation of
+//!   this facade.
+//!
+//! Safety notes:
+//! - The `#[allow(clippy::result_large_err)]` annotations on `replay` and
+//!   `usecases` are deliberate: these public seams return structured error types
+//!   whose information would be lost or obscured by boxing at the crate
+//!   boundary.
+
 mod capture_enrichment;
 mod demo_fixture_usecase;
 mod egress;
