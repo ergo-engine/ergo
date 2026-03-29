@@ -13,9 +13,10 @@ pub(super) use ergo_runtime::cluster::{
 pub(super) use ergo_runtime::common::ErrorInfo;
 pub(super) use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceScheme};
 pub(super) use ergo_supervisor::replay::StrictReplayExpectations;
+#[cfg(test)]
+pub(super) use ergo_supervisor::Decision;
 pub(super) use ergo_supervisor::{
-    write_capture_bundle, CaptureBundle, CaptureJsonStyle, Constraints, Decision,
-    NO_ADAPTER_PROVENANCE,
+    write_capture_bundle, CaptureBundle, CaptureJsonStyle, Constraints, NO_ADAPTER_PROVENANCE,
 };
 pub(super) use serde::{Deserialize, Serialize};
 pub(super) use std::collections::{BTreeSet, HashMap, HashSet};

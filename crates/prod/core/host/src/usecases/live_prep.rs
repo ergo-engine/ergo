@@ -1,4 +1,56 @@
+//! live_prep
+//!
+//! Purpose:
+//! - Host-owned preparation seam for canonical validation, replay setup, and
+//!   manual hosted-runner preparation.
+//! - Bridges loader-prepared graph assets into runtime expansion, adapter
+//!   setup, hosted-runner configuration validation, and replay/manual-runner
+//!   setup for both path-backed and in-memory callers.
+//!
+//! Owns:
+//! - Path-backed and asset-backed graph/runtime preparation through the shared
+//!   `PreparedGraphRuntime` and `CanonicalAdapterSetup` phases.
+//! - `RuntimeSurfaces` injection for advanced callers that prebuild runtime
+//!   registries/catalogs.
+//! - Host-owned finalization staging through
+//!   `HostedRunnerFinalizeFailure::{PendingAcks, StopEgress}`.
+//! - Canonical prep-only host APIs for validation, replay setup, and manual
+//!   runner preparation.
+//!
+//! Does not own:
+//! - Graph discovery/decode authority in `ergo_loader`.
+//! - Replay doctrine or strict comparison semantics in `replay.rs` /
+//!   `ergo_supervisor`.
+//! - Hosted runner step/egress execution semantics in `runner.rs`.
+//! - Driver execution orchestration in `live_run.rs`.
+//!
+//! Connects to:
+//! - `ergo_loader` for graph asset loading and cluster discovery.
+//! - runtime expansion/provenance, adapter validation/composition, and hosted
+//!   runner configuration validation.
+//! - `live_run.rs`, which consumes validated prep/finalization stages during
+//!   canonical execution.
+//! - CLI and SDK, which import the public validation/replay/manual-runner
+//!   entrypoints re-exported through `usecases.rs` and `lib.rs`.
+//!
+//! Safety notes:
+//! - `HostedRunnerFinalizeFailure` is load-bearing: `live_run.rs` maps pending
+//!   ack failures and egress-stop failures to different host error surfaces.
+//! - Replay representability checks intentionally treat `set_context` as the
+//!   host-internal handler effect path and exclude it from replay-owned
+//!   external kinds.
+//! - `summarize_error_info(...)` still string-buckets structured adapter
+//!   validation errors at the host setup boundary.
+//! - `core_registries()` failures currently require debug formatting because
+//!   `CoreRegistrationError` does not expose `Display` / `Error`.
+//! - Shared replay-setup duplication and host-internal handler-kind authority
+//!   split are deferred to issue #71.
+
+#![allow(clippy::arc_with_non_send_sync)]
+
 use super::*;
+
+const HOST_INTERNAL_SET_CONTEXT_KIND: &str = "set_context";
 
 fn map_live_prep_loader_result(
     result: Result<ergo_loader::PreparedGraphAssets, ergo_loader::LoaderError>,
@@ -249,7 +301,6 @@ fn hosted_runner_setup_error(err: HostedStepError) -> HostRunError {
     HostRunError::StepFailed(format!("host configuration validation failed: {err}"))
 }
 
-#[allow(clippy::arc_with_non_send_sync)]
 fn validate_live_runner_setup_from_assets(
     assets: &ergo_loader::PreparedGraphAssets,
     options: &LivePrepOptions,
@@ -336,7 +387,6 @@ fn build_live_runner_from_validated(
     }
 }
 
-#[allow(clippy::arc_with_non_send_sync)]
 pub(super) fn prepare_live_runner_setup_from_assets(
     assets: &ergo_loader::PreparedGraphAssets,
     options: &LivePrepOptions,
@@ -396,7 +446,7 @@ fn captured_external_effect_kinds(bundle: &CaptureBundle) -> HashSet<String> {
         .flat_map(|decision| decision.effects.iter())
         .filter_map(|effect| {
             let kind = effect.effect.kind.as_str();
-            (kind != "set_context").then(|| kind.to_string())
+            (kind != HOST_INTERNAL_SET_CONTEXT_KIND).then(|| kind.to_string())
         })
         .collect()
 }
@@ -422,7 +472,6 @@ pub fn validate_graph_from_paths(
 
 /// Advanced validation API for callers that prebuild runtime surfaces before
 /// invoking the canonical host validation path.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn validate_graph_from_paths_with_surfaces(
     request: PrepareHostedRunnerFromPathsRequest,
     runtime_surfaces: RuntimeSurfaces,
@@ -433,7 +482,6 @@ pub fn validate_graph_from_paths_with_surfaces(
 /// Lower-level validation API over preloaded graph assets. Validation stops
 /// after runtime/configuration validation and does not construct or start a
 /// hosted session.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn validate_graph(
     assets: &ergo_loader::PreparedGraphAssets,
     options: &LivePrepOptions,
@@ -443,7 +491,6 @@ pub fn validate_graph(
 
 /// Advanced lower-level validation API over preloaded graph assets with
 /// injected runtime surfaces.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn validate_graph_with_surfaces(
     assets: &ergo_loader::PreparedGraphAssets,
     options: &LivePrepOptions,
@@ -454,7 +501,6 @@ pub fn validate_graph_with_surfaces(
 
 /// Canonical validation API over the full path-backed run request, including
 /// driver preflight.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn validate_run_graph_from_paths(
     request: RunGraphFromPathsRequest,
 ) -> Result<(), HostRunError> {
@@ -463,7 +509,6 @@ pub fn validate_run_graph_from_paths(
 
 /// Advanced validation API over the full path-backed run request with injected
 /// runtime surfaces.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn validate_run_graph_from_paths_with_surfaces(
     request: RunGraphFromPathsRequest,
     runtime_surfaces: RuntimeSurfaces,
@@ -473,7 +518,6 @@ pub fn validate_run_graph_from_paths_with_surfaces(
 
 /// Lower-level validation API over the full in-memory run request, including
 /// driver preflight.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn validate_run_graph_from_assets(
     request: RunGraphFromAssetsRequest,
 ) -> Result<(), HostRunError> {
@@ -482,7 +526,6 @@ pub fn validate_run_graph_from_assets(
 
 /// Advanced lower-level validation API over the full in-memory run request
 /// with injected runtime surfaces.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn validate_run_graph_from_assets_with_surfaces(
     request: RunGraphFromAssetsRequest,
     runtime_surfaces: RuntimeSurfaces,
@@ -490,7 +533,6 @@ pub fn validate_run_graph_from_assets_with_surfaces(
     validate_run_graph_from_assets_internal(request, Some(runtime_surfaces))
 }
 
-#[allow(clippy::arc_with_non_send_sync)]
 fn validate_graph_internal(
     assets: &ergo_loader::PreparedGraphAssets,
     options: &LivePrepOptions,
@@ -500,7 +542,6 @@ fn validate_graph_internal(
     Ok(())
 }
 
-#[allow(clippy::arc_with_non_send_sync)]
 fn validate_graph_from_paths_internal(
     request: PrepareHostedRunnerFromPathsRequest,
     runtime_surfaces: Option<RuntimeSurfaces>,
@@ -519,7 +560,6 @@ fn validate_graph_from_paths_internal(
     validate_graph_internal(&assets, &options, runtime_surfaces)
 }
 
-#[allow(clippy::arc_with_non_send_sync)]
 fn validate_run_graph_from_paths_internal(
     request: RunGraphFromPathsRequest,
     runtime_surfaces: Option<RuntimeSurfaces>,
@@ -540,7 +580,6 @@ fn validate_run_graph_from_paths_internal(
     validate_run_graph_internal(&assets, &options, &driver, runtime_surfaces)
 }
 
-#[allow(clippy::arc_with_non_send_sync)]
 fn validate_run_graph_from_assets_internal(
     request: RunGraphFromAssetsRequest,
     runtime_surfaces: Option<RuntimeSurfaces>,
@@ -554,7 +593,6 @@ fn validate_run_graph_from_assets_internal(
     validate_run_graph_internal(&assets, &prep, &driver, runtime_surfaces)
 }
 
-#[allow(clippy::arc_with_non_send_sync)]
 fn validate_run_graph_internal(
     assets: &ergo_loader::PreparedGraphAssets,
     options: &LivePrepOptions,
@@ -568,7 +606,6 @@ fn validate_run_graph_internal(
 
 /// Canonical replay API for clients. Host owns capture load, graph loading, adapter composition, and runner setup.
 // Allow non-Send/Sync in Arc: CoreRegistries and CorePrimitiveCatalog contain non-Send/Sync types.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn replay_graph_from_paths(
     request: ReplayGraphFromPathsRequest,
 ) -> Result<ReplayGraphResult, HostReplayError> {
@@ -576,7 +613,6 @@ pub fn replay_graph_from_paths(
 }
 
 /// Advanced replay API for callers that prebuild runtime surfaces before invoking the canonical host path.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn replay_graph_from_paths_with_surfaces(
     request: ReplayGraphFromPathsRequest,
     runtime_surfaces: RuntimeSurfaces,
@@ -585,7 +621,6 @@ pub fn replay_graph_from_paths_with_surfaces(
 }
 
 /// Lower-level canonical replay API over preloaded graph assets and an in-memory capture bundle.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn replay_graph_from_assets(
     request: ReplayGraphFromAssetsRequest,
 ) -> Result<ReplayGraphResult, HostReplayError> {
@@ -593,7 +628,6 @@ pub fn replay_graph_from_assets(
 }
 
 /// Advanced lower-level replay API over preloaded graph assets with injected runtime surfaces.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn replay_graph_from_assets_with_surfaces(
     request: ReplayGraphFromAssetsRequest,
     runtime_surfaces: RuntimeSurfaces,
@@ -603,7 +637,6 @@ pub fn replay_graph_from_assets_with_surfaces(
 
 /// Canonical manual-step preparation API for clients. Host owns graph loading,
 /// expansion, adapter preflight, runner setup, and eager egress startup.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn prepare_hosted_runner_from_paths(
     request: PrepareHostedRunnerFromPathsRequest,
 ) -> Result<HostedRunner, HostRunError> {
@@ -612,7 +645,6 @@ pub fn prepare_hosted_runner_from_paths(
 
 /// Advanced manual-step preparation API for callers that prebuild runtime
 /// surfaces before invoking the canonical host setup path.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn prepare_hosted_runner_from_paths_with_surfaces(
     request: PrepareHostedRunnerFromPathsRequest,
     runtime_surfaces: RuntimeSurfaces,
@@ -621,7 +653,6 @@ pub fn prepare_hosted_runner_from_paths_with_surfaces(
 }
 
 /// Lower-level manual-step preparation API over preloaded graph assets.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn prepare_hosted_runner(
     assets: ergo_loader::PreparedGraphAssets,
     options: &LivePrepOptions,
@@ -631,7 +662,6 @@ pub fn prepare_hosted_runner(
 
 /// Advanced lower-level manual-step preparation API over preloaded graph
 /// assets with injected runtime surfaces.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn prepare_hosted_runner_with_surfaces(
     assets: ergo_loader::PreparedGraphAssets,
     options: &LivePrepOptions,
@@ -640,7 +670,6 @@ pub fn prepare_hosted_runner_with_surfaces(
     prepare_hosted_runner_internal(assets, options, Some(runtime_surfaces))
 }
 
-#[allow(clippy::arc_with_non_send_sync)]
 fn prepare_hosted_runner_internal(
     assets: ergo_loader::PreparedGraphAssets,
     options: &LivePrepOptions,
@@ -652,7 +681,6 @@ fn prepare_hosted_runner_internal(
     Ok(runner)
 }
 
-#[allow(clippy::arc_with_non_send_sync)]
 fn replay_graph_from_paths_internal(
     request: ReplayGraphFromPathsRequest,
     runtime_surfaces: Option<RuntimeSurfaces>,
@@ -703,7 +731,7 @@ fn replay_graph_from_paths_internal(
         registries,
         adapter_setup.adapter_provides.clone(),
     );
-    let handler_kinds = BTreeSet::from(["set_context".to_string()]);
+    let handler_kinds = BTreeSet::from([HOST_INTERNAL_SET_CONTEXT_KIND.to_string()]);
     let replay_external_kinds =
         replay_owned_external_kinds(&runtime, &adapter_setup.adapter_provides, &handler_kinds);
     let captured_external_kinds = captured_external_effect_kinds(&bundle);
@@ -739,7 +767,6 @@ fn replay_graph_from_paths_internal(
     })
 }
 
-#[allow(clippy::arc_with_non_send_sync)]
 fn replay_graph_from_assets_internal(
     request: ReplayGraphFromAssetsRequest,
     runtime_surfaces: Option<RuntimeSurfaces>,
@@ -780,7 +807,7 @@ fn replay_graph_from_assets_internal(
         registries,
         adapter_setup.adapter_provides.clone(),
     );
-    let handler_kinds = BTreeSet::from(["set_context".to_string()]);
+    let handler_kinds = BTreeSet::from([HOST_INTERNAL_SET_CONTEXT_KIND.to_string()]);
     let replay_external_kinds =
         replay_owned_external_kinds(&runtime, &adapter_setup.adapter_provides, &handler_kinds);
     let captured_external_kinds = captured_external_effect_kinds(&bundle);
@@ -816,7 +843,6 @@ fn replay_graph_from_assets_internal(
     })
 }
 
-#[allow(clippy::arc_with_non_send_sync)]
 fn prepare_hosted_runner_from_paths_internal(
     request: PrepareHostedRunnerFromPathsRequest,
     runtime_surfaces: Option<RuntimeSurfaces>,

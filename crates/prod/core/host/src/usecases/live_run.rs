@@ -1,3 +1,45 @@
+//! live_run
+//!
+//! Purpose:
+//! - Own the canonical host live-run entrypoints over prepared assets, path-backed loading,
+//!   explicit driver ingress, capture finalization, and lower-level replay summary reporting.
+//!
+//! Owns:
+//! - Host run orchestration from loader/prep output into truthful `Completed` versus
+//!   `Interrupted` outcomes.
+//! - Fixture-driver execution over canonical `HostedRunner` stepping.
+//! - Run-summary finalization, including capture writing and invoke/defer counting.
+//!
+//! Does not own:
+//! - Graph loading, expansion, adapter binding, or hosted-runner construction, which live in
+//!   `live_prep.rs`.
+//! - `InterruptionReason` meaning or formatting, which lives in `usecases.rs`.
+//! - Replay execution semantics, which live in `replay.rs` and `HostedRunner`.
+//!
+//! Connects to:
+//! - `live_prep.rs` for prepared runner setup and finalization staging.
+//! - `process_driver.rs` for process-ingress execution.
+//! - CLI and SDK run entrypoints re-exported through `usecases.rs` and `lib.rs`.
+//!
+//! Safety notes:
+//! - Host stop and bounded-run limits intentionally preserve partial truthful capture only after at
+//!   least one committed event; that lifecycle split is still encoded as
+//!   `committed_event_count == 0` in `host_stop_driver_execution(...)`.
+//! - Lower-level live-run entrypoints still defend direct callers with local fixture validation
+//!   even though canonical driver preflight lives in `live_prep.rs`; that split is part of the
+//!   deferred cleanup in issue #72.
+//! - `validate_fixture_items_input(...)` and `run_fixture_items_driver(...)` duplicate the same
+//!   episode/event-shape rules, and `run_graph_with_policy(...)` /
+//!   `run_graph_from_assets_internal(...)` duplicate execution/finalization structure. Second-pass
+//!   refactor pressure is tracked in issue #72.
+//! - `RunSummary.events` and `episode_event_counts` come from driver bookkeeping, while
+//!   `invoked`/`deferred` come from finalized capture truth.
+//! - The current `InterruptionReason` Display/Debug contract is downstream-significant, but tests
+//!   for that enum belong with its definition in `usecases.rs`, not here.
+
+// Allow non-Send/Sync in Arc: CoreRegistries and CorePrimitiveCatalog contain non-Send/Sync types.
+#![allow(clippy::arc_with_non_send_sync)]
+
 use super::*;
 
 pub(super) enum DriverTerminal {
@@ -49,8 +91,6 @@ impl RunLifecycleState {
 }
 
 /// Canonical run API for clients. Host owns graph loading, expansion, adapter composition, and runner setup.
-// Allow non-Send/Sync in Arc: CoreRegistries and CorePrimitiveCatalog contain non-Send/Sync types.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn run_graph_from_paths(request: RunGraphFromPathsRequest) -> RunGraphResponse {
     run_graph_from_paths_internal(
         request,
@@ -61,7 +101,6 @@ pub fn run_graph_from_paths(request: RunGraphFromPathsRequest) -> RunGraphRespon
 }
 
 /// Canonical run API with host stop control and bounded-run limits.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn run_graph_from_paths_with_control(
     request: RunGraphFromPathsRequest,
     control: RunControl,
@@ -70,7 +109,6 @@ pub fn run_graph_from_paths_with_control(
 }
 
 /// Advanced run API for callers that prebuild runtime surfaces before invoking the canonical host path.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn run_graph_from_paths_with_surfaces(
     request: RunGraphFromPathsRequest,
     runtime_surfaces: RuntimeSurfaces,
@@ -84,7 +122,6 @@ pub fn run_graph_from_paths_with_surfaces(
 }
 
 /// Advanced controlled run API for callers that prebuild runtime surfaces before invoking the canonical host path.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn run_graph_from_paths_with_surfaces_and_control(
     request: RunGraphFromPathsRequest,
     runtime_surfaces: RuntimeSurfaces,
@@ -98,7 +135,6 @@ pub fn run_graph_from_paths_with_surfaces_and_control(
     )
 }
 
-#[allow(clippy::arc_with_non_send_sync)]
 pub(super) fn run_graph_from_paths_internal(
     request: RunGraphFromPathsRequest,
     runtime_surfaces: Option<RuntimeSurfaces>,
@@ -156,7 +192,6 @@ pub fn run_graph_with_control(request: RunGraphRequest, control: RunControl) -> 
 }
 
 /// Lower-level live run API over preloaded graph assets with explicit capture policy.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn run_graph_from_assets(request: RunGraphFromAssetsRequest) -> RunGraphResponse {
     run_graph_from_assets_internal(
         request,
@@ -167,7 +202,6 @@ pub fn run_graph_from_assets(request: RunGraphFromAssetsRequest) -> RunGraphResp
 }
 
 /// Lower-level live run API over preloaded graph assets with host stop control and bounded-run limits.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn run_graph_from_assets_with_control(
     request: RunGraphFromAssetsRequest,
     control: RunControl,
@@ -176,7 +210,6 @@ pub fn run_graph_from_assets_with_control(
 }
 
 /// Advanced lower-level live run API over preloaded graph assets with injected runtime surfaces.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn run_graph_from_assets_with_surfaces(
     request: RunGraphFromAssetsRequest,
     runtime_surfaces: RuntimeSurfaces,
@@ -190,7 +223,6 @@ pub fn run_graph_from_assets_with_surfaces(
 }
 
 /// Advanced lower-level live run API over preloaded graph assets with injected runtime surfaces and control.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn run_graph_from_assets_with_surfaces_and_control(
     request: RunGraphFromAssetsRequest,
     runtime_surfaces: RuntimeSurfaces,
@@ -223,7 +255,6 @@ pub(super) fn validate_driver_input(
     }
 }
 
-#[allow(clippy::arc_with_non_send_sync)]
 pub(super) fn run_graph_from_assets_internal(
     request: RunGraphFromAssetsRequest,
     runtime_surfaces: Option<RuntimeSurfaces>,
@@ -594,6 +625,8 @@ fn run_fixture_items_driver(
         )));
     }
 
+    // Re-check after validation so late stop requests or duration limits reached during
+    // bookkeeping still report an interrupted run instead of a completed one.
     if lifecycle.should_stop(committed_event_count) {
         return host_stop_driver_execution(runner, event_counter, committed_event_count, episodes);
     }
@@ -668,16 +701,7 @@ fn finalize_run_capture(
             }
         },
     )?;
-    let invoked = bundle
-        .decisions
-        .iter()
-        .filter(|record| record.decision == Decision::Invoke)
-        .count();
-    let deferred = bundle
-        .decisions
-        .iter()
-        .filter(|record| record.decision == Decision::Defer)
-        .count();
+    let (invoked, deferred, _) = decision_counts(&bundle);
 
     Ok(FinalizedRunCapture {
         bundle,
