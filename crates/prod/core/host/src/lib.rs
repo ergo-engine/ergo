@@ -50,8 +50,10 @@ pub use ergo_supervisor::{write_capture_bundle, CaptureBundle, CaptureJsonStyle}
 pub use error::{EgressDispatchFailure, HostedStepError};
 pub use gen_docs_usecase::gen_docs_command;
 pub use graph_dot_usecase::{
-    graph_to_dot_from_assets, graph_to_dot_from_paths, GraphToDotFromAssetsRequest,
-    GraphToDotFromPathsRequest,
+    graph_to_dot_from_assets, graph_to_dot_from_assets_typed, graph_to_dot_from_paths,
+    graph_to_dot_from_paths_typed, GraphToDotAvailableCluster, GraphToDotError,
+    GraphToDotExpansionContext, GraphToDotExpansionError, GraphToDotFromAssetsRequest,
+    GraphToDotFromPathsRequest, GraphToDotLoadError, GraphToDotLoadErrorKind,
 };
 pub use manifest_usecases::{
     check_compose_paths, check_compose_text, check_compose_values, validate_manifest_path,

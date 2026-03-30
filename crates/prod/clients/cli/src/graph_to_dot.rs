@@ -164,6 +164,58 @@ mod tests {
         Ok(path)
     }
 
+    fn make_temp_dir(label: &str) -> Result<PathBuf, String> {
+        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ergo-cli-graph-to-dot-{label}-{}-{}",
+            std::process::id(),
+            index
+        ));
+        fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
+        Ok(temp_dir)
+    }
+
+    fn write_temp_file(dir: &Path, name: &str, contents: &str) -> Result<PathBuf, String> {
+        let path = dir.join(name);
+        fs::write(&path, contents)
+            .map_err(|err| format!("write file '{}': {err}", path.display()))?;
+        Ok(path)
+    }
+
+    fn cluster_version_miss_graph_yaml(graph_id: &str) -> String {
+        format!(
+            r#"
+kind: cluster
+id: {graph_id}
+version: "0.1.0"
+nodes:
+  nested:
+    cluster: shared_value@^2.0
+edges: []
+outputs:
+  result: nested.value
+"#
+        )
+    }
+
+    fn shared_value_graph_yaml(version: &str, value: f64) -> String {
+        format!(
+            r#"
+kind: cluster
+id: shared_value
+version: "{version}"
+nodes:
+  src:
+    impl: number_source@0.1.0
+    params:
+      value: {value}
+edges: []
+outputs:
+  value: src.value
+"#
+        )
+    }
+
     #[test]
     fn parse_graph_to_dot_options_requires_graph() {
         let err = parse_graph_to_dot_options(&[]).expect_err("missing graph path should fail");
@@ -355,6 +407,54 @@ outputs:
 
         assert!(dot.contains("input: threshold"), "dot: {}", dot);
         assert!(dot.contains("external_input_visual_external/threshold"));
+        Ok(())
+    }
+
+    #[test]
+    fn graph_to_dot_preserves_host_expand_error_text() -> Result<(), String> {
+        let temp_dir = make_temp_dir("version-miss")?;
+        let search_a = temp_dir.join("search-a");
+        let search_b = temp_dir.join("search-b");
+        fs::create_dir_all(&search_a).map_err(|err| format!("create search-a: {err}"))?;
+        fs::create_dir_all(&search_b).map_err(|err| format!("create search-b: {err}"))?;
+
+        let graph_path = write_temp_file(
+            &temp_dir,
+            "graph.yaml",
+            &cluster_version_miss_graph_yaml("cli_visual_miss"),
+        )?;
+        let shared_v1 = write_temp_file(
+            &search_a,
+            "shared_value.yaml",
+            &shared_value_graph_yaml("1.0.0", 3.0),
+        )?;
+        let shared_v1_5 = write_temp_file(
+            &search_b,
+            "shared_value.yaml",
+            &shared_value_graph_yaml("1.5.0", 4.0),
+        )?;
+        let shared_v1_canonical = fs::canonicalize(&shared_v1)
+            .map_err(|err| format!("canonicalize shared_v1: {err}"))?
+            .display()
+            .to_string();
+        let shared_v1_5_canonical = fs::canonicalize(&shared_v1_5)
+            .map_err(|err| format!("canonicalize shared_v1_5: {err}"))?
+            .display()
+            .to_string();
+
+        let args = vec![
+            graph_path.to_string_lossy().to_string(),
+            "--cluster-path".to_string(),
+            search_a.to_string_lossy().to_string(),
+            "--cluster-path".to_string(),
+            search_b.to_string_lossy().to_string(),
+        ];
+        let err = graph_to_dot_command(&args).expect_err("version miss should bubble host text");
+
+        assert!(err.contains("graph expansion failed: [I.6]"), "err: {err}");
+        assert!(err.contains("available cluster files"), "err: {err}");
+        assert!(err.contains(&shared_v1_canonical), "err: {err}");
+        assert!(err.contains(&shared_v1_5_canonical), "err: {err}");
         Ok(())
     }
 }
