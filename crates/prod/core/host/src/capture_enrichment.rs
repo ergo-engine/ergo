@@ -36,8 +36,8 @@
 //!   defaults rather than treating those gaps as missing.
 //! - Repeated `record(...)` calls for the same decision index are
 //!   last-write-wins.
-//! - The three decision-indexed sidecar wrappers are intentionally duplicated
-//!   today; the deferred internal refactor is tracked in issue #62.
+//! - The public wrapper types preserve host-specific names while delegating the
+//!   sparse/overwrite behavior to one private generic decision-index helper.
 
 use ergo_runtime::common::ActionEffect;
 use ergo_supervisor::replay::hash_effect;
@@ -71,56 +71,65 @@ pub fn enrich_bundle_with_host_artifacts(
 }
 
 #[derive(Debug, Clone, Default)]
+struct ByDecisionIndex<T> {
+    inner: Vec<T>,
+}
+
+impl<T: Default> ByDecisionIndex<T> {
+    fn record(&mut self, decision_index: usize, value: T) {
+        if self.inner.len() <= decision_index {
+            self.inner.resize_with(decision_index + 1, T::default);
+        }
+        self.inner[decision_index] = value;
+    }
+
+    fn as_slice(&self) -> &[T] {
+        &self.inner
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct AppliedEffectsByDecision {
-    inner: Vec<Vec<ActionEffect>>,
+    inner: ByDecisionIndex<Vec<ActionEffect>>,
 }
 
 impl AppliedEffectsByDecision {
     pub fn record(&mut self, decision_index: usize, effects: Vec<ActionEffect>) {
-        if self.inner.len() <= decision_index {
-            self.inner.resize_with(decision_index + 1, Vec::new);
-        }
-        self.inner[decision_index] = effects;
+        self.inner.record(decision_index, effects);
     }
 
     pub fn effects(&self) -> &[Vec<ActionEffect>] {
-        &self.inner
+        self.inner.as_slice()
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct AppliedIntentAcksByDecision {
-    inner: Vec<Vec<CapturedIntentAck>>,
+    inner: ByDecisionIndex<Vec<CapturedIntentAck>>,
 }
 
 impl AppliedIntentAcksByDecision {
     pub fn record(&mut self, decision_index: usize, intent_acks: Vec<CapturedIntentAck>) {
-        if self.inner.len() <= decision_index {
-            self.inner.resize_with(decision_index + 1, Vec::new);
-        }
-        self.inner[decision_index] = intent_acks;
+        self.inner.record(decision_index, intent_acks);
     }
 
     pub fn intent_acks(&self) -> &[Vec<CapturedIntentAck>] {
-        &self.inner
+        self.inner.as_slice()
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct StepInterruptionsByDecision {
-    inner: Vec<Option<String>>,
+    inner: ByDecisionIndex<Option<String>>,
 }
 
 impl StepInterruptionsByDecision {
     pub fn record(&mut self, decision_index: usize, interruption: String) {
-        if self.inner.len() <= decision_index {
-            self.inner.resize_with(decision_index + 1, || None);
-        }
-        self.inner[decision_index] = Some(interruption);
+        self.inner.record(decision_index, Some(interruption));
     }
 
     pub fn interruptions(&self) -> &[Option<String>] {
-        &self.inner
+        self.inner.as_slice()
     }
 }
 
