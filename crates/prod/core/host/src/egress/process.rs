@@ -8,8 +8,8 @@
 //! Owns:
 //! - Process lifecycle for egress channels: spawn, ready handshake, dispatch,
 //!   pending-ack checks, bounded shutdown, and force-kill cleanup.
-//! - The wire contract for `OutboundMessage`, `InboundMessage`, and the host's
-//!   `Value` -> JSON projection sent to egress processes.
+//! - The ready/ack/end wire frames and the host's `Value` -> JSON projection
+//!   sent to egress processes.
 //! - Host operational timing policy for this seam: 5s startup/shutdown bounds
 //!   plus a 20ms straggler probe with 1ms polling when finalization asserts
 //!   that no ack frames remain buffered.
@@ -39,8 +39,9 @@
 //! - The straggler probe in `assert_no_pending_acks` is host operational
 //!   policy, not protocol truth: a short 20ms / 1ms heuristic to catch late
 //!   stdout frames before capture finalization.
-//! - `InboundMessage` currently spans both startup and dispatch phases; that
-//!   lack of phase-typed protocol messages is deferred second-pass debt.
+//! - Startup, dispatch, and shutdown frames use distinct private protocol types
+//!   so illegal cross-phase messages stay explicit host-side while the
+//!   `ergo-egress.v1` wire shape remains unchanged.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -122,22 +123,45 @@ impl std::error::Error for EgressProcessError {}
 
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum OutboundMessage {
+enum DispatchOutboundMessage {
     Intent {
         intent_id: String,
         kind: String,
         fields: BTreeMap<String, serde_json::Value>,
     },
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ShutdownOutboundMessage {
     End,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum InboundFrameType {
+    Ready,
+    IntentAck,
+}
+
+#[derive(Debug, Deserialize)]
+struct InboundFrameTag {
+    #[serde(rename = "type")]
+    frame_type: InboundFrameType,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum InboundMessage {
+enum StartupInboundMessage {
     Ready {
         protocol: String,
         handled_kinds: Vec<String>,
     },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum DispatchInboundMessage {
     IntentAck {
         intent_id: String,
         status: String,
@@ -166,6 +190,9 @@ fn configure_host_managed_child(command: &mut Command) {
 fn kill_host_managed_child(child: &mut Child) {
     #[cfg(unix)]
     {
+        // SAFETY: the child is spawned into its own process group via
+        // `configure_host_managed_child`, so sending SIGKILL to `child.id()`
+        // as a process-group ID targets only that host-managed egress tree.
         let _ = unsafe { libc::killpg(child.id() as libc::pid_t, libc::SIGKILL) };
     }
 
@@ -175,17 +202,15 @@ fn kill_host_managed_child(child: &mut Child) {
     }
 }
 
-struct EgressChannelHandle {
+struct ChannelProcess {
     channel_id: String,
     child: Child,
     stdin: ChildStdin,
     stdout_rx: Receiver<ChannelObservation>,
     stderr_handle: Option<JoinHandle<String>>,
-    handled_kinds: HashSet<String>,
-    in_flight_intent_ids: BTreeSet<String>,
 }
 
-impl EgressChannelHandle {
+impl ChannelProcess {
     fn spawn(channel_id: &str, config: &EgressChannelConfig) -> Result<Self, EgressProcessError> {
         let command = match config {
             EgressChannelConfig::Process { command } => command,
@@ -230,116 +255,113 @@ impl EgressChannelHandle {
             stdin,
             stdout_rx,
             stderr_handle,
-            handled_kinds: HashSet::new(),
-            in_flight_intent_ids: BTreeSet::new(),
         })
     }
 
-    fn wait_ready(
-        &mut self,
+    fn child_has_exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
+    fn force_terminate(&mut self) {
+        kill_host_managed_child(&mut self.child);
+        let _ = self.child.wait();
+        let _ = take_stderr(self.stderr_handle.take());
+    }
+}
+
+impl Drop for ChannelProcess {
+    fn drop(&mut self) {
+        self.force_terminate();
+    }
+}
+
+struct StartingEgressChannel {
+    process: ChannelProcess,
+}
+
+impl StartingEgressChannel {
+    fn spawn(channel_id: &str, config: &EgressChannelConfig) -> Result<Self, EgressProcessError> {
+        ChannelProcess::spawn(channel_id, config).map(|process| Self { process })
+    }
+
+    fn complete_startup(
+        mut self,
         timeout: Duration,
         required_kinds: &BTreeSet<String>,
-    ) -> Result<(), EgressProcessError> {
-        let observation = recv_observation(&self.stdout_rx, Some(timeout)).map_err(|failure| {
-            self.force_terminate();
-            match failure {
-                RecvTimeoutError::Timeout => EgressProcessError::Startup {
-                    channel: self.channel_id.clone(),
-                    detail: format!(
-                        "channel did not emit ready frame within {}ms",
-                        timeout.as_millis()
-                    ),
-                },
-                RecvTimeoutError::Disconnected => EgressProcessError::Startup {
-                    channel: self.channel_id.clone(),
-                    detail: "stdout reader disconnected before ready handshake".to_string(),
-                },
-            }
-        })?;
+    ) -> Result<RunningEgressChannel, EgressProcessError> {
+        let observation =
+            recv_observation(&self.process.stdout_rx, Some(timeout)).map_err(|failure| {
+                self.process.force_terminate();
+                match failure {
+                    RecvTimeoutError::Timeout => EgressProcessError::Startup {
+                        channel: self.process.channel_id.clone(),
+                        detail: format!(
+                            "channel did not emit ready frame within {}ms",
+                            timeout.as_millis()
+                        ),
+                    },
+                    RecvTimeoutError::Disconnected => EgressProcessError::Startup {
+                        channel: self.process.channel_id.clone(),
+                        detail: "stdout reader disconnected before ready handshake".to_string(),
+                    },
+                }
+            })?;
 
         match observation {
             ChannelObservation::Line(line) => {
-                let message = serde_json::from_str::<InboundMessage>(line.trim_end_matches('\n'))
-                    .map_err(|err| {
-                    self.force_terminate();
-                    EgressProcessError::Protocol {
-                        channel: self.channel_id.clone(),
-                        detail: format!("invalid startup frame: {err}"),
-                    }
-                })?;
+                let message =
+                    parse_startup_message(&self.process.channel_id, line.trim_end_matches('\n'))
+                        .map_err(|err| {
+                            self.process.force_terminate();
+                            err
+                        })?;
 
                 match message {
-                    InboundMessage::Ready {
+                    StartupInboundMessage::Ready {
                         protocol,
                         handled_kinds,
                     } => {
-                        if protocol != EGRESS_PROTOCOL {
-                            self.force_terminate();
+                        if let Err(detail) =
+                            validate_ready_frame(&protocol, &handled_kinds, required_kinds)
+                        {
+                            self.process.force_terminate();
                             return Err(EgressProcessError::Protocol {
-                                channel: self.channel_id.clone(),
-                                detail: format!(
-                                    "ready frame protocol mismatch: expected '{}', got '{}'",
-                                    EGRESS_PROTOCOL, protocol
-                                ),
+                                channel: self.process.channel_id.clone(),
+                                detail,
                             });
                         }
 
-                        let mut seen = HashSet::new();
-                        for kind in &handled_kinds {
-                            if !seen.insert(kind.clone()) {
-                                self.force_terminate();
-                                return Err(EgressProcessError::Protocol {
-                                    channel: self.channel_id.clone(),
-                                    detail: format!(
-                                        "ready frame contains duplicate handled_kinds entry '{}'",
-                                        kind
-                                    ),
-                                });
-                            }
-                        }
-
-                        let handled_kind_set: HashSet<String> = handled_kinds.into_iter().collect();
-                        for required_kind in required_kinds {
-                            if !handled_kind_set.contains(required_kind) {
-                                self.force_terminate();
-                                return Err(EgressProcessError::Protocol {
-                                    channel: self.channel_id.clone(),
-                                    detail: format!(
-                                        "ready frame missing required handled kind '{}'",
-                                        required_kind
-                                    ),
-                                });
-                            }
-                        }
-                        self.handled_kinds = handled_kind_set;
-                        Ok(())
-                    }
-                    InboundMessage::IntentAck { .. } => {
-                        self.force_terminate();
-                        Err(EgressProcessError::Protocol {
-                            channel: self.channel_id.clone(),
-                            detail: "expected ready frame, got intent_ack".to_string(),
+                        Ok(RunningEgressChannel {
+                            process: self.process,
+                            in_flight_intent_ids: BTreeSet::new(),
                         })
                     }
                 }
             }
             ChannelObservation::Eof => {
-                self.force_terminate();
+                self.process.force_terminate();
                 Err(EgressProcessError::Startup {
-                    channel: self.channel_id.clone(),
+                    channel: self.process.channel_id.clone(),
                     detail: "channel closed stdout before ready handshake".to_string(),
                 })
             }
             ChannelObservation::ReadError(detail) => {
-                self.force_terminate();
+                self.process.force_terminate();
                 Err(EgressProcessError::Io {
-                    channel: self.channel_id.clone(),
+                    channel: self.process.channel_id.clone(),
                     detail,
                 })
             }
         }
     }
+}
 
+struct RunningEgressChannel {
+    process: ChannelProcess,
+    in_flight_intent_ids: BTreeSet<String>,
+}
+
+impl RunningEgressChannel {
     fn dispatch_intent(
         &mut self,
         intent: &IntentRecord,
@@ -347,7 +369,7 @@ impl EgressChannelHandle {
     ) -> Result<CapturedIntentAck, EgressProcessError> {
         if !self.in_flight_intent_ids.insert(intent.intent_id.clone()) {
             return Err(EgressProcessError::Protocol {
-                channel: self.channel_id.clone(),
+                channel: self.process.channel_id.clone(),
                 detail: format!(
                     "intent '{}' is already in-flight on channel",
                     intent.intent_id
@@ -355,7 +377,7 @@ impl EgressChannelHandle {
             });
         }
 
-        let outbound = OutboundMessage::Intent {
+        let outbound = DispatchOutboundMessage::Intent {
             intent_id: intent.intent_id.clone(),
             kind: intent.kind.clone(),
             fields: intent_fields_to_json_object(&intent.fields),
@@ -365,54 +387,49 @@ impl EgressChannelHandle {
             Err(err) => {
                 self.in_flight_intent_ids.remove(&intent.intent_id);
                 return Err(EgressProcessError::Io {
-                    channel: self.channel_id.clone(),
+                    channel: self.process.channel_id.clone(),
                     detail: format!("serialize intent payload: {err}"),
                 });
             }
         };
 
-        if let Err(err) = writeln!(self.stdin, "{payload}") {
+        if let Err(err) = writeln!(self.process.stdin, "{payload}") {
             self.in_flight_intent_ids.remove(&intent.intent_id);
             return Err(EgressProcessError::Io {
-                channel: self.channel_id.clone(),
+                channel: self.process.channel_id.clone(),
                 detail: format!("write intent payload: {err}"),
             });
         }
-        if let Err(err) = self.stdin.flush() {
+        if let Err(err) = self.process.stdin.flush() {
             self.in_flight_intent_ids.remove(&intent.intent_id);
             return Err(EgressProcessError::Io {
-                channel: self.channel_id.clone(),
+                channel: self.process.channel_id.clone(),
                 detail: format!("flush intent payload: {err}"),
             });
         }
 
         let observation =
-            recv_observation(&self.stdout_rx, Some(timeout)).map_err(|failure| match failure {
-                RecvTimeoutError::Timeout => EgressProcessError::Timeout {
-                    channel: self.channel_id.clone(),
-                    intent_id: intent.intent_id.clone(),
-                    timeout,
-                },
-                RecvTimeoutError::Disconnected => EgressProcessError::Io {
-                    channel: self.channel_id.clone(),
-                    detail: "stdout reader disconnected while waiting for ack".to_string(),
-                },
+            recv_observation(&self.process.stdout_rx, Some(timeout)).map_err(|failure| {
+                match failure {
+                    RecvTimeoutError::Timeout => EgressProcessError::Timeout {
+                        channel: self.process.channel_id.clone(),
+                        intent_id: intent.intent_id.clone(),
+                        timeout,
+                    },
+                    RecvTimeoutError::Disconnected => EgressProcessError::Io {
+                        channel: self.process.channel_id.clone(),
+                        detail: "stdout reader disconnected while waiting for ack".to_string(),
+                    },
+                }
             })?;
 
         let result = match observation {
             ChannelObservation::Line(line) => {
-                let message = serde_json::from_str::<InboundMessage>(line.trim_end_matches('\n'))
-                    .map_err(|err| EgressProcessError::Protocol {
-                    channel: self.channel_id.clone(),
-                    detail: format!("invalid ack frame: {err}"),
-                })?;
+                let message =
+                    parse_dispatch_message(&self.process.channel_id, line.trim_end_matches('\n'))?;
 
                 match message {
-                    InboundMessage::Ready { .. } => Err(EgressProcessError::Protocol {
-                        channel: self.channel_id.clone(),
-                        detail: "unexpected ready frame after startup".to_string(),
-                    }),
-                    InboundMessage::IntentAck {
+                    DispatchInboundMessage::IntentAck {
                         intent_id,
                         status,
                         acceptance,
@@ -420,7 +437,7 @@ impl EgressChannelHandle {
                     } => {
                         if intent_id != intent.intent_id {
                             return Err(EgressProcessError::Protocol {
-                                channel: self.channel_id.clone(),
+                                channel: self.process.channel_id.clone(),
                                 detail: format!(
                                     "ack intent_id mismatch: expected '{}', got '{}'",
                                     intent.intent_id, intent_id
@@ -430,7 +447,7 @@ impl EgressChannelHandle {
 
                         if status != "accepted" || acceptance != "durable" {
                             return Err(EgressProcessError::Protocol {
-                                channel: self.channel_id.clone(),
+                                channel: self.process.channel_id.clone(),
                                 detail: format!(
                                     "ack must be accepted+durable, got status='{status}' acceptance='{acceptance}'"
                                 ),
@@ -439,7 +456,7 @@ impl EgressChannelHandle {
 
                         Ok(CapturedIntentAck {
                             intent_id,
-                            channel: self.channel_id.clone(),
+                            channel: self.process.channel_id.clone(),
                             status,
                             acceptance,
                             egress_ref,
@@ -448,11 +465,11 @@ impl EgressChannelHandle {
                 }
             }
             ChannelObservation::Eof => Err(EgressProcessError::Io {
-                channel: self.channel_id.clone(),
+                channel: self.process.channel_id.clone(),
                 detail: "channel closed stdout while waiting for ack".to_string(),
             }),
             ChannelObservation::ReadError(detail) => Err(EgressProcessError::Io {
-                channel: self.channel_id.clone(),
+                channel: self.process.channel_id.clone(),
                 detail,
             }),
         };
@@ -464,20 +481,21 @@ impl EgressChannelHandle {
     }
 
     fn shutdown(&mut self, timeout: Duration) -> Result<(), EgressProcessError> {
-        let end = OutboundMessage::End;
+        let end = ShutdownOutboundMessage::End;
         if let Ok(payload) = serde_json::to_string(&end) {
-            let _ = writeln!(self.stdin, "{payload}");
-            let _ = self.stdin.flush();
+            let _ = writeln!(self.process.stdin, "{payload}");
+            let _ = self.process.stdin.flush();
         }
 
-        let exited =
-            wait_for_exit(&mut self.child, timeout).map_err(|err| EgressProcessError::Io {
-                channel: self.channel_id.clone(),
+        let exited = wait_for_exit(&mut self.process.child, timeout).map_err(|err| {
+            EgressProcessError::Io {
+                channel: self.process.channel_id.clone(),
                 detail: format!("wait for graceful shutdown: {err}"),
-            })?;
+            }
+        })?;
         if exited.is_none() {
             return Err(EgressProcessError::Io {
-                channel: self.channel_id.clone(),
+                channel: self.process.channel_id.clone(),
                 detail: format!(
                     "channel did not terminate within shutdown timeout ({}ms)",
                     timeout.as_millis()
@@ -493,7 +511,7 @@ impl EgressChannelHandle {
     ) -> Result<(), EgressProcessError> {
         if !self.in_flight_intent_ids.is_empty() {
             return Err(EgressProcessError::PendingAcks {
-                channel: self.channel_id.clone(),
+                channel: self.process.channel_id.clone(),
                 detail: format!("in-flight intent IDs: {:?}", self.in_flight_intent_ids),
             });
         }
@@ -502,10 +520,10 @@ impl EgressChannelHandle {
         // that arrive right after the last dispatch completes.
         let deadline = std::time::Instant::now() + PENDING_ACK_STRAGGLER_PROBE_WINDOW;
         loop {
-            match self.stdout_rx.try_recv() {
+            match self.process.stdout_rx.try_recv() {
                 Ok(ChannelObservation::Line(line)) => {
                     return Err(EgressProcessError::PendingAcks {
-                        channel: self.channel_id.clone(),
+                        channel: self.process.channel_id.clone(),
                         detail: format!(
                             "unexpected buffered stdout frame after final dispatch: {}",
                             line.trim_end_matches('\n')
@@ -517,24 +535,24 @@ impl EgressChannelHandle {
                         return Ok(());
                     }
                     return Err(EgressProcessError::PendingAcks {
-                        channel: self.channel_id.clone(),
+                        channel: self.process.channel_id.clone(),
                         detail: "stdout reached EOF with no explicit shutdown".to_string(),
                     });
                 }
                 Ok(ChannelObservation::ReadError(detail)) => {
                     return Err(EgressProcessError::PendingAcks {
-                        channel: self.channel_id.clone(),
+                        channel: self.process.channel_id.clone(),
                         detail: format!(
                             "stdout reader observed post-dispatch read error: {detail}"
                         ),
                     });
                 }
                 Err(TryRecvError::Disconnected) => {
-                    if host_stop_requested && self.child_has_exited() {
+                    if host_stop_requested && self.process.child_has_exited() {
                         return Ok(());
                     }
                     return Err(EgressProcessError::PendingAcks {
-                        channel: self.channel_id.clone(),
+                        channel: self.process.channel_id.clone(),
                         detail: "stdout reader disconnected unexpectedly".to_string(),
                     });
                 }
@@ -550,38 +568,27 @@ impl EgressChannelHandle {
 
     fn quiesce(&mut self) {
         self.in_flight_intent_ids.clear();
-        self.force_terminate();
-    }
-
-    fn child_has_exited(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(Some(_)))
-    }
-
-    fn force_terminate(&mut self) {
-        kill_host_managed_child(&mut self.child);
-        let _ = self.child.wait();
-        let _ = take_stderr(self.stderr_handle.take());
+        self.process.force_terminate();
     }
 }
 
-impl Drop for EgressChannelHandle {
-    fn drop(&mut self) {
-        self.force_terminate();
-    }
+enum EgressRuntimeState {
+    Stopped,
+    Running {
+        channels: BTreeMap<String, RunningEgressChannel>,
+    },
 }
 
 pub struct EgressRuntime {
     config: EgressConfig,
-    channels: BTreeMap<String, EgressChannelHandle>,
-    started: bool,
+    state: EgressRuntimeState,
 }
 
 impl EgressRuntime {
     pub fn new(config: EgressConfig) -> Self {
         Self {
             config,
-            channels: BTreeMap::new(),
-            started: false,
+            state: EgressRuntimeState::Stopped,
         }
     }
 
@@ -594,19 +601,19 @@ impl EgressRuntime {
     }
 
     pub fn start_channels(&mut self) -> Result<(), EgressProcessError> {
-        if self.started {
+        if matches!(self.state, EgressRuntimeState::Running { .. }) {
             return Ok(());
         }
 
         let mut started = BTreeMap::new();
         for (channel_id, channel_config) in &self.config.channels {
-            let mut handle = EgressChannelHandle::spawn(channel_id, channel_config)?;
+            let handle = StartingEgressChannel::spawn(channel_id, channel_config)?;
             let required_kinds = self.required_route_kinds_for_channel(channel_id);
-            handle.wait_ready(DEFAULT_EGRESS_STARTUP_TIMEOUT, &required_kinds)?;
+            let handle =
+                handle.complete_startup(DEFAULT_EGRESS_STARTUP_TIMEOUT, &required_kinds)?;
             started.insert(channel_id.clone(), handle);
         }
-        self.channels = started;
-        self.started = true;
+        self.state = EgressRuntimeState::Running { channels: started };
         Ok(())
     }
 
@@ -614,7 +621,7 @@ impl EgressRuntime {
         &mut self,
         intent: &IntentRecord,
     ) -> Result<CapturedIntentAck, EgressProcessError> {
-        if !self.started {
+        if !matches!(self.state, EgressRuntimeState::Running { .. }) {
             return Err(EgressProcessError::Startup {
                 channel: "all".to_string(),
                 detail: "egress channels are not started".to_string(),
@@ -634,14 +641,24 @@ impl EgressRuntime {
             .clone();
 
         let timeout = route.ack_timeout.unwrap_or(self.config.default_ack_timeout);
-        let handle = self.channels.get_mut(&route.channel).ok_or_else(|| {
-            EgressProcessError::InvalidConfig(format!(
-                "route for intent kind '{}' references unknown channel '{}'",
-                intent.kind, route.channel
-            ))
-        })?;
+        let dispatch_result = {
+            let Some(channels) = self.channels_mut() else {
+                return Err(EgressProcessError::Startup {
+                    channel: "all".to_string(),
+                    detail: "egress channels are not started".to_string(),
+                });
+            };
+            let handle = channels.get_mut(&route.channel).ok_or_else(|| {
+                EgressProcessError::InvalidConfig(format!(
+                    "route for intent kind '{}' references unknown channel '{}'",
+                    intent.kind, route.channel
+                ))
+            })?;
 
-        match handle.dispatch_intent(intent, timeout) {
+            handle.dispatch_intent(intent, timeout)
+        };
+
+        match dispatch_result {
             Ok(ack) => Ok(ack),
             Err(err @ EgressProcessError::Timeout { .. })
             | Err(err @ EgressProcessError::Protocol { .. })
@@ -658,30 +675,28 @@ impl EgressRuntime {
         &mut self,
         host_stop_requested: bool,
     ) -> Result<(), EgressProcessError> {
-        if !self.started {
+        let Some(channels) = self.channels_mut() else {
             return Ok(());
-        }
-        for handle in self.channels.values_mut() {
+        };
+        for handle in channels.values_mut() {
             handle.assert_no_pending_acks(host_stop_requested)?;
         }
         Ok(())
     }
 
     pub fn shutdown_channels(&mut self) -> Result<(), EgressProcessError> {
-        if !self.started {
+        let Some(mut channels) = self.take_channels() else {
             return Ok(());
-        }
+        };
 
         let mut first_error = None;
-        for handle in self.channels.values_mut() {
+        for handle in channels.values_mut() {
             if let Err(err) = handle.shutdown(DEFAULT_EGRESS_SHUTDOWN_TIMEOUT) {
                 if first_error.is_none() {
                     first_error = Some(err);
                 }
             }
         }
-        self.channels.clear();
-        self.started = false;
 
         if let Some(err) = first_error {
             return Err(err);
@@ -690,19 +705,25 @@ impl EgressRuntime {
     }
 
     pub fn quiesce_all_channels(&mut self) {
-        for handle in self.channels.values_mut() {
+        let Some(mut channels) = self.take_channels() else {
+            return;
+        };
+        for handle in channels.values_mut() {
             handle.quiesce();
         }
-        self.channels.clear();
-        self.started = false;
     }
 
     fn quiesce_channel(&mut self, channel_id: &str) {
-        if let Some(mut handle) = self.channels.remove(channel_id) {
+        let Some(channels) = self.channels_mut() else {
+            return;
+        };
+        let removed = channels.remove(channel_id);
+        let should_stop = channels.is_empty();
+        if let Some(mut handle) = removed {
             handle.quiesce();
         }
-        if self.channels.is_empty() {
-            self.started = false;
+        if should_stop {
+            self.state = EgressRuntimeState::Stopped;
         }
     }
 
@@ -714,6 +735,20 @@ impl EgressRuntime {
                 (route.channel == channel_id).then_some(intent_kind.clone())
             })
             .collect()
+    }
+
+    fn channels_mut(&mut self) -> Option<&mut BTreeMap<String, RunningEgressChannel>> {
+        match &mut self.state {
+            EgressRuntimeState::Stopped => None,
+            EgressRuntimeState::Running { channels } => Some(channels),
+        }
+    }
+
+    fn take_channels(&mut self) -> Option<BTreeMap<String, RunningEgressChannel>> {
+        match std::mem::replace(&mut self.state, EgressRuntimeState::Stopped) {
+            EgressRuntimeState::Stopped => None,
+            EgressRuntimeState::Running { channels } => Some(channels),
+        }
     }
 }
 
@@ -731,6 +766,103 @@ fn common_value_to_json(value: &Value) -> serde_json::Value {
         Value::Bool(boolean) => serde_json::json!(boolean),
         Value::String(string) => serde_json::json!(string),
     }
+}
+
+fn parse_startup_message(
+    channel_id: &str,
+    line: &str,
+) -> Result<StartupInboundMessage, EgressProcessError> {
+    match parse_inbound_frame_type(channel_id, line, "startup")? {
+        InboundFrameType::Ready => {
+            serde_json::from_str::<StartupInboundMessage>(line).map_err(|err| {
+                EgressProcessError::Protocol {
+                    channel: channel_id.to_string(),
+                    detail: format!("invalid startup frame: {err}"),
+                }
+            })
+        }
+        InboundFrameType::IntentAck => match serde_json::from_str::<DispatchInboundMessage>(line) {
+            Ok(DispatchInboundMessage::IntentAck { .. }) => Err(EgressProcessError::Protocol {
+                channel: channel_id.to_string(),
+                detail: "expected ready frame, got intent_ack".to_string(),
+            }),
+            Err(err) => Err(EgressProcessError::Protocol {
+                channel: channel_id.to_string(),
+                detail: format!("invalid startup frame: {err}"),
+            }),
+        },
+    }
+}
+
+fn parse_dispatch_message(
+    channel_id: &str,
+    line: &str,
+) -> Result<DispatchInboundMessage, EgressProcessError> {
+    match parse_inbound_frame_type(channel_id, line, "ack")? {
+        InboundFrameType::Ready => match serde_json::from_str::<StartupInboundMessage>(line) {
+            Ok(StartupInboundMessage::Ready { .. }) => Err(EgressProcessError::Protocol {
+                channel: channel_id.to_string(),
+                detail: "unexpected ready frame after startup".to_string(),
+            }),
+            Err(err) => Err(EgressProcessError::Protocol {
+                channel: channel_id.to_string(),
+                detail: format!("invalid ack frame: {err}"),
+            }),
+        },
+        InboundFrameType::IntentAck => serde_json::from_str::<DispatchInboundMessage>(line)
+            .map_err(|err| EgressProcessError::Protocol {
+                channel: channel_id.to_string(),
+                detail: format!("invalid ack frame: {err}"),
+            }),
+    }
+}
+
+fn parse_inbound_frame_type(
+    channel_id: &str,
+    line: &str,
+    frame_name: &str,
+) -> Result<InboundFrameType, EgressProcessError> {
+    serde_json::from_str::<InboundFrameTag>(line)
+        .map(|tag| tag.frame_type)
+        .map_err(|err| EgressProcessError::Protocol {
+            channel: channel_id.to_string(),
+            detail: format!("invalid {frame_name} frame: {err}"),
+        })
+}
+
+fn validate_ready_frame(
+    protocol: &str,
+    handled_kinds: &[String],
+    required_kinds: &BTreeSet<String>,
+) -> Result<(), String> {
+    if protocol != EGRESS_PROTOCOL {
+        return Err(format!(
+            "ready frame protocol mismatch: expected '{}', got '{}'",
+            EGRESS_PROTOCOL, protocol
+        ));
+    }
+
+    let mut seen = HashSet::new();
+    for kind in handled_kinds {
+        if !seen.insert(kind.clone()) {
+            return Err(format!(
+                "ready frame contains duplicate handled_kinds entry '{}'",
+                kind
+            ));
+        }
+    }
+
+    let handled_kind_set: HashSet<String> = handled_kinds.iter().cloned().collect();
+    for required_kind in required_kinds {
+        if !handled_kind_set.contains(required_kind) {
+            return Err(format!(
+                "ready frame missing required handled kind '{}'",
+                required_kind
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn spawn_stdout_reader(stdout: ChildStdout) -> Receiver<ChannelObservation> {

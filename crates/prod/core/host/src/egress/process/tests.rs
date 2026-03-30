@@ -177,7 +177,7 @@ fn outbound_message_json_shapes_are_stable() {
         },
     ]);
 
-    let intent = OutboundMessage::Intent {
+    let intent = DispatchOutboundMessage::Intent {
         intent_id: "eid1:sha256:test".to_string(),
         kind: "place_order".to_string(),
         fields,
@@ -188,55 +188,87 @@ fn outbound_message_json_shapes_are_stable() {
     );
 
     assert_eq!(
-        serde_json::to_string(&OutboundMessage::End).expect("end should serialize"),
+        serde_json::to_string(&ShutdownOutboundMessage::End).expect("end should serialize"),
         r#"{"type":"end"}"#
     );
 }
 
 #[test]
 fn inbound_message_json_shapes_are_stable() {
-    let ready = serde_json::from_str::<InboundMessage>(
+    let ready = serde_json::from_str::<StartupInboundMessage>(
         r#"{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["cancel_order","place_order"]}"#,
     )
     .expect("ready frame should deserialize");
-    match ready {
-        InboundMessage::Ready {
-            protocol,
-            handled_kinds,
-        } => {
-            assert_eq!(protocol, "ergo-egress.v1");
-            assert_eq!(handled_kinds, vec!["cancel_order", "place_order"]);
-        }
-        other => panic!("unexpected inbound message: {other:?}"),
-    }
+    let StartupInboundMessage::Ready {
+        protocol,
+        handled_kinds,
+    } = ready;
+    assert_eq!(protocol, "ergo-egress.v1");
+    assert_eq!(handled_kinds, vec!["cancel_order", "place_order"]);
 
-    let intent_ack = serde_json::from_str::<InboundMessage>(
+    let intent_ack = serde_json::from_str::<DispatchInboundMessage>(
         r#"{"type":"intent_ack","intent_id":"eid1:sha256:test","status":"accepted","acceptance":"durable","egress_ref":"broker-123"}"#,
     )
     .expect("intent ack should deserialize");
-    match intent_ack {
-        InboundMessage::IntentAck {
-            intent_id,
-            status,
-            acceptance,
-            egress_ref,
-        } => {
-            assert_eq!(intent_id, "eid1:sha256:test");
-            assert_eq!(status, "accepted");
-            assert_eq!(acceptance, "durable");
-            assert_eq!(egress_ref.as_deref(), Some("broker-123"));
-        }
-        other => panic!("unexpected inbound message: {other:?}"),
-    }
+    let DispatchInboundMessage::IntentAck {
+        intent_id,
+        status,
+        acceptance,
+        egress_ref,
+    } = intent_ack;
+    assert_eq!(intent_id, "eid1:sha256:test");
+    assert_eq!(status, "accepted");
+    assert_eq!(acceptance, "durable");
+    assert_eq!(egress_ref.as_deref(), Some("broker-123"));
 
-    let intent_ack_without_ref = serde_json::from_str::<InboundMessage>(
+    let intent_ack_without_ref = serde_json::from_str::<DispatchInboundMessage>(
         r#"{"type":"intent_ack","intent_id":"eid1:sha256:no-ref","status":"accepted","acceptance":"durable"}"#,
     )
     .expect("intent ack without ref should deserialize");
-    match intent_ack_without_ref {
-        InboundMessage::IntentAck { egress_ref, .. } => assert_eq!(egress_ref, None),
-        other => panic!("unexpected inbound message: {other:?}"),
-    }
+    let DispatchInboundMessage::IntentAck { egress_ref, .. } = intent_ack_without_ref;
+    assert_eq!(egress_ref, None);
+}
+
+#[test]
+fn phase_specific_message_parsers_reject_cross_phase_frames_with_current_detail() {
+    let startup_err = parse_startup_message(
+        "broker",
+        r#"{"type":"intent_ack","intent_id":"eid1:sha256:test","status":"accepted","acceptance":"durable"}"#,
+    )
+    .expect_err("startup parser must reject intent_ack frames");
+    assert!(matches!(
+        startup_err,
+        EgressProcessError::Protocol { ref detail, .. } if detail == "expected ready frame, got intent_ack"
+    ));
+
+    let dispatch_err = parse_dispatch_message(
+        "broker",
+        r#"{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}"#,
+    )
+    .expect_err("dispatch parser must reject ready frames");
+    assert!(matches!(
+        dispatch_err,
+        EgressProcessError::Protocol { ref detail, .. } if detail == "unexpected ready frame after startup"
+    ));
+}
+
+#[test]
+fn malformed_wrong_phase_frames_still_report_invalid_frame_errors() {
+    let malformed_startup = parse_startup_message("broker", r#"{"type":"intent_ack"}"#)
+        .expect_err("malformed intent_ack should stay an invalid startup frame");
+    assert!(matches!(
+        malformed_startup,
+        EgressProcessError::Protocol { ref detail, .. }
+            if detail.contains("invalid startup frame:") && detail.contains("missing field")
+    ));
+
+    let malformed_dispatch = parse_dispatch_message("broker", r#"{"type":"ready"}"#)
+        .expect_err("malformed ready frame should stay an invalid ack frame");
+    assert!(matches!(
+        malformed_dispatch,
+        EgressProcessError::Protocol { ref detail, .. }
+            if detail.contains("invalid ack frame:") && detail.contains("missing field")
+    ));
 }
 
 #[test]
