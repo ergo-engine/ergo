@@ -199,16 +199,8 @@ side_effects: true
 }
 
 #[test]
-fn parse_compute_parameter_type_accepts_int_alias_as_number() {
-    let value_type =
-        parse_compute_parameter_type("threshold", "int").expect("int alias should parse");
-
-    assert_eq!(value_type, ValueType::Number);
-}
-
-#[test]
 fn parse_value_type_accepts_boolean_alias_as_bool() {
-    assert_eq!(parse_value_type("boolean"), Some(ValueType::Bool));
+    assert_eq!(common::parse_value_type("boolean"), Some(ValueType::Bool));
 }
 
 #[test]

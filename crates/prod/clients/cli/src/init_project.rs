@@ -1149,6 +1149,14 @@ mod tests {
         make_temp_dir_under(&target_root, label)
     }
 
+    fn scaffold_test_cargo_target_dir() -> PathBuf {
+        let dir = workspace_root()
+            .expect("workspace root")
+            .join("target/ergo_cli_init_scaffold_tests");
+        fs::create_dir_all(&dir).expect("create shared scaffold cargo target dir");
+        dir
+    }
+
     fn cli_sdk_path() -> PathBuf {
         workspace_root()
             .expect("workspace root")
@@ -1162,6 +1170,7 @@ mod tests {
         Command::new("cargo")
             .args(args)
             .current_dir(project_root)
+            .env("CARGO_TARGET_DIR", scaffold_test_cargo_target_dir())
             .output()
             .map_err(|err| format!("spawn cargo {:?}: {err}", args))
     }
