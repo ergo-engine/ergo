@@ -11,7 +11,7 @@ use std::time::Duration;
 
 pub use ergo_adapter::fixture::FixtureItem;
 use ergo_host::{
-    finalize_hosted_runner_capture, load_graph_assets_from_paths, parse_egress_config_toml,
+    finalize_hosted_runner_capture, load_graph_assets_from_paths,
     prepare_hosted_runner_from_paths_with_surfaces, prepare_hosted_runner_with_surfaces,
     replay_graph_from_assets_with_surfaces, replay_graph_from_paths_with_surfaces,
     run_graph_from_assets_with_surfaces_and_control,
@@ -28,9 +28,10 @@ use ergo_loader::{
 use ergo_runtime::catalog::{CatalogBuilder, CoreRegistrationError};
 
 pub use ergo_host::{
-    write_capture_bundle, AdapterInput, CaptureBundle, CaptureJsonStyle, EgressChannelConfig,
-    EgressConfig, EgressDispatchFailure, EgressRoute, HostedEvent, HostedStepError,
-    HostedStepOutcome, InterruptedRun, InterruptionReason, RunSummary,
+    parse_egress_config_toml, write_capture_bundle, AdapterInput, CaptureBundle, CaptureJsonStyle,
+    EgressChannelConfig, EgressConfig, EgressConfigBuilder, EgressConfigError,
+    EgressDispatchFailure, EgressRoute, HostedEvent, HostedStepError, HostedStepOutcome,
+    InterruptedRun, InterruptionReason, RunSummary,
 };
 pub use ergo_runtime::catalog::{build_core, build_core_catalog, core_registries};
 pub use ergo_runtime::runtime::ExecutionContext;

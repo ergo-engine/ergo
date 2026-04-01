@@ -9,6 +9,7 @@ ergo-adapter = { path = "../../../kernel/adapter" }
 ergo-runtime = { path = "../../../kernel/runtime" }
 ergo-supervisor = { path = "../../../kernel/supervisor", features = ["demo"] }
 ergo-loader = { path = "../loader" }
+ergo-prod-duration = { path = "../../shared/duration" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"

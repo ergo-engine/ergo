@@ -44,7 +44,8 @@ mod usecases;
 pub use demo_fixture_usecase::{run_demo_fixture_from_path, RunDemoFixtureRequest};
 pub use egress::{
     parse_egress_config_toml, validate_egress_config, EgressChannelConfig, EgressConfig,
-    EgressProcessError, EgressRoute, EgressRuntime, EgressValidationError, EgressValidationWarning,
+    EgressConfigBuilder, EgressConfigError, EgressProcessError, EgressRoute, EgressRuntime,
+    EgressValidationError, EgressValidationWarning,
 };
 pub use ergo_supervisor::{write_capture_bundle, CaptureBundle, CaptureJsonStyle};
 pub use error::{EgressDispatchFailure, HostedStepError};

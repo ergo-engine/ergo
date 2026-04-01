@@ -79,6 +79,10 @@ host/egress concern, not an adapter concern.
 The current v1 host routing surface is `EgressConfig`, typically loaded
 from `--egress-config <egress.toml>`.
 
+Programmatic callers still use `EgressConfig`, but the intended public
+path is validated construction APIs/builders rather than direct
+field-bag mutation.
+
 The route table decides:
 
 - which intent kind goes to which egress channel

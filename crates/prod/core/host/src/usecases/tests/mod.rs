@@ -36,7 +36,7 @@ use ergo_runtime::source::{
     StateSpec as SourceStateSpec,
 };
 use serde_json::json;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -687,22 +687,23 @@ fn make_intent_egress_config(script_path: &Path) -> EgressConfig {
 }
 
 fn make_intent_egress_config_with_timeout(script_path: &Path, timeout: Duration) -> EgressConfig {
-    EgressConfig {
-        default_ack_timeout: timeout,
-        channels: BTreeMap::from([(
-            "broker".to_string(),
-            EgressChannelConfig::Process {
-                command: vec!["/bin/sh".to_string(), script_path.display().to_string()],
-            },
-        )]),
-        routes: BTreeMap::from([(
-            "place_order".to_string(),
-            EgressRoute {
-                channel: "broker".to_string(),
-                ack_timeout: None,
-            },
-        )]),
-    }
+    EgressConfig::builder(timeout)
+        .channel(
+            "broker",
+            EgressChannelConfig::process(vec![
+                "/bin/sh".to_string(),
+                script_path.display().to_string(),
+            ])
+            .expect("channel config should be valid"),
+        )
+        .expect("channel should insert")
+        .route(
+            "place_order",
+            EgressRoute::new("broker", None).expect("route should be valid"),
+        )
+        .expect("route should insert")
+        .build()
+        .expect("egress config should build")
 }
 
 fn write_process_driver_script(

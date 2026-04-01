@@ -657,22 +657,20 @@ fn egress_startup_failure_surfaces_host_run_error() -> Result<(), Box<dyn std::e
     )?;
     let capture = temp_dir.join("capture.json");
 
-    let config = EgressConfig {
-        default_ack_timeout: Duration::from_millis(50),
-        channels: BTreeMap::from([(
-            "broker".to_string(),
-            EgressChannelConfig::Process {
-                command: vec!["/definitely/missing-egress-binary".to_string()],
-            },
-        )]),
-        routes: BTreeMap::from([(
-            "place_order".to_string(),
-            EgressRoute {
-                channel: "broker".to_string(),
-                ack_timeout: None,
-            },
-        )]),
-    };
+    let config = EgressConfig::builder(Duration::from_millis(50))
+        .channel(
+            "broker",
+            EgressChannelConfig::process(vec!["/definitely/missing-egress-binary".to_string()])
+                .expect("channel config should be valid"),
+        )
+        .expect("channel should insert")
+        .route(
+            "place_order",
+            EgressRoute::new("broker", None).expect("route should be valid"),
+        )
+        .expect("route should insert")
+        .build()
+        .expect("egress config should build");
 
     let err = run_graph_from_paths_with_surfaces(
         RunGraphFromPathsRequest {

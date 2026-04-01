@@ -64,21 +64,37 @@ normalize to one canonical shape.
 ### Canonical internal model
 
 ```rust
-pub struct EgressConfig {
-    pub default_ack_timeout: Duration,
-    pub channels: BTreeMap<String, EgressChannelConfig>,  // channel_id -> config
-    pub routes: BTreeMap<String, EgressRoute>,             // intent_kind -> route
+pub struct EgressConfig { /* validated, host-owned */ }
+pub struct EgressRoute { /* validated, host-owned */ }
+pub struct EgressChannelConfig { /* validated, host-owned */ }
+
+impl EgressConfig {
+    pub fn new(
+        default_ack_timeout: Duration,
+        channels: BTreeMap<String, EgressChannelConfig>,
+        routes: BTreeMap<String, EgressRoute>,
+    ) -> Result<Self, EgressConfigError>;
+
+    pub fn builder(default_ack_timeout: Duration) -> EgressConfigBuilder;
 }
 
-pub struct EgressRoute {
-    pub channel: String,                     // must reference a key in channels
-    pub ack_timeout: Option<Duration>,       // overrides default_ack_timeout
+impl EgressRoute {
+    pub fn new(
+        channel: impl Into<String>,
+        ack_timeout: Option<Duration>,
+    ) -> Result<Self, EgressConfigError>;
 }
 
-pub enum EgressChannelConfig {
-    Process { command: Vec<String> },        // mirrors ingress DriverConfig::Process
+impl EgressChannelConfig {
+    pub fn process(command: Vec<String>) -> Result<Self, EgressConfigError>;
 }
 ```
+
+The semantic shape stays the same:
+
+- `default_ack_timeout`
+- `channels: BTreeMap<String, EgressChannelConfig>` (`channel_id -> config`)
+- `routes: BTreeMap<String, EgressRoute>` (`intent_kind -> route`)
 
 Design choices:
 
@@ -94,24 +110,39 @@ Design choices:
 - **`ack_timeout` per-route with default fallback.** Different intent
   kinds may have different latency expectations (a broker API vs a
   notification service).
+- **Validated construction, not raw field bags.** Programmatic callers
+  still supply `EgressConfig`, but they do so through validated host
+  constructors/builders instead of direct public field assignment.
+- **One duration parser authority.** File-backed prod surfaces share one
+  prod-layer `ms|s|m|h` duration parser authority; host still owns
+  canonical egress-config serialization and provenance normalization.
 
-### Startup validation rules
+### Config-shape validation rules
+
+These are intrinsic `EgressConfig` invariants enforced when parsing or
+programmatically constructing the canonical host model:
 
 1. **Route channel exists.** Every `EgressRoute.channel` must reference
    a key in `EgressConfig.channels`. Error if not.
-2. **Route kind is adapter-accepted.** Every routed intent kind must
+2. **Process executable is present and non-blank.** `Process` channels
+   must declare at least one argv element, and the executable element
+   (`command[0]`) must not be blank.
+
+### Startup validation rules
+
+1. **Route kind is adapter-accepted.** Every routed intent kind must
    appear in the adapter's `accepts.effects`. Error if not.
-3. **Coverage completeness.** Every graph-emittable, adapter-accepted
+2. **Coverage completeness.** Every graph-emittable, adapter-accepted
    intent kind that is NOT handled by a local `EffectHandler` must
    have a route. Enforced by feeding routed kinds into
    `ensure_handler_coverage(..., egress_claimed_kinds)` (Phase 1 work).
-4. **Non-emittable routed kind is a warning, not an error.** A route
+3. **Non-emittable routed kind is a warning, not an error.** A route
    for an intent kind the current graph doesn't emit is permitted —
    shared configs across graphs should work. Warn, don't reject.
-5. **One owner per kind.** If a kind has both a local handler AND an
+4. **One owner per kind.** If a kind has both a local handler AND an
    egress route, `ensure_handler_coverage` returns
    `ConflictingCoverage` (Phase 1 work).
-6. **Channel capability attestation.** At startup, each channel's
+5. **Channel capability attestation.** At startup, each channel's
    ready handshake must declare protocol `ergo-egress.v1` and
    `handled_kinds`. For every routed kind assigned to that channel,
    `handled_kinds` must include the kind. Missing kinds or duplicate
@@ -143,7 +174,8 @@ channel = "broker"
 
 `RunGraphFromPathsRequest` (or equivalent) gains an optional
 `egress_config: Option<EgressConfig>` field. CLI parses the TOML file
-and populates this field. SDK users construct it directly.
+and populates this field. SDK users construct it programmatically
+through the validated host config APIs/builders.
 
 If `egress_config` is `None` and the graph emits intent kinds, the
 coverage check fails at startup (existing behavior from Phase 1).

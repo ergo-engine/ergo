@@ -142,12 +142,20 @@ timeout tuning. This is not part of this decision. The canonical
 
 ```rust
 fn compute_egress_provenance(config: &EgressConfig) -> String {
-    let bytes = serde_json::to_vec(config)
-        .expect("EgressConfig must be serializable");
+    let bytes = serde_json::to_vec(&provenance_projection(config))
+        .expect("egress provenance projection must be serializable");
     let digest = sha2::Sha256::digest(&bytes);
     format!("epv1:sha256:{}", hex::encode(digest))
 }
 ```
+
+The host hashes an explicit private projection of the canonical
+`EgressConfig` fields (`default_ack_timeout`, `channels`, and `routes`)
+rather than serializing the whole struct directly. That keeps the
+provenance contract identical to the normalized config JSON while
+avoiding future hidden coupling where adding a non-serializable helper
+field to `EgressConfig` would otherwise cause a runtime panic or
+accidentally widen the hash input.
 
 `EgressConfig` uses `BTreeMap` for channels and routes (deterministic
 serialization, established in the routing config decision). The hash

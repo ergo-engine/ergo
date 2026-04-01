@@ -68,22 +68,20 @@ fn current_process_group_id() -> Result<u32, String> {
 }
 
 fn config_for_script(script: &Path, ack_timeout: Duration) -> EgressConfig {
-    EgressConfig {
-        default_ack_timeout: ack_timeout,
-        channels: BTreeMap::from([(
-            "broker".to_string(),
-            EgressChannelConfig::Process {
-                command: vec!["sh".to_string(), script.display().to_string()],
-            },
-        )]),
-        routes: BTreeMap::from([(
-            "place_order".to_string(),
-            super::super::EgressRoute {
-                channel: "broker".to_string(),
-                ack_timeout: None,
-            },
-        )]),
-    }
+    EgressConfig::builder(ack_timeout)
+        .channel(
+            "broker",
+            EgressChannelConfig::process(vec!["sh".to_string(), script.display().to_string()])
+                .expect("channel config should be valid"),
+        )
+        .expect("channel should insert")
+        .route(
+            "place_order",
+            super::super::EgressRoute::new("broker", None).expect("route should be valid"),
+        )
+        .expect("route should insert")
+        .build()
+        .expect("egress config should build")
 }
 
 fn sample_intent(intent_id: &str) -> IntentRecord {

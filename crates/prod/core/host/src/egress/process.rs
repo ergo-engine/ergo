@@ -212,12 +212,19 @@ struct ChannelProcess {
 
 impl ChannelProcess {
     fn spawn(channel_id: &str, config: &EgressChannelConfig) -> Result<Self, EgressProcessError> {
-        let command = match config {
-            EgressChannelConfig::Process { command } => command,
-        };
+        let command = config.process_command().ok_or_else(|| {
+            EgressProcessError::InvalidConfig(format!(
+                "egress channel '{channel_id}' uses unsupported channel type"
+            ))
+        })?;
         if command.is_empty() {
             return Err(EgressProcessError::InvalidConfig(format!(
                 "egress channel '{channel_id}' has empty process command"
+            )));
+        }
+        if command[0].trim().is_empty() {
+            return Err(EgressProcessError::InvalidConfig(format!(
+                "egress channel '{channel_id}' has blank process executable"
             )));
         }
 
@@ -597,7 +604,7 @@ impl EgressRuntime {
     }
 
     pub fn route_kind_set(&self) -> std::collections::HashSet<String> {
-        self.config.routes.keys().cloned().collect()
+        self.config.routes().keys().cloned().collect()
     }
 
     pub fn start_channels(&mut self) -> Result<(), EgressProcessError> {
@@ -606,7 +613,7 @@ impl EgressRuntime {
         }
 
         let mut started = BTreeMap::new();
-        for (channel_id, channel_config) in &self.config.channels {
+        for (channel_id, channel_config) in self.config.channels() {
             let handle = StartingEgressChannel::spawn(channel_id, channel_config)?;
             let required_kinds = self.required_route_kinds_for_channel(channel_id);
             let handle =
@@ -630,7 +637,7 @@ impl EgressRuntime {
 
         let route = self
             .config
-            .routes
+            .routes()
             .get(&intent.kind)
             .ok_or_else(|| {
                 EgressProcessError::InvalidConfig(format!(
@@ -640,7 +647,9 @@ impl EgressRuntime {
             })?
             .clone();
 
-        let timeout = route.ack_timeout.unwrap_or(self.config.default_ack_timeout);
+        let timeout = route
+            .ack_timeout()
+            .unwrap_or(self.config.default_ack_timeout());
         let dispatch_result = {
             let Some(channels) = self.channels_mut() else {
                 return Err(EgressProcessError::Startup {
@@ -648,10 +657,11 @@ impl EgressRuntime {
                     detail: "egress channels are not started".to_string(),
                 });
             };
-            let handle = channels.get_mut(&route.channel).ok_or_else(|| {
+            let handle = channels.get_mut(route.channel()).ok_or_else(|| {
                 EgressProcessError::InvalidConfig(format!(
                     "route for intent kind '{}' references unknown channel '{}'",
-                    intent.kind, route.channel
+                    intent.kind,
+                    route.channel()
                 ))
             })?;
 
@@ -663,7 +673,7 @@ impl EgressRuntime {
             Err(err @ EgressProcessError::Timeout { .. })
             | Err(err @ EgressProcessError::Protocol { .. })
             | Err(err @ EgressProcessError::Io { .. }) => {
-                self.quiesce_channel(&route.channel);
+                self.quiesce_channel(route.channel());
                 self.quiesce_all_channels();
                 Err(err)
             }
@@ -729,10 +739,10 @@ impl EgressRuntime {
 
     fn required_route_kinds_for_channel(&self, channel_id: &str) -> BTreeSet<String> {
         self.config
-            .routes
+            .routes()
             .iter()
             .filter_map(|(intent_kind, route)| {
-                (route.channel == channel_id).then_some(intent_kind.clone())
+                (route.channel() == channel_id).then_some(intent_kind.clone())
             })
             .collect()
     }

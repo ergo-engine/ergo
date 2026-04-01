@@ -7,6 +7,7 @@ members = [
     "crates/kernel/supervisor",
     "crates/prod/core/host",
     "crates/prod/core/loader",
+    "crates/prod/shared/duration",
     "crates/prod/clients/cli",
     "crates/prod/clients/sdk-rust",
     "crates/prod/clients/sdk-types",

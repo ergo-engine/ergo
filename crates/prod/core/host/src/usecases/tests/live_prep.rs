@@ -615,22 +615,20 @@ fn validate_graph_from_paths_does_not_start_egress_processes(
 
     let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_validate_egress_no_start")?;
     let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
-    let config = EgressConfig {
-        default_ack_timeout: Duration::from_millis(50),
-        channels: BTreeMap::from([(
-            "broker".to_string(),
-            EgressChannelConfig::Process {
-                command: vec!["/definitely/missing-egress-binary".to_string()],
-            },
-        )]),
-        routes: BTreeMap::from([(
-            "place_order".to_string(),
-            EgressRoute {
-                channel: "broker".to_string(),
-                ack_timeout: None,
-            },
-        )]),
-    };
+    let config = EgressConfig::builder(Duration::from_millis(50))
+        .channel(
+            "broker",
+            EgressChannelConfig::process(vec!["/definitely/missing-egress-binary".to_string()])
+                .expect("channel config should be valid"),
+        )
+        .expect("channel should insert")
+        .route(
+            "place_order",
+            EgressRoute::new("broker", None).expect("route should be valid"),
+        )
+        .expect("route should insert")
+        .build()
+        .expect("egress config should build");
 
     validate_graph_from_paths_with_surfaces(
         PrepareHostedRunnerFromPathsRequest {
@@ -659,22 +657,20 @@ fn prepare_hosted_runner_from_paths_surfaces_egress_startup_failure_before_first
 
     let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_prepare_runner_startup_fail")?;
     let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
-    let config = EgressConfig {
-        default_ack_timeout: Duration::from_millis(50),
-        channels: BTreeMap::from([(
-            "broker".to_string(),
-            EgressChannelConfig::Process {
-                command: vec!["/definitely/missing-egress-binary".to_string()],
-            },
-        )]),
-        routes: BTreeMap::from([(
-            "place_order".to_string(),
-            EgressRoute {
-                channel: "broker".to_string(),
-                ack_timeout: None,
-            },
-        )]),
-    };
+    let config = EgressConfig::builder(Duration::from_millis(50))
+        .channel(
+            "broker",
+            EgressChannelConfig::process(vec!["/definitely/missing-egress-binary".to_string()])
+                .expect("channel config should be valid"),
+        )
+        .expect("channel should insert")
+        .route(
+            "place_order",
+            EgressRoute::new("broker", None).expect("route should be valid"),
+        )
+        .expect("route should insert")
+        .build()
+        .expect("egress config should build");
 
     let err = match prepare_hosted_runner_from_paths_with_surfaces(
         PrepareHostedRunnerFromPathsRequest {
@@ -711,22 +707,20 @@ fn prepare_hosted_runner_surfaces_egress_startup_failure_after_runner_constructi
 
     let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_prepare_assets_startup_fail")?;
     let adapter = write_intent_adapter_manifest(&temp_dir, "adapter.yaml")?;
-    let config = EgressConfig {
-        default_ack_timeout: Duration::from_millis(50),
-        channels: BTreeMap::from([(
-            "broker".to_string(),
-            EgressChannelConfig::Process {
-                command: vec!["/definitely/missing-egress-binary".to_string()],
-            },
-        )]),
-        routes: BTreeMap::from([(
-            "place_order".to_string(),
-            EgressRoute {
-                channel: "broker".to_string(),
-                ack_timeout: None,
-            },
-        )]),
-    };
+    let config = EgressConfig::builder(Duration::from_millis(50))
+        .channel(
+            "broker",
+            EgressChannelConfig::process(vec!["/definitely/missing-egress-binary".to_string()])
+                .expect("channel config should be valid"),
+        )
+        .expect("channel should insert")
+        .route(
+            "place_order",
+            EgressRoute::new("broker", None).expect("route should be valid"),
+        )
+        .expect("route should insert")
+        .build()
+        .expect("egress config should build");
 
     let assets = load_graph_assets_from_paths(&graph, &[])?;
     let options = LivePrepOptions {

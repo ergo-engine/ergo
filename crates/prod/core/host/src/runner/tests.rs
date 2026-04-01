@@ -17,7 +17,7 @@ use ergo_runtime::cluster::{
     OutputPortSpec, OutputRef, ParameterValue,
 };
 use ergo_supervisor::Constraints;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -911,22 +911,20 @@ fn replay_mode_does_not_start_egress_channels() {
     let provides = adapter_provides_with_effects(&["place_order"]);
     let runtime = runtime_for_graph(build_number_source_graph(), provides.clone());
     let adapter = adapter_config(provides);
-    let egress_config = EgressConfig {
-        default_ack_timeout: Duration::from_millis(50),
-        channels: BTreeMap::from([(
-            "broker".to_string(),
-            EgressChannelConfig::Process {
-                command: vec!["/definitely/missing-egress-binary".to_string()],
-            },
-        )]),
-        routes: BTreeMap::from([(
-            "place_order".to_string(),
-            EgressRoute {
-                channel: "broker".to_string(),
-                ack_timeout: None,
-            },
-        )]),
-    };
+    let egress_config = EgressConfig::builder(Duration::from_millis(50))
+        .channel(
+            "broker",
+            EgressChannelConfig::process(vec!["/definitely/missing-egress-binary".to_string()])
+                .expect("channel config should be valid"),
+        )
+        .expect("channel should insert")
+        .route(
+            "place_order",
+            EgressRoute::new("broker", None).expect("route should be valid"),
+        )
+        .expect("route should insert")
+        .build()
+        .expect("egress config should build");
 
     let mut runner = HostedRunner::new(
         GraphId::new("g"),
@@ -967,26 +965,24 @@ fn runner_init_rejects_egress_and_replay_ownership_together() {
     let provides = adapter_provides_with_effects(&["place_order"]);
     let runtime = runtime_for_graph(build_number_source_graph(), provides.clone());
     let adapter = adapter_config(provides);
-    let egress_config = EgressConfig {
-        default_ack_timeout: Duration::from_millis(50),
-        channels: BTreeMap::from([(
-            "broker".to_string(),
-            EgressChannelConfig::Process {
-                command: vec![
-                    "/bin/sh".to_string(),
-                    "-c".to_string(),
-                    "exit 0".to_string(),
-                ],
-            },
-        )]),
-        routes: BTreeMap::from([(
-            "place_order".to_string(),
-            EgressRoute {
-                channel: "broker".to_string(),
-                ack_timeout: None,
-            },
-        )]),
-    };
+    let egress_config = EgressConfig::builder(Duration::from_millis(50))
+        .channel(
+            "broker",
+            EgressChannelConfig::process(vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "exit 0".to_string(),
+            ])
+            .expect("channel config should be valid"),
+        )
+        .expect("channel should insert")
+        .route(
+            "place_order",
+            EgressRoute::new("broker", None).expect("route should be valid"),
+        )
+        .expect("route should insert")
+        .build()
+        .expect("egress config should build");
 
     let err = match HostedRunner::new(
         GraphId::new("g"),

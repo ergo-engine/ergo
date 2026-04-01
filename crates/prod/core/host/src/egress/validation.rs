@@ -6,7 +6,6 @@
 //!   proceeds.
 //!
 //! Owns:
-//! - Route-to-channel existence checks within `EgressConfig`.
 //! - Rejection when a routed kind is not accepted by the adapter contract.
 //! - Delegation to host ownership coverage checks for graph-emittable kinds the
 //!   adapter accepts so each one is owned by either a handler or an egress route.
@@ -29,6 +28,8 @@
 //!   of those kinds through egress conflicts with host-owned handler coverage.
 //! - Non-emittable routes are warnings, not errors; they describe dead config for
 //!   the current graph but do not prevent live setup.
+//! - `EgressConfig` is already validated for intrinsic route/channel integrity in
+//!   `config.rs`; this module only evaluates graph/adapter/handler context.
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -55,26 +56,13 @@ impl std::fmt::Display for EgressValidationWarning {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EgressValidationError {
-    RouteReferencesMissingChannel {
-        intent_kind: String,
-        channel: String,
-    },
-    RoutedKindNotAcceptedByAdapter {
-        intent_kind: String,
-    },
+    RoutedKindNotAcceptedByAdapter { intent_kind: String },
     Coverage(HandlerCoverageError),
 }
 
 impl std::fmt::Display for EgressValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::RouteReferencesMissingChannel {
-                intent_kind,
-                channel,
-            } => write!(
-                f,
-                "egress route for kind '{intent_kind}' references unknown channel '{channel}'"
-            ),
             Self::RoutedKindNotAcceptedByAdapter { intent_kind } => write!(
                 f,
                 "egress route kind '{intent_kind}' is not accepted by adapter (accepts.effects)"
@@ -105,16 +93,9 @@ pub fn validate_egress_config(
     graph_emittable_effect_kinds: &HashSet<String>,
     registered_handler_kinds: &BTreeSet<String>,
 ) -> Result<Vec<EgressValidationWarning>, EgressValidationError> {
-    let routed_kinds: HashSet<String> = config.routes.keys().cloned().collect();
+    let routed_kinds: HashSet<String> = config.routes().keys().cloned().collect();
 
-    for (intent_kind, route) in &config.routes {
-        if !config.channels.contains_key(&route.channel) {
-            return Err(EgressValidationError::RouteReferencesMissingChannel {
-                intent_kind: intent_kind.clone(),
-                channel: route.channel.clone(),
-            });
-        }
-
+    for intent_kind in config.routes().keys() {
         if !adapter_provides.effects.contains(intent_kind) {
             return Err(EgressValidationError::RoutedKindNotAcceptedByAdapter {
                 intent_kind: intent_kind.clone(),
@@ -130,7 +111,7 @@ pub fn validate_egress_config(
     )?;
 
     let mut warnings = Vec::new();
-    for intent_kind in config.routes.keys() {
+    for intent_kind in config.routes().keys() {
         if !graph_emittable_effect_kinds.contains(intent_kind) {
             warnings.push(EgressValidationWarning::RouteForNonEmittableKind {
                 intent_kind: intent_kind.clone(),
