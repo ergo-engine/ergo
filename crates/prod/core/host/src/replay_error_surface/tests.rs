@@ -1,6 +1,25 @@
+//! replay_error_surface tests
+//!
+//! Purpose:
+//! - Lock the host replay-error descriptor table exposed by
+//!   `replay_error_surface.rs`.
+//!
+//! Owns:
+//! - Stable expectations for descriptor codes, messages, where/fix guidance,
+//!   and detailed payload/effect diagnostics.
+//!
+//! Does not own:
+//! - Replay semantics or host replay orchestration behavior.
+//!
+//! Safety notes:
+//! - These tests intentionally fail on descriptor wording drift because CLI and
+//!   other product renderers consume this table directly.
+
 use super::*;
 
+use ergo_adapter::capture::CaptureError;
 use ergo_adapter::EventId;
+use ergo_adapter::ExternalEventPayloadError;
 use ergo_runtime::common::{ActionEffect, EffectWrite, Value};
 use ergo_supervisor::replay::{hash_effect, ReplayError};
 use ergo_supervisor::CapturedActionEffect;
@@ -87,11 +106,13 @@ fn descriptor_contract_table_is_stable() {
                 fix: Some(
                     "re-capture with object payloads or repair the capture bundle payload bytes",
                 ),
-                details: vec!["bad json".to_string()],
+                details: vec!["payload bytes are not valid JSON: bad json".to_string()],
             },
             describe_replay_error(&ReplayError::InvalidPayload {
                 event_id: EventId::new("evt-payload"),
-                detail: "bad json".to_string(),
+                source: ExternalEventPayloadError::InvalidJson {
+                    detail: "bad json".to_string(),
+                },
             }),
         ),
         (
@@ -190,12 +211,17 @@ fn descriptor_contract_table_is_stable() {
                 rule_id: None,
                 where_field: Some("event 'evt-rh'".to_string()),
                 fix: Some("inspect capture payload/hash integrity and recapture if needed"),
-                details: vec!["payload mismatch".to_string()],
+                details: vec![String::from(
+                    "payload hash mismatch (expected 'expected-hash', actual 'actual-hash')",
+                )],
             },
             describe_host_replay_error(&HostReplayError::Hosted(
                 HostedReplayError::EventRehydrate {
                     event_id: "evt-rh".to_string(),
-                    detail: "payload mismatch".to_string(),
+                    source: CaptureError::PayloadHashMismatch {
+                        expected: "expected-hash".to_string(),
+                        actual: "actual-hash".to_string(),
+                    },
                 },
             )),
         ),

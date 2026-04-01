@@ -1,3 +1,27 @@
+//! ergo_adapter
+//!
+//! Purpose:
+//! - Define the kernel-owned adapter surface for manifests, event binding,
+//!   composition checks, capture helpers, and runtime-facing event types.
+//!
+//! Owns:
+//! - Adapter validation/composition authorities and the typed errors they emit.
+//! - The canonical event payload/context realization boundary used by replay and
+//!   host adapter-bound execution.
+//!
+//! Does not own:
+//! - Host orchestration, replay descriptors, or product-facing error shaping.
+//! - Runtime primitive semantics owned by `ergo_runtime`.
+//!
+//! Connects to:
+//! - `ergo_supervisor` capture/replay and fixture helpers.
+//! - `ergo_host`, which consumes adapter manifests, binder compilation, and
+//!   composition validation without redefining adapter meaning.
+//!
+//! Safety notes:
+//! - `ExternalEventPayloadError` is the typed authority for payload/context
+//!   realization failures that higher layers should carry instead of flattening.
+
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -41,31 +65,54 @@ pub use provides::{AdapterProvides, ContextKeyProvision};
 pub use registry::register;
 pub use validate::validate_adapter;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DemoSourceContextError {
+    MissingCatalogMetadata { primitive_id: String },
+    MissingSourcePrimitive { primitive_id: String },
+    RequiredContext { primitive_id: String, key: String },
+}
+
+impl fmt::Display for DemoSourceContextError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingCatalogMetadata { primitive_id } => {
+                write!(f, "missing catalog metadata for primitive '{primitive_id}'")
+            }
+            Self::MissingSourcePrimitive { primitive_id } => {
+                write!(f, "missing source primitive '{primitive_id}' in registry")
+            }
+            Self::RequiredContext { primitive_id, key } => write!(
+                f,
+                "source '{}' requires context key '{}' but adapter provides are empty",
+                primitive_id, key
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DemoSourceContextError {}
+
 /// Validates that no source in the graph requires context keys when adapter provides are empty.
 /// Used by demo/fixture runners that don't have a real adapter.
 pub fn ensure_demo_sources_have_no_required_context(
     graph: &ExpandedGraph,
     catalog: &CorePrimitiveCatalog,
     registries: &CoreRegistries,
-) -> Result<(), String> {
+) -> Result<(), DemoSourceContextError> {
     for node in graph.nodes.values() {
         let meta = catalog
             .get(&node.implementation.impl_id, &node.implementation.version)
-            .ok_or_else(|| {
-                format!(
-                    "missing catalog metadata for primitive '{}'",
-                    node.implementation.impl_id
-                )
+            .ok_or_else(|| DemoSourceContextError::MissingCatalogMetadata {
+                primitive_id: node.implementation.impl_id.clone(),
             })?;
         if meta.kind != PrimitiveKind::Source {
             continue;
         }
 
         let Some(primitive) = registries.sources.get(&node.implementation.impl_id) else {
-            return Err(format!(
-                "missing source primitive '{}' in registry",
-                node.implementation.impl_id
-            ));
+            return Err(DemoSourceContextError::MissingSourcePrimitive {
+                primitive_id: node.implementation.impl_id.clone(),
+            });
         };
 
         if let Some(req) = primitive
@@ -75,10 +122,10 @@ pub fn ensure_demo_sources_have_no_required_context(
             .iter()
             .find(|req| req.required)
         {
-            return Err(format!(
-                "source '{}' requires context key '{}' but adapter provides are empty",
-                node.implementation.impl_id, req.name
-            ));
+            return Err(DemoSourceContextError::RequiredContext {
+                primitive_id: node.implementation.impl_id.clone(),
+                key: req.name.clone(),
+            });
         }
     }
 
@@ -212,7 +259,7 @@ pub struct EventPayload {
     pub data: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExternalEventPayloadError {
     InvalidJson { detail: String },
     PayloadMustBeJsonObject { got: String },

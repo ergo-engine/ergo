@@ -1,14 +1,62 @@
+//! capture
+//!
+//! Purpose:
+//! - Define the kernel-owned capture record format for external events and the
+//!   typed rehydration/integrity failures that replay consumes.
+//!
+//! Owns:
+//! - `CaptureError` as the canonical event-record integrity/rehydration error.
+//! - Deterministic payload hashing and `ExternalEventRecord` rehydration rules.
+//!
+//! Does not own:
+//! - Replay orchestration or host-facing replay diagnostics.
+//! - Higher-level capture bundle write policy.
+//!
+//! Connects to:
+//! - `ergo_supervisor::replay`, which turns event-record failures into replay
+//!   preflight/rehydration failures.
+//! - Host replay, which should preserve this typed error instead of flattening it.
+//!
+//! Safety notes:
+//! - Hash mismatch remains distinct from payload materialization failure.
+//! - Invalid payload rehydration preserves `ExternalEventPayloadError` as the
+//!   causal source rather than storing only rendered text.
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{EventId, EventPayload, EventTime, ExternalEvent, ExternalEventKind};
+use crate::{
+    EventId, EventPayload, EventTime, ExternalEvent, ExternalEventKind, ExternalEventPayloadError,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CaptureError {
     /// X.11-like guard: payload hash does not match stored hash.
     PayloadHashMismatch { expected: String, actual: String },
     /// Payload bytes are hash-consistent but cannot be materialized into an ExternalEvent context.
-    InvalidPayload { detail: String },
+    InvalidPayload { source: ExternalEventPayloadError },
+}
+
+impl std::fmt::Display for CaptureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PayloadHashMismatch { expected, actual } => write!(
+                f,
+                "payload hash mismatch (expected '{}', actual '{}')",
+                expected, actual
+            ),
+            Self::InvalidPayload { source } => write!(f, "{source}"),
+        }
+    }
+}
+
+impl std::error::Error for CaptureError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::PayloadHashMismatch { .. } => None,
+            Self::InvalidPayload { source } => Some(source),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,9 +93,7 @@ impl ExternalEventRecord {
             self.event_time,
             self.payload.clone(),
         )
-        .map_err(|err| CaptureError::InvalidPayload {
-            detail: err.to_string(),
-        })
+        .map_err(|source| CaptureError::InvalidPayload { source })
     }
 
     pub fn rehydrate_checked(&self) -> Result<ExternalEvent, CaptureError> {
@@ -135,10 +181,12 @@ mod tests {
         record.payload_hash = hash_payload(&record.payload);
 
         match record.rehydrate_checked() {
-            Err(CaptureError::InvalidPayload { detail }) => {
+            Err(CaptureError::InvalidPayload { source }) => {
                 assert!(
-                    detail.contains("payload must be a JSON object, got string"),
-                    "unexpected detail: {detail}"
+                    source
+                        .to_string()
+                        .contains("payload must be a JSON object, got string"),
+                    "unexpected detail: {source}"
                 );
             }
             other => panic!("expected InvalidPayload, got {:?}", other),

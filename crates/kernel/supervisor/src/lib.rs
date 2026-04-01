@@ -1,3 +1,24 @@
+//! ergo_supervisor
+//!
+//! Purpose:
+//! - Define the kernel supervisor surface for deterministic execution, capture,
+//!   replay, and demo helpers.
+//!
+//! Owns:
+//! - The public kernel replay/capture APIs and the typed errors they expose.
+//! - Canonical capture bundle/session types used by higher layers.
+//!
+//! Does not own:
+//! - Host orchestration, CLI descriptors, or product-facing runtime setup.
+//! - Adapter/runtime semantic authorities already owned in sibling kernel crates.
+//!
+//! Connects to:
+//! - `ergo_host`, CLI, SDK, and tests that build on supervisor capture/replay.
+//!
+//! Safety notes:
+//! - Public capture/replay exports should preserve typed kernel errors so higher
+//!   layers do not have to flatten them into strings.
+
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,7 +47,10 @@ pub mod replay;
 #[cfg(any(test, feature = "demo"))]
 pub mod demo;
 
-pub use capture::{write_capture_bundle, CaptureJsonStyle, CapturingDecisionLog, CapturingSession};
+pub use capture::{
+    write_capture_bundle, CaptureJsonStyle, CaptureWriteError, CapturingDecisionLog,
+    CapturingSession,
+};
 
 /// A captured action effect with a deterministic hash for replay verification.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

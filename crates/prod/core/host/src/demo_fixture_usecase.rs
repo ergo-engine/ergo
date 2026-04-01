@@ -64,7 +64,7 @@ pub fn run_demo_fixture_from_path(
     );
 
     ensure_demo_sources_have_no_required_context(&graph, &catalog, &core_registries)
-        .map_err(HostRunError::InvalidInput)?;
+        .map_err(|err| HostRunError::InvalidInput(err.to_string()))?;
 
     let runtime = RuntimeHandle::new(
         graph.clone(),

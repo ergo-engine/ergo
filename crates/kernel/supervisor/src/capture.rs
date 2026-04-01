@@ -1,6 +1,29 @@
+//! capture
+//!
+//! Purpose:
+//! - Define the kernel-owned capture bundle/session types plus the typed capture
+//!   artifact write boundary.
+//!
+//! Owns:
+//! - `CapturingSession` and `CapturingDecisionLog` for bundle accumulation.
+//! - `CaptureWriteError` and atomic capture-artifact write policy.
+//!
+//! Does not own:
+//! - Host capture orchestration or product-facing write-error rendering.
+//! - Replay validation semantics over completed capture bundles.
+//!
+//! Connects to:
+//! - Host and SDK capture write paths through `write_capture_bundle`.
+//! - Supervisor demo/fixture helpers that persist capture artifacts.
+//!
+//! Safety notes:
+//! - Artifact writes remain atomic through temp-file write + sync + rename.
+//! - `CaptureWriteError` preserves the exact write stage and chained source so
+//!   higher layers can stop flattening capture write failures into strings.
+
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -18,6 +41,132 @@ use crate::{
 pub enum CaptureJsonStyle {
     Compact,
     Pretty,
+}
+
+#[derive(Debug)]
+pub enum CaptureWriteError {
+    CreateOutputDirectory {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    Serialize {
+        path: PathBuf,
+        style: CaptureJsonStyle,
+        source: serde_json::Error,
+    },
+    InvalidDestination {
+        path: PathBuf,
+    },
+    CreateTempFile {
+        destination: PathBuf,
+        temp_path: PathBuf,
+        source: std::io::Error,
+    },
+    ExhaustedTempFileAttempts {
+        destination: PathBuf,
+    },
+    WriteTempFile {
+        destination: PathBuf,
+        temp_path: PathBuf,
+        source: std::io::Error,
+    },
+    SyncTempFile {
+        destination: PathBuf,
+        temp_path: PathBuf,
+        source: std::io::Error,
+    },
+    RenameTempFile {
+        destination: PathBuf,
+        temp_path: PathBuf,
+        source: std::io::Error,
+    },
+}
+
+impl std::fmt::Display for CaptureWriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CreateOutputDirectory { source, .. } => {
+                write!(f, "create capture output directory: {source}")
+            }
+            Self::Serialize {
+                path,
+                style,
+                source,
+            } => write!(
+                f,
+                "serialize capture bundle '{}' ({}): {source}",
+                path.display(),
+                match style {
+                    CaptureJsonStyle::Compact => "compact",
+                    CaptureJsonStyle::Pretty => "pretty",
+                }
+            ),
+            Self::InvalidDestination { path } => write!(
+                f,
+                "write capture bundle '{}': destination must include a file name",
+                path.display()
+            ),
+            Self::CreateTempFile {
+                destination,
+                temp_path,
+                source,
+            } => write!(
+                f,
+                "write capture bundle '{}': create temp file '{}': {source}",
+                destination.display(),
+                temp_path.display()
+            ),
+            Self::ExhaustedTempFileAttempts { destination } => write!(
+                f,
+                "write capture bundle '{}': exhausted temp file creation attempts",
+                destination.display()
+            ),
+            Self::WriteTempFile {
+                destination,
+                temp_path,
+                source,
+            } => write!(
+                f,
+                "write capture bundle '{}': write temp file '{}': {source}",
+                destination.display(),
+                temp_path.display()
+            ),
+            Self::SyncTempFile {
+                destination,
+                temp_path,
+                source,
+            } => write!(
+                f,
+                "write capture bundle '{}': sync temp file '{}': {source}",
+                destination.display(),
+                temp_path.display()
+            ),
+            Self::RenameTempFile {
+                destination,
+                temp_path,
+                source,
+            } => write!(
+                f,
+                "write capture bundle '{}': rename temp file '{}': {source}",
+                destination.display(),
+                temp_path.display()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CaptureWriteError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::CreateOutputDirectory { source, .. } => Some(source),
+            Self::Serialize { source, .. } => Some(source),
+            Self::CreateTempFile { source, .. } => Some(source),
+            Self::WriteTempFile { source, .. } => Some(source),
+            Self::SyncTempFile { source, .. } => Some(source),
+            Self::RenameTempFile { source, .. } => Some(source),
+            Self::InvalidDestination { .. } | Self::ExhaustedTempFileAttempts { .. } => None,
+        }
+    }
 }
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -138,65 +287,77 @@ pub fn write_capture_bundle(
     path: &Path,
     bundle: &CaptureBundle,
     style: CaptureJsonStyle,
-) -> Result<(), String> {
+) -> Result<(), CaptureWriteError> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .map_err(|err| format!("create capture output directory: {err}"))?;
+            fs::create_dir_all(parent).map_err(|source| {
+                CaptureWriteError::CreateOutputDirectory {
+                    path: parent.to_path_buf(),
+                    source,
+                }
+            })?;
         }
     }
 
     let mut bytes = match style {
         CaptureJsonStyle::Compact => {
-            serde_json::to_vec(bundle).map_err(|err| format!("serialize capture bundle: {err}"))?
+            serde_json::to_vec(bundle).map_err(|source| CaptureWriteError::Serialize {
+                path: path.to_path_buf(),
+                style,
+                source,
+            })?
         }
-        CaptureJsonStyle::Pretty => serde_json::to_vec_pretty(bundle)
-            .map_err(|err| format!("serialize capture bundle: {err}"))?,
+        CaptureJsonStyle::Pretty => {
+            serde_json::to_vec_pretty(bundle).map_err(|source| CaptureWriteError::Serialize {
+                path: path.to_path_buf(),
+                style,
+                source,
+            })?
+        }
     };
     bytes.push(b'\n');
 
     write_bytes_atomic(path, &bytes)
 }
 
-fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), CaptureWriteError> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let file_name = path.file_name().ok_or_else(|| {
-        format!(
-            "write capture bundle '{}': destination must include a file name",
-            path.display()
-        )
-    })?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| CaptureWriteError::InvalidDestination {
+            path: path.to_path_buf(),
+        })?;
     let (temp_path, mut file) = create_temp_file(path, parent, file_name)?;
 
-    if let Err(err) = file.write_all(bytes) {
+    if let Err(source) = file.write_all(bytes) {
         let _ = fs::remove_file(&temp_path);
-        return Err(format!(
-            "write capture bundle '{}': write temp file '{}': {err}",
-            path.display(),
-            temp_path.display()
-        ));
+        return Err(CaptureWriteError::WriteTempFile {
+            destination: path.to_path_buf(),
+            temp_path,
+            source,
+        });
     }
 
-    if let Err(err) = file.sync_all() {
+    if let Err(source) = file.sync_all() {
         let _ = fs::remove_file(&temp_path);
-        return Err(format!(
-            "write capture bundle '{}': sync temp file '{}': {err}",
-            path.display(),
-            temp_path.display()
-        ));
+        return Err(CaptureWriteError::SyncTempFile {
+            destination: path.to_path_buf(),
+            temp_path,
+            source,
+        });
     }
 
     drop(file);
-    if let Err(err) = replace_destination_with_retry(&temp_path, path) {
+    if let Err(source) = replace_destination_with_retry(&temp_path, path) {
         let _ = fs::remove_file(&temp_path);
-        return Err(format!(
-            "write capture bundle '{}': rename temp file '{}': {err}",
-            path.display(),
-            temp_path.display()
-        ));
+        return Err(CaptureWriteError::RenameTempFile {
+            destination: path.to_path_buf(),
+            temp_path,
+            source,
+        });
     }
 
     Ok(())
@@ -206,7 +367,7 @@ fn create_temp_file(
     destination: &Path,
     parent: &Path,
     file_name: &std::ffi::OsStr,
-) -> Result<(std::path::PathBuf, std::fs::File), String> {
+) -> Result<(std::path::PathBuf, std::fs::File), CaptureWriteError> {
     for _ in 0..MAX_TEMP_FILE_ATTEMPTS {
         let suffix = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let temp_name = format!(
@@ -223,20 +384,19 @@ fn create_temp_file(
         {
             Ok(file) => return Ok((temp_path, file)),
             Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
-            Err(err) => {
-                return Err(format!(
-                    "write capture bundle '{}': create temp file '{}': {err}",
-                    destination.display(),
-                    temp_path.display()
-                ))
+            Err(source) => {
+                return Err(CaptureWriteError::CreateTempFile {
+                    destination: destination.to_path_buf(),
+                    temp_path,
+                    source,
+                });
             }
         }
     }
 
-    Err(format!(
-        "write capture bundle '{}': exhausted temp file creation attempts",
-        destination.display()
-    ))
+    Err(CaptureWriteError::ExhaustedTempFileAttempts {
+        destination: destination.to_path_buf(),
+    })
 }
 
 #[cfg(not(windows))]
@@ -318,226 +478,4 @@ fn replace_destination_once(temp_path: &Path, destination: &Path) -> std::io::Re
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::Constraints;
-    use ergo_adapter::GraphId;
-    use std::path::PathBuf;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-    fn temp_dir(label: &str) -> PathBuf {
-        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!(
-            "ergo-supervisor-capture-{label}-{}-{}",
-            std::process::id(),
-            index
-        ));
-        fs::create_dir_all(&dir).expect("create temp dir");
-        dir
-    }
-
-    fn sample_bundle() -> CaptureBundle {
-        CaptureBundle {
-            capture_version: crate::CAPTURE_FORMAT_VERSION.to_string(),
-            graph_id: GraphId::new("capture_test"),
-            config: Constraints::default(),
-            events: Vec::new(),
-            decisions: Vec::new(),
-            adapter_provenance: crate::NO_ADAPTER_PROVENANCE.to_string(),
-            runtime_provenance: "rpv1:sha256:test".to_string(),
-            egress_provenance: None,
-        }
-    }
-
-    #[test]
-    fn writes_compact_json_with_trailing_newline() {
-        let dir = temp_dir("compact");
-        let path = dir.join("capture.json");
-        write_capture_bundle(&path, &sample_bundle(), CaptureJsonStyle::Compact)
-            .expect("compact write should succeed");
-
-        let raw = fs::read_to_string(&path).expect("read capture");
-        assert!(raw.ends_with('\n'), "expected trailing newline");
-        assert_eq!(
-            raw.matches('\n').count(),
-            1,
-            "compact output should be single-line"
-        );
-        serde_json::from_str::<CaptureBundle>(&raw).expect("capture json should parse");
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn writes_pretty_json_with_trailing_newline() {
-        let dir = temp_dir("pretty");
-        let path = dir.join("capture.json");
-        write_capture_bundle(&path, &sample_bundle(), CaptureJsonStyle::Pretty)
-            .expect("pretty write should succeed");
-
-        let raw = fs::read_to_string(&path).expect("read capture");
-        assert!(raw.ends_with('\n'), "expected trailing newline");
-        assert!(
-            raw.matches('\n').count() > 1,
-            "pretty output should contain multiple lines"
-        );
-        serde_json::from_str::<CaptureBundle>(&raw).expect("capture json should parse");
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn atomic_replace_overwrites_existing_file_cleanly() {
-        let dir = temp_dir("replace");
-        let path = dir.join("capture.json");
-        fs::write(&path, "old-content\n").expect("write original file");
-
-        write_capture_bundle(&path, &sample_bundle(), CaptureJsonStyle::Compact)
-            .expect("atomic overwrite should succeed");
-
-        let raw = fs::read_to_string(&path).expect("read capture");
-        assert_ne!(raw, "old-content\n", "expected replacement");
-        assert!(raw.ends_with('\n'), "expected trailing newline");
-        serde_json::from_str::<CaptureBundle>(&raw).expect("capture json should parse");
-
-        let temp_glob = format!("capture.json.{}.*.tmp", std::process::id());
-        let leftovers = std::fs::read_dir(&dir)
-            .expect("read temp dir")
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.file_name().to_string_lossy().to_string())
-            .filter(|name| {
-                let prefix = format!("capture.json.{}.", std::process::id());
-                name.starts_with(&prefix) && name.ends_with(".tmp")
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            leftovers.is_empty(),
-            "temp files should not remain after success (pattern: {temp_glob})"
-        );
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn concurrent_writes_to_same_destination_succeed() {
-        let dir = temp_dir("concurrent");
-        let path = dir.join("capture.json");
-        let mut handles = Vec::new();
-
-        for idx in 0..8 {
-            let path = path.clone();
-            handles.push(std::thread::spawn(move || {
-                let mut bundle = sample_bundle();
-                bundle.graph_id = GraphId::new(format!("capture_test_{idx}"));
-                write_capture_bundle(&path, &bundle, CaptureJsonStyle::Compact)
-            }));
-        }
-
-        for handle in handles {
-            handle
-                .join()
-                .expect("thread panicked")
-                .expect("writer should succeed");
-        }
-
-        let raw = fs::read_to_string(&path).expect("read capture");
-        assert!(raw.ends_with('\n'), "expected trailing newline");
-        serde_json::from_str::<CaptureBundle>(&raw).expect("capture json should parse");
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn failed_write_leaves_existing_destination_untouched() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let dir = temp_dir("failure");
-        let path = dir.join("capture.json");
-        fs::write(&path, "old-content\n").expect("write original file");
-
-        let mut perms = fs::metadata(&dir).expect("dir metadata").permissions();
-        perms.set_mode(0o555);
-        fs::set_permissions(&dir, perms.clone()).expect("set dir readonly");
-
-        let result = write_capture_bundle(&path, &sample_bundle(), CaptureJsonStyle::Compact);
-        assert!(result.is_err(), "write should fail in readonly directory");
-
-        let current = fs::read_to_string(&path).expect("read original file");
-        assert_eq!(
-            current, "old-content\n",
-            "destination should remain unchanged"
-        );
-
-        perms.set_mode(0o755);
-        fs::set_permissions(&dir, perms).expect("restore dir permissions");
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn capturing_log_hashes_non_empty_effects_correctly() {
-        use ergo_runtime::common::{ActionEffect, EffectWrite, Value};
-        use sha2::{Digest, Sha256};
-
-        let effect = ActionEffect {
-            kind: "set_context".to_string(),
-            writes: vec![EffectWrite {
-                key: "price".to_string(),
-                value: Value::Number(42.0),
-            }],
-            intents: vec![],
-        };
-
-        let bundle = Arc::new(Mutex::new(CaptureBundle {
-            capture_version: crate::CAPTURE_FORMAT_VERSION.to_string(),
-            graph_id: GraphId::new("hash_test"),
-            config: Constraints::default(),
-            events: Vec::new(),
-            decisions: Vec::new(),
-            adapter_provenance: crate::NO_ADAPTER_PROVENANCE.to_string(),
-            runtime_provenance: "rpv1:sha256:test".to_string(),
-            egress_provenance: None,
-        }));
-
-        let inner = crate::replay::MemoryDecisionLog::default();
-        let capturing_log = CapturingDecisionLog::new(inner, Arc::clone(&bundle));
-
-        // Construct a DecisionLogEntry with a real effect
-        let entry = crate::DecisionLogEntry {
-            graph_id: GraphId::new("hash_test"),
-            event_id: ergo_adapter::EventId::new("e1"),
-            event: ergo_adapter::ExternalEvent::mechanical(
-                ergo_adapter::EventId::new("e1"),
-                ergo_adapter::ExternalEventKind::Command,
-            ),
-            decision: crate::Decision::Invoke,
-            schedule_at: None,
-            episode_id: crate::EpisodeId::new(0),
-            deadline: None,
-            termination: Some(ergo_adapter::RunTermination::Completed),
-            retry_count: 0,
-            effects: vec![effect.clone()],
-        };
-
-        capturing_log.log(entry);
-
-        let guard = bundle.lock().expect("bundle poisoned");
-        assert_eq!(guard.decisions.len(), 1);
-        let record = &guard.decisions[0];
-        let captured_effects = &record.effects;
-        assert_eq!(captured_effects.len(), 1, "one effect expected");
-        assert_eq!(captured_effects[0].effect, effect);
-
-        // Verify hash matches serde_json::to_vec -> SHA-256 path
-        let expected_bytes = serde_json::to_vec(&effect).unwrap();
-        let mut hasher = Sha256::new();
-        hasher.update(&expected_bytes);
-        let expected_hash = hex::encode(hasher.finalize());
-        assert_eq!(
-            captured_effects[0].effect_hash, expected_hash,
-            "effect_hash must equal SHA-256 of serde_json::to_vec(&effect)"
-        );
-    }
-}
+mod tests;

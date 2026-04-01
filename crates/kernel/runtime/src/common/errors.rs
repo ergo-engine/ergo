@@ -1,4 +1,29 @@
+//! common::errors
+//!
+//! Purpose:
+//! - Define the kernel-owned validation error taxonomy shared by compute-style
+//!   primitive registration and catalog assembly.
+//!
+//! Owns:
+//! - `ValidationError` as the typed authority for common compute registration
+//!   failures.
+//! - The `Display`/`Error` surface higher layers rely on for chaining instead of
+//!   flattening these errors into strings.
+//!
+//! Does not own:
+//! - Primitive-family wrapper errors in catalog assembly.
+//! - Host or product-facing error descriptors.
+//!
+//! Connects to:
+//! - `catalog.rs`, which wraps these failures in `CoreRegistrationError`.
+//! - Compute validation callers that need one authoritative error surface.
+//!
+//! Safety notes:
+//! - `Display` intentionally stays aligned with `ErrorInfo` summary/rule-id so
+//!   registration diagnostics share one semantic authority.
+
 use std::borrow::Cow;
+use std::fmt;
 
 use crate::common::value::{PrimitiveKind, ValueType};
 use crate::common::{doc_anchor_for_rule, ErrorInfo, Phase};
@@ -264,6 +289,14 @@ impl ErrorInfo for ValidationError {
         }
     }
 }
+
+impl fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({})", self.summary(), self.rule_id())
+    }
+}
+
+impl std::error::Error for ValidationError {}
 
 #[cfg(test)]
 mod tests {

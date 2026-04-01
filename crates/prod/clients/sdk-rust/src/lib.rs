@@ -29,7 +29,7 @@ use ergo_runtime::catalog::{CatalogBuilder, CoreRegistrationError};
 
 pub use ergo_host::{
     parse_egress_config_toml, write_capture_bundle, AdapterInput, CaptureBundle, CaptureJsonStyle,
-    EgressChannelConfig, EgressConfig, EgressConfigBuilder, EgressConfigError,
+    CaptureWriteError, EgressChannelConfig, EgressConfig, EgressConfigBuilder, EgressConfigError,
     EgressDispatchFailure, EgressRoute, HostedEvent, HostedStepError, HostedStepOutcome,
     InterruptedRun, InterruptionReason, RunSummary,
 };
@@ -220,7 +220,7 @@ pub enum ProfileRunnerCaptureError {
     Finish(HostedStepError),
     CaptureOutputNotConfigured,
     Write {
-        detail: String,
+        source: CaptureWriteError,
         bundle: CaptureBundle,
     },
 }
@@ -232,7 +232,7 @@ impl std::fmt::Display for ProfileRunnerCaptureError {
             Self::CaptureOutputNotConfigured => {
                 write!(f, "profile does not declare a capture file path")
             }
-            Self::Write { detail, .. } => write!(f, "{detail}"),
+            Self::Write { source, .. } => write!(f, "{source}"),
         }
     }
 }
@@ -241,7 +241,8 @@ impl std::error::Error for ProfileRunnerCaptureError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Finish(err) => Some(err),
-            Self::CaptureOutputNotConfigured | Self::Write { .. } => None,
+            Self::Write { source, .. } => Some(source),
+            Self::CaptureOutputNotConfigured => None,
         }
     }
 }
@@ -1304,7 +1305,7 @@ impl ProfileRunner {
         };
         match write_capture_bundle(&capture_path, &bundle, style) {
             Ok(()) => Ok(bundle),
-            Err(detail) => Err(ProfileRunnerCaptureError::Write { detail, bundle }),
+            Err(source) => Err(ProfileRunnerCaptureError::Write { source, bundle }),
         }
     }
 }
@@ -3615,8 +3616,10 @@ outputs:
             .expect_err("capture write failure should preserve bundle in the error");
 
         match &err {
-            ProfileRunnerCaptureError::Write { detail, bundle } => {
-                assert!(detail.contains("create capture output directory"));
+            ProfileRunnerCaptureError::Write { source, bundle } => {
+                assert!(source
+                    .to_string()
+                    .contains("create capture output directory"));
                 assert_eq!(bundle.decisions.len(), 1);
             }
             other => panic!("unexpected write-failure error: {other}"),

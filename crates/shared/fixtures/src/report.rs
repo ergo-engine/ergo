@@ -1,7 +1,30 @@
+//! report
+//!
+//! Purpose:
+//! - Inspect parsed fixture streams and render stable fixture inspection and
+//!   validation report DTOs.
+//!
+//! Owns:
+//! - Fixture stats/issue DTOs and the reporting helpers that derive them from
+//!   parsed fixture items.
+//!
+//! Does not own:
+//! - Fixture parsing grammar or low-level parse error semantics, which belong
+//!   to `ergo_adapter::fixture`.
+//!
+//! Connects to:
+//! - `ergo_adapter::fixture::parse_fixture(...)` for typed parsing.
+//! - CLI/reporting surfaces that render validation output.
+//!
+//! Safety notes:
+//! - `inspect_fixture(...)` preserves typed parse failures.
+//! - `validate_fixture(...)` is an output/reporting seam and intentionally
+//!   renders parse failures into user-facing issue strings.
+
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use ergo_adapter::fixture::{parse_fixture, FixtureItem};
+use ergo_adapter::fixture::{parse_fixture, FixtureItem, FixtureParseError};
 use ergo_adapter::ExternalEventKind;
 use serde::Serialize;
 
@@ -65,7 +88,7 @@ pub struct FixtureValidationReport {
     pub issues: Vec<FixtureIssueV1>,
 }
 
-pub fn inspect_fixture(path: &Path) -> Result<FixtureAnalysis, String> {
+pub fn inspect_fixture(path: &Path) -> Result<FixtureAnalysis, FixtureParseError> {
     let items = parse_fixture(path)?;
     Ok(analyze_fixture(&items))
 }
@@ -87,9 +110,24 @@ pub fn validate_fixture(path: &Path) -> FixtureValidationReport {
             stats: None,
             issues: vec![FixtureIssueV1 {
                 code: "fixture.parse_error".to_string(),
-                message: err,
+                message: fixture_parse_issue_message(&err),
             }],
         },
+    }
+}
+
+fn fixture_parse_issue_message(err: &FixtureParseError) -> String {
+    match err {
+        FixtureParseError::Open { source, .. } => format!("read fixture: {source}"),
+        FixtureParseError::ReadLine { line, source, .. } => {
+            format!("read fixture line {line}: {source}")
+        }
+        FixtureParseError::ParseLine { line, source, .. } => {
+            format!("fixture parse error at line {line}: {source}")
+        }
+        FixtureParseError::PayloadMustBeObject { line, got, .. } => {
+            format!("fixture parse error at line {line}: payload must be a JSON object, got {got}")
+        }
     }
 }
 
@@ -295,60 +333,4 @@ fn event_kind_name(kind: ExternalEventKind) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use std::path::PathBuf;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-    fn write_fixture(contents: &str) -> PathBuf {
-        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!(
-            "ergo-fixtures-report-test-{}-{}",
-            std::process::id(),
-            index
-        ));
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let path = dir.join("fixture.jsonl");
-        fs::write(&path, contents).expect("write fixture");
-        path
-    }
-
-    #[test]
-    fn inspect_reports_counts() {
-        let path = write_fixture(
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
-             {\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n\
-             {\"kind\":\"event\",\"event\":{\"type\":\"Pump\",\"payload\":{\"price\":1.23},\"semantic_kind\":\"market.tick\"}}\n",
-        );
-
-        let analysis = inspect_fixture(&path).expect("inspect should succeed");
-        assert_eq!(analysis.event_count, 2);
-        assert_eq!(analysis.events_with_payload, 1);
-        assert_eq!(analysis.events_with_semantic_kind, 1);
-        assert_eq!(analysis.event_kind_counts.get("Command"), Some(&1));
-        assert_eq!(analysis.event_kind_counts.get("Pump"), Some(&1));
-    }
-
-    #[test]
-    fn validate_reports_invalid_episode() {
-        let path = write_fixture("{\"kind\":\"episode_start\",\"id\":\"E1\"}\n");
-        let report = validate_fixture(&path);
-        assert!(!report.valid);
-        assert_eq!(report.issues[0].code, "fixture.no_events");
-    }
-
-    #[test]
-    fn render_json_uses_v1_schema() {
-        let path = write_fixture("{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n");
-        let analysis = inspect_fixture(&path).expect("inspect should succeed");
-        let stats = stats_from_analysis(&analysis);
-        let json = render_inspect_json(&path, stats).expect("render json");
-        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid json");
-        assert_eq!(parsed["schema_version"], "v1");
-        assert_eq!(parsed["command"], "fixture.inspect");
-        assert_eq!(parsed["stats"]["event_count"], 1);
-    }
-}
+mod tests;

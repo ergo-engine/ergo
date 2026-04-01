@@ -1,5 +1,29 @@
+//! trigger
+//!
+//! Purpose:
+//! - Define kernel trigger primitive types, manifests, validation errors, and
+//!   registry helpers.
+//!
+//! Owns:
+//! - `TriggerValidationError` as the typed registration failure surface for
+//!   trigger primitives.
+//! - Trigger type metadata and registry-facing trigger declarations.
+//!
+//! Does not own:
+//! - Catalog-level wrapper errors or host-facing rendering.
+//! - Trigger execution orchestration outside kernel registration.
+//!
+//! Connects to:
+//! - `catalog.rs`, which wraps trigger registration failures.
+//! - Trigger implementations under `implementations/`.
+//!
+//! Safety notes:
+//! - `Display` stays aligned with `ErrorInfo` so trigger registration meaning is
+//!   not duplicated across layers.
+
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fmt;
 
 use crate::common::{doc_anchor_for_rule, ErrorInfo, Phase};
 
@@ -350,6 +374,14 @@ impl ErrorInfo for TriggerValidationError {
         }
     }
 }
+
+impl fmt::Display for TriggerValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({})", self.summary(), self.rule_id())
+    }
+}
+
+impl std::error::Error for TriggerValidationError {}
 
 /// A trigger primitive that evaluates inputs and emits events.
 ///

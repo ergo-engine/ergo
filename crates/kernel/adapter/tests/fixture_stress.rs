@@ -1,3 +1,23 @@
+//! fixture_stress
+//!
+//! Purpose:
+//! - Exercise the fixture parser against a broad set of success/failure cases
+//!   from outside the crate boundary.
+//!
+//! Owns:
+//! - Integration-shaped parser contract coverage for JSONL fixture inputs.
+//!
+//! Does not own:
+//! - The parser implementation or fixture DTO semantics themselves.
+//!
+//! Connects to:
+//! - `ergo_adapter::fixture::parse_fixture(...)` as an external caller would
+//!   use it.
+//!
+//! Safety notes:
+//! - These tests intentionally assert rendered parse messages so typed parser
+//!   errors can evolve internally without losing stable user-facing wording.
+
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -42,7 +62,9 @@ fn parse_ok(name: &str, contents: &str) -> Vec<FixtureItem> {
 
 fn parse_err(name: &str, contents: &str) -> String {
     let fixture = TempJsonl::new(name, contents);
-    parse_fixture(&fixture.path).expect_err("expected parse failure")
+    parse_fixture(&fixture.path)
+        .expect_err("expected parse failure")
+        .to_string()
 }
 
 fn assert_contains(haystack: &str, needle: &str) {

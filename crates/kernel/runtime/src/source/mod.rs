@@ -1,6 +1,30 @@
+//! source
+//!
+//! Purpose:
+//! - Define kernel source primitive types, manifests, validation errors, and
+//!   registry helpers.
+//!
+//! Owns:
+//! - `SourceValidationError` as the typed registration/manifest failure surface
+//!   for source primitives.
+//! - Source type metadata and registry-facing source declarations.
+//!
+//! Does not own:
+//! - Catalog-level wrapper errors or product-facing diagnostics.
+//! - Host orchestration over validated source primitives.
+//!
+//! Connects to:
+//! - `catalog.rs`, which wraps source registration failures.
+//! - Source primitive implementations under `implementations/`.
+//!
+//! Safety notes:
+//! - `Display` renders the `ErrorInfo` summary plus rule id so higher layers can
+//!   chain source validation failures without inventing new wording.
+
 use std::collections::HashMap;
 
 use std::borrow::Cow;
+use std::fmt;
 
 use crate::common::{doc_anchor_for_rule, ErrorInfo, Phase, Value, ValueType};
 use crate::runtime::ExecutionContext;
@@ -303,6 +327,14 @@ impl ErrorInfo for SourceValidationError {
         }
     }
 }
+
+impl fmt::Display for SourceValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({})", self.summary(), self.rule_id())
+    }
+}
+
+impl std::error::Error for SourceValidationError {}
 
 pub trait SourcePrimitive {
     fn manifest(&self) -> &SourcePrimitiveManifest;

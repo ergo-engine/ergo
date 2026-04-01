@@ -1,4 +1,31 @@
+//! catalog
+//!
+//! Purpose:
+//! - Assemble the kernel core primitive catalog and registries, and expose the
+//!   typed registration boundary for core primitive construction.
+//!
+//! Owns:
+//! - `CoreRegistrationError` as the wrapper over source/compute/trigger/action
+//!   registration failures.
+//! - The core primitive registry/catalog assembly functions used by higher layers.
+//!
+//! Does not own:
+//! - Product-facing rendering of registration errors.
+//! - Primitive-specific validation semantics already owned by the wrapped kernel
+//!   validation enums.
+//!
+//! Connects to:
+//! - `ergo_host` and SDK setup paths that materialize runtime surfaces.
+//! - Source/compute/trigger/action registration modules whose errors chain through
+//!   this file.
+//!
+//! Safety notes:
+//! - `CoreRegistrationError` must preserve source chaining so higher layers can
+//!   carry typed kernel registration failures instead of formatting them with
+//!   `Debug`.
+
 use std::collections::HashMap;
+use std::fmt;
 
 use crate::action::{
     AckAction, ActionPrimitive, ActionRegistry, ActionValidationError, ActionValueType,
@@ -34,6 +61,28 @@ pub enum CoreRegistrationError {
     Compute(ValidationError),
     Trigger(TriggerValidationError),
     Action(ActionValidationError),
+}
+
+impl fmt::Display for CoreRegistrationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Source(err) => write!(f, "source registration failed: {err}"),
+            Self::Compute(err) => write!(f, "compute registration failed: {err}"),
+            Self::Trigger(err) => write!(f, "trigger registration failed: {err}"),
+            Self::Action(err) => write!(f, "action registration failed: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for CoreRegistrationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Source(err) => Some(err),
+            Self::Compute(err) => Some(err),
+            Self::Trigger(err) => Some(err),
+            Self::Action(err) => Some(err),
+        }
+    }
 }
 
 pub struct CoreRegistries {

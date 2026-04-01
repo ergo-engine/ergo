@@ -14,8 +14,8 @@
 //! Safety notes:
 //! - These tests preserve the current host distinction between effect mismatch
 //!   and non-effect decision mismatch.
-//! - They also lock the current debug-formatted `ReplayError` display behavior
-//!   until supervisor exposes a richer public error surface.
+//! - They also lock the current typed `ReplayError` display/source propagation
+//!   through `HostedReplayError`.
 
 use std::error::Error;
 
@@ -961,12 +961,15 @@ fn hosted_replay_error_display_contract_is_locked() {
     });
     assert_eq!(
         preflight.to_string(),
-        "strict replay preflight failed: UnsupportedVersion { capture_version: \"v9\" }"
+        "strict replay preflight failed: unsupported capture version 'v9'"
     );
 
     let event_rehydrate = HostedReplayError::EventRehydrate {
         event_id: "evt-1".to_string(),
-        detail: "payload hash mismatch (expected 'a', actual 'b')".to_string(),
+        source: CaptureError::PayloadHashMismatch {
+            expected: "a".to_string(),
+            actual: "b".to_string(),
+        },
     };
     assert_eq!(
         event_rehydrate.to_string(),
@@ -989,7 +992,7 @@ fn hosted_replay_error_display_contract_is_locked() {
     });
     assert_eq!(
         compare.to_string(),
-        "replay decision comparison failed: HashMismatch { event_id: EventId(\"evt-2\") }"
+        "replay decision comparison failed: payload hash mismatch for event 'evt-2'"
     );
 
     assert_eq!(
@@ -999,11 +1002,17 @@ fn hosted_replay_error_display_contract_is_locked() {
 }
 
 #[test]
-fn hosted_replay_error_source_only_exposes_step() {
+fn hosted_replay_error_sources_chain_typed_replay_errors() {
     let preflight = HostedReplayError::Preflight(ReplayError::UnsupportedVersion {
         capture_version: "v9".to_string(),
     });
-    assert!(preflight.source().is_none());
+    assert_eq!(
+        preflight
+            .source()
+            .expect("preflight should expose replay error source")
+            .to_string(),
+        "unsupported capture version 'v9'"
+    );
 
     let step = HostedReplayError::Step(HostedStepError::EgressDispatchFailure(
         EgressDispatchFailure::AckTimeout {
@@ -1018,10 +1027,31 @@ fn hosted_replay_error_source_only_exposes_step() {
         "egress dispatch failure: ack timeout on channel 'broker' for intent 'intent-1'"
     );
 
+    let event_rehydrate = HostedReplayError::EventRehydrate {
+        event_id: "evt-rh".to_string(),
+        source: CaptureError::PayloadHashMismatch {
+            expected: "a".to_string(),
+            actual: "b".to_string(),
+        },
+    };
+    assert_eq!(
+        event_rehydrate
+            .source()
+            .expect("event rehydrate should expose capture error source")
+            .to_string(),
+        "payload hash mismatch (expected 'a', actual 'b')"
+    );
+
     let compare = HostedReplayError::Compare(ReplayError::HashMismatch {
         event_id: EventId::new("evt-2"),
     });
-    assert!(compare.source().is_none());
+    assert_eq!(
+        compare
+            .source()
+            .expect("compare should expose replay error source")
+            .to_string(),
+        "payload hash mismatch for event 'evt-2'"
+    );
     assert!(HostedReplayError::DecisionMismatch.source().is_none());
 }
 
@@ -1037,9 +1067,13 @@ fn map_rehydrate_error_formats_payload_hash_mismatch_detail() {
 
     assert!(matches!(
         err,
-        HostedReplayError::EventRehydrate { ref event_id, ref detail }
+        HostedReplayError::EventRehydrate {
+            ref event_id,
+            source: CaptureError::PayloadHashMismatch { ref expected, ref actual },
+        }
             if event_id == "evt-1"
-                && detail == "payload hash mismatch (expected 'abc', actual 'def')"
+                && expected == "abc"
+                && actual == "def"
     ));
 }
 
@@ -1048,14 +1082,20 @@ fn map_rehydrate_error_preserves_invalid_payload_detail() {
     let err = map_rehydrate_error(
         "evt-2",
         CaptureError::InvalidPayload {
-            detail: "payload must be a JSON object".to_string(),
+            source: ergo_adapter::ExternalEventPayloadError::PayloadMustBeJsonObject {
+                got: "string".to_string(),
+            },
         },
     );
 
     assert!(matches!(
         err,
-        HostedReplayError::EventRehydrate { ref event_id, ref detail }
-            if event_id == "evt-2" && detail == "payload must be a JSON object"
+        HostedReplayError::EventRehydrate {
+            ref event_id,
+            source: CaptureError::InvalidPayload { source: ergo_adapter::ExternalEventPayloadError::PayloadMustBeJsonObject { ref got } },
+        }
+            if event_id == "evt-2"
+                && got == "string"
     ));
 }
 

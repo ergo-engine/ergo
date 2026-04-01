@@ -47,7 +47,9 @@ pub use egress::{
     EgressConfigBuilder, EgressConfigError, EgressProcessError, EgressRoute, EgressRuntime,
     EgressValidationError, EgressValidationWarning,
 };
-pub use ergo_supervisor::{write_capture_bundle, CaptureBundle, CaptureJsonStyle};
+pub use ergo_supervisor::{
+    write_capture_bundle, CaptureBundle, CaptureJsonStyle, CaptureWriteError,
+};
 pub use error::{EgressDispatchFailure, HostedStepError};
 pub use gen_docs_usecase::gen_docs_command;
 pub use graph_dot_usecase::{

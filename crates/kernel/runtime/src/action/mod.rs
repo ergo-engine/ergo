@@ -1,5 +1,29 @@
+//! action
+//!
+//! Purpose:
+//! - Define kernel action primitive types, manifests, validation errors, and
+//!   registry helpers.
+//!
+//! Owns:
+//! - `ActionValidationError` as the typed registration failure surface for
+//!   action primitives.
+//! - Action type metadata and registry-facing action declarations.
+//!
+//! Does not own:
+//! - Catalog-level wrapper errors or host-facing diagnostics.
+//! - Runtime execution/orchestration semantics outside action registration.
+//!
+//! Connects to:
+//! - `catalog.rs`, which wraps action registration failures.
+//! - Action implementations under `implementations/`.
+//!
+//! Safety notes:
+//! - `Display` uses the `ErrorInfo` authority so action rule ids and summaries do
+//!   not drift from the kernel meaning they already own.
+
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fmt;
 
 use crate::common::{doc_anchor_for_rule, ErrorInfo, Phase, ValueType};
 
@@ -726,6 +750,14 @@ impl ErrorInfo for ActionValidationError {
         }
     }
 }
+
+impl fmt::Display for ActionValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({})", self.summary(), self.rule_id())
+    }
+}
+
+impl std::error::Error for ActionValidationError {}
 
 pub trait ActionPrimitive {
     fn manifest(&self) -> &ActionPrimitiveManifest;

@@ -102,14 +102,14 @@ pub fn describe_replay_error(err: &ergo_supervisor::replay::ReplayError) -> Host
             .with_where(format!("event '{}'", event_id.as_str()))
             .with_fix("re-run canonical capture to produce an uncorrupted bundle")
         }
-        ergo_supervisor::replay::ReplayError::InvalidPayload { event_id, detail } => {
+        ergo_supervisor::replay::ReplayError::InvalidPayload { event_id, source } => {
             HostErrorDescriptor::new(
                 "replay.invalid_payload",
                 format!("invalid payload for event '{}'", event_id.as_str()),
             )
             .with_where(format!("event '{}'", event_id.as_str()))
             .with_fix("re-capture with object payloads or repair the capture bundle payload bytes")
-            .with_detail(detail.clone())
+            .with_detail(source.to_string())
         }
         ergo_supervisor::replay::ReplayError::AdapterProvenanceMismatch { expected, got } => {
             HostErrorDescriptor::new(
@@ -206,13 +206,13 @@ fn describe_hosted_replay_error(err: &HostedReplayError) -> HostErrorDescriptor 
         HostedReplayError::Preflight(replay_err) | HostedReplayError::Compare(replay_err) => {
             describe_replay_error(replay_err)
         }
-        HostedReplayError::EventRehydrate { event_id, detail } => HostErrorDescriptor::new(
+        HostedReplayError::EventRehydrate { event_id, source } => HostErrorDescriptor::new(
             "replay.event_rehydrate_failed",
             format!("event '{}' failed rehydration during replay", event_id),
         )
         .with_where(format!("event '{}'", event_id))
         .with_fix("inspect capture payload/hash integrity and recapture if needed")
-        .with_detail(detail.clone()),
+        .with_detail(source.to_string()),
         HostedReplayError::Step(step_err) => {
             HostErrorDescriptor::new("replay.host_step_failed", "host replay step failed")
                 .with_where("ergo-host replay lifecycle")

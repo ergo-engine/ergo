@@ -1,21 +1,50 @@
+//! fixture_runner
+//!
+//! Purpose:
+//! - Run demo-oriented fixture items through the kernel supervisor and emit a
+//!   capture artifact plus episode summaries.
+//!
+//! Owns:
+//! - The typed kernel error surface for supervisor fixture execution.
+//! - Demo fixture event materialization and episode summary derivation.
+//!
+//! Does not own:
+//! - Generic host fixture orchestration or CLI output shaping.
+//! - Fixture parsing grammar, capture file serialization, or runtime
+//!   provenance semantics owned elsewhere.
+//!
+//! Connects to:
+//! - `ergo_adapter::fixture` for parsed fixture items.
+//! - `ergo_supervisor::capture` for capture artifact writing.
+//! - Supervisor demo/test harnesses and optional `feature = "demo"` callers.
+//!
+//! Safety notes:
+//! - This is a demo/test-facing kernel seam, but it still preserves typed
+//!   causes so higher layers do not have to re-infer failure classes from
+//!   rendered text.
+
 use std::collections::HashMap;
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use ergo_adapter::fixture::FixtureItem;
 use ergo_adapter::{
-    ensure_demo_sources_have_no_required_context, AdapterProvides, EventId, EventPayload,
-    EventTime, ExternalEvent, ExternalEventKind, GraphId, RuntimeHandle,
+    ensure_demo_sources_have_no_required_context, AdapterProvides, DemoSourceContextError, EventId,
+    EventPayload, EventTime, ExternalEvent, ExternalEventKind, ExternalEventPayloadError, GraphId,
+    RuntimeHandle,
 };
 use ergo_runtime::action::ActionOutcome;
 use ergo_runtime::catalog::{CorePrimitiveCatalog, CoreRegistries};
 use ergo_runtime::cluster::ExpandedGraph;
-use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceScheme};
+use ergo_runtime::provenance::{
+    compute_runtime_provenance, RuntimeProvenanceError, RuntimeProvenanceScheme,
+};
 
 use crate::demo::demo_1;
 use crate::{
-    write_capture_bundle, CaptureBundle, CaptureJsonStyle, CapturingSession, Constraints, Decision,
-    DecisionLog, DecisionLogEntry, NO_ADAPTER_PROVENANCE,
+    write_capture_bundle, CaptureBundle, CaptureJsonStyle, CaptureWriteError, CapturingSession,
+    Constraints, Decision, DecisionLog, DecisionLogEntry, NO_ADAPTER_PROVENANCE,
 };
 
 const DEFAULT_GRAPH_ID: &str = "demo_1";
@@ -37,6 +66,75 @@ pub struct FixtureRunResult {
     pub episodes: Vec<EpisodeSummary>,
 }
 
+#[derive(Debug)]
+pub enum FixtureRunError {
+    MissingRequiredContext(DemoSourceContextError),
+    RuntimeProvenance(RuntimeProvenanceError),
+    PayloadEncode {
+        event_id: String,
+        source: serde_json::Error,
+    },
+    InvalidPayload {
+        event_id: String,
+        source: ExternalEventPayloadError,
+    },
+    NoEpisodes,
+    NoEvents,
+    EmptyEpisode {
+        label: String,
+    },
+    MissingDecision {
+        event_id: String,
+    },
+    CaptureWrite(CaptureWriteError),
+}
+
+impl fmt::Display for FixtureRunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingRequiredContext(err) => write!(f, "{err}"),
+            Self::RuntimeProvenance(err) => {
+                write!(f, "runtime provenance compute failed: {err}")
+            }
+            Self::PayloadEncode { event_id, source } => {
+                write!(
+                    f,
+                    "fixture payload encode error for event '{event_id}': {source}"
+                )
+            }
+            Self::InvalidPayload { event_id, source } => {
+                write!(
+                    f,
+                    "fixture payload invalid for event '{event_id}': {source}"
+                )
+            }
+            Self::NoEpisodes => write!(f, "fixture contained no episodes"),
+            Self::NoEvents => write!(f, "fixture contained no events"),
+            Self::EmptyEpisode { label } => write!(f, "episode '{label}' has no events"),
+            Self::MissingDecision { event_id } => {
+                write!(f, "no decision for event '{event_id}'")
+            }
+            Self::CaptureWrite(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for FixtureRunError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::MissingRequiredContext(err) => Some(err),
+            Self::RuntimeProvenance(err) => Some(err),
+            Self::PayloadEncode { source, .. } => Some(source),
+            Self::InvalidPayload { source, .. } => Some(source),
+            Self::CaptureWrite(err) => Some(err),
+            Self::NoEpisodes
+            | Self::NoEvents
+            | Self::EmptyEpisode { .. }
+            | Self::MissingDecision { .. } => None,
+        }
+    }
+}
+
 struct NullLog;
 
 impl DecisionLog for NullLog {
@@ -56,15 +154,16 @@ pub fn run_fixture(
     registries: Arc<CoreRegistries>,
     output_path: Option<PathBuf>,
     capture_style: CaptureJsonStyle,
-) -> Result<FixtureRunResult, String> {
-    ensure_demo_sources_have_no_required_context(&graph, &catalog, &registries)?;
+) -> Result<FixtureRunResult, FixtureRunError> {
+    ensure_demo_sources_have_no_required_context(&graph, &catalog, &registries)
+        .map_err(FixtureRunError::MissingRequiredContext)?;
     let runtime_provenance = compute_runtime_provenance(
         RuntimeProvenanceScheme::Rpv1,
         DEFAULT_GRAPH_ID,
         graph.as_ref(),
         catalog.as_ref(),
     )
-    .map_err(|err| format!("runtime provenance compute failed: {err}"))?;
+    .map_err(FixtureRunError::RuntimeProvenance)?;
     let runtime = RuntimeHandle::new(graph, catalog, registries, AdapterProvides::default());
     let mut session = CapturingSession::new_with_provenance(
         GraphId::new(DEFAULT_GRAPH_ID),
@@ -112,15 +211,17 @@ pub fn run_fixture(
     }
 
     if episodes.is_empty() {
-        return Err("fixture contained no episodes".to_string());
+        return Err(FixtureRunError::NoEpisodes);
     }
 
     if episodes.iter().all(|episode| episode.event_ids.is_empty()) {
-        return Err("fixture contained no events".to_string());
+        return Err(FixtureRunError::NoEvents);
     }
 
     if let Some(episode) = episodes.iter().find(|episode| episode.event_ids.is_empty()) {
-        return Err(format!("episode '{}' has no events", episode.label));
+        return Err(FixtureRunError::EmptyEpisode {
+            label: episode.label.clone(),
+        });
     }
 
     let bundle = session.into_bundle();
@@ -128,7 +229,8 @@ pub fn run_fixture(
 
     let artifact_path =
         output_path.unwrap_or_else(|| PathBuf::from("target").join(DEFAULT_ARTIFACT_NAME));
-    write_capture_bundle(&artifact_path, &bundle, capture_style)?;
+    write_capture_bundle(&artifact_path, &bundle, capture_style)
+        .map_err(FixtureRunError::CaptureWrite)?;
 
     Ok(FixtureRunResult {
         artifact_path,
@@ -140,18 +242,24 @@ fn event_from_payload(
     event_id: &str,
     kind: ExternalEventKind,
     payload: Option<serde_json::Value>,
-) -> Result<ExternalEvent, String> {
+) -> Result<ExternalEvent, FixtureRunError> {
     let event_id_value = EventId::new(event_id);
     if let Some(payload) = payload {
-        let data = serde_json::to_vec(&payload)
-            .map_err(|err| format!("fixture payload encode error for event '{event_id}': {err}"))?;
+        let data =
+            serde_json::to_vec(&payload).map_err(|source| FixtureRunError::PayloadEncode {
+                event_id: event_id.to_string(),
+                source,
+            })?;
         ExternalEvent::with_payload(
             event_id_value,
             kind,
             EventTime::default(),
             EventPayload { data },
         )
-        .map_err(|err| format!("fixture payload invalid for event '{event_id}': {err}"))
+        .map_err(|source| FixtureRunError::InvalidPayload {
+            event_id: event_id.to_string(),
+            source,
+        })
     } else {
         Ok(ExternalEvent::mechanical(event_id_value, kind))
     }
@@ -160,7 +268,7 @@ fn event_from_payload(
 fn summarize_episodes(
     episodes: &[EpisodeInfo],
     bundle: &CaptureBundle,
-) -> Result<Vec<EpisodeSummary>, String> {
+) -> Result<Vec<EpisodeSummary>, FixtureRunError> {
     let mut decisions_by_event: HashMap<String, Vec<Decision>> = HashMap::new();
     for record in &bundle.decisions {
         decisions_by_event
@@ -185,9 +293,11 @@ fn summarize_episodes(
         let mut invoked_event: Option<&String> = None;
 
         for event_id in &episode.event_ids {
-            let entries = decisions_by_event
-                .get(event_id)
-                .ok_or_else(|| format!("no decision for event '{event_id}'"))?;
+            let entries = decisions_by_event.get(event_id).ok_or_else(|| {
+                FixtureRunError::MissingDecision {
+                    event_id: event_id.clone(),
+                }
+            })?;
             if entries.contains(&Decision::Invoke) {
                 invoked = true;
                 if invoked_event.is_none() {
