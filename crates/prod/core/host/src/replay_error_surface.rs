@@ -252,7 +252,7 @@ pub fn describe_host_replay_error(err: &HostReplayError) -> HostErrorDescriptor 
             HostErrorDescriptor::new("replay.host_setup_failed", "host replay setup failed")
                 .with_where("ergo-host replay setup")
                 .with_fix("verify capture/graph/adapter paths and retry")
-                .with_detail(detail.clone())
+                .with_detail(detail.to_string())
         }
     }
 }

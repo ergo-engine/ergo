@@ -44,19 +44,20 @@ mod usecases;
 pub use demo_fixture_usecase::{run_demo_fixture_from_path, RunDemoFixtureRequest};
 pub use egress::{
     parse_egress_config_toml, validate_egress_config, EgressChannelConfig, EgressConfig,
-    EgressConfigBuilder, EgressConfigError, EgressProcessError, EgressRoute, EgressRuntime,
-    EgressValidationError, EgressValidationWarning,
+    EgressConfigBuilder, EgressConfigError, EgressConfigParseError, EgressProcessError,
+    EgressRoute, EgressRuntime, EgressValidationError, EgressValidationWarning,
 };
 pub use ergo_supervisor::{
     write_capture_bundle, CaptureBundle, CaptureJsonStyle, CaptureWriteError,
 };
-pub use error::{EgressDispatchFailure, HostedStepError};
+pub use error::{
+    EgressDispatchFailure, HostedEgressValidationError, HostedEventBuildError, HostedStepError,
+};
 pub use gen_docs_usecase::gen_docs_command;
 pub use graph_dot_usecase::{
-    graph_to_dot_from_assets, graph_to_dot_from_assets_typed, graph_to_dot_from_paths,
-    graph_to_dot_from_paths_typed, GraphToDotAvailableCluster, GraphToDotError,
+    graph_to_dot_from_assets, graph_to_dot_from_paths, GraphToDotAvailableCluster, GraphToDotError,
     GraphToDotExpansionContext, GraphToDotExpansionError, GraphToDotFromAssetsRequest,
-    GraphToDotFromPathsRequest, GraphToDotLoadError, GraphToDotLoadErrorKind,
+    GraphToDotFromPathsRequest,
 };
 pub use manifest_usecases::{
     check_compose_paths, check_compose_text, check_compose_values, validate_manifest_path,
@@ -80,11 +81,15 @@ pub use usecases::{
     validate_graph_from_paths, validate_graph_from_paths_with_surfaces,
     validate_run_graph_from_assets, validate_run_graph_from_assets_with_surfaces,
     validate_run_graph_from_paths, validate_run_graph_from_paths_with_surfaces,
-    AdapterDependencySummary, DriverConfig, HostReplayError, HostRunError, HostStopHandle,
-    InterruptedRun, InterruptionReason, PrepareHostedRunnerFromPathsRequest,
-    ReplayGraphFromAssetsRequest, ReplayGraphFromPathsRequest, ReplayGraphRequest,
-    ReplayGraphResult, RunControl, RunGraphFromAssetsRequest, RunGraphFromPathsRequest,
-    RunGraphResponse, RunOutcome, RunSummary, RuntimeSurfaces,
+    AdapterDependencySummary, DriverConfig, HostAdapterCompositionError, HostAdapterSetupError,
+    HostAvailableCluster, HostDependencyScanError, HostDriverError, HostDriverInputError,
+    HostDriverIoError, HostDriverOutputError, HostDriverProtocolError, HostDriverStartError,
+    HostExpandContext, HostExpandError, HostGraphPreparationError, HostReplayError,
+    HostReplaySetupError, HostRunError, HostSetupError, HostStopHandle, InterruptedRun,
+    InterruptionReason, PrepareHostedRunnerFromPathsRequest, ReplayGraphFromAssetsRequest,
+    ReplayGraphFromPathsRequest, ReplayGraphRequest, ReplayGraphResult, RunControl,
+    RunGraphFromAssetsRequest, RunGraphFromPathsRequest, RunGraphResponse, RunOutcome, RunSummary,
+    RuntimeSurfaces,
 };
 
 // Lower-level host building blocks. These remain public for advanced embedded

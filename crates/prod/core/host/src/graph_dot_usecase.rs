@@ -5,9 +5,8 @@
 //!   Graphviz DOT string for developer visualization and debugging.
 //!
 //! Owns:
-//! - String-compatibility entry points (`graph_to_dot_from_paths`,
-//!   `graph_to_dot_from_assets`) plus typed entry points
-//!   (`graph_to_dot_from_paths_typed`, `graph_to_dot_from_assets_typed`).
+//! - The canonical typed entry points `graph_to_dot_from_paths` and
+//!   `graph_to_dot_from_assets`.
 //! - DOT output format: node shapes and colors by `PrimitiveKind`, edge layout,
 //!   external-input rendering, and optional port/impl/runtime-id labels.
 //! - `PreloadedClusterLoader`, a private in-memory `ClusterLoader` +
@@ -31,9 +30,8 @@
 //! - Not on the runtime path; this is a developer/debug usecase only.
 //! - Node ordering is deterministic (sorted keys) so DOT output is stable for
 //!   the same input graph.
-//! - The compatibility entry points still return `String` errors for existing
-//!   callers, but those strings now come from `Display` on `GraphToDotError`
-//!   so the typed and string surfaces cannot drift.
+//! - Load failures preserve `LoaderError` directly, while expansion failures
+//!   preserve `ExpandError` plus host-owned context/available-cluster detail.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -61,9 +59,9 @@ pub struct GraphToDotFromAssetsRequest {
     pub show_runtime_id: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum GraphToDotError {
-    Load(GraphToDotLoadError),
+    Load(LoaderError),
     Expansion(GraphToDotExpansionError),
 }
 
@@ -76,33 +74,18 @@ impl std::fmt::Display for GraphToDotError {
     }
 }
 
-impl std::error::Error for GraphToDotError {}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GraphToDotLoadError {
-    pub kind: GraphToDotLoadErrorKind,
-    pub detail: String,
-}
-
-impl std::fmt::Display for GraphToDotLoadError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.detail)
+impl std::error::Error for GraphToDotError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Load(err) => Some(err),
+            Self::Expansion(err) => Some(err),
+        }
     }
 }
 
-impl std::error::Error for GraphToDotLoadError {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GraphToDotLoadErrorKind {
-    Io,
-    Decode,
-    Discovery,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GraphToDotExpansionError {
-    pub rule_id: String,
-    pub summary: String,
+    pub source: ExpandError,
     pub context: GraphToDotExpansionContext,
     pub available_clusters: Vec<GraphToDotAvailableCluster>,
 }
@@ -112,7 +95,8 @@ impl std::fmt::Display for GraphToDotExpansionError {
         write!(
             f,
             "graph expansion failed: [{}] {}",
-            self.rule_id, self.summary
+            self.source.rule_id(),
+            self.source.summary()
         )?;
         if !self.available_clusters.is_empty() {
             let available = self
@@ -156,11 +140,7 @@ pub struct GraphToDotAvailableCluster {
     pub location: String,
 }
 
-pub fn graph_to_dot_from_paths(request: GraphToDotFromPathsRequest) -> Result<String, String> {
-    graph_to_dot_from_paths_typed(request).map_err(|err| err.to_string())
-}
-
-pub fn graph_to_dot_from_paths_typed(
+pub fn graph_to_dot_from_paths(
     request: GraphToDotFromPathsRequest,
 ) -> Result<String, GraphToDotError> {
     let GraphToDotFromPathsRequest {
@@ -172,7 +152,7 @@ pub fn graph_to_dot_from_paths_typed(
     } = request;
 
     let discovery = ergo_loader::discovery::discover_cluster_tree(&graph_path, &cluster_paths)
-        .map_err(map_graph_to_dot_load_error)?;
+        .map_err(GraphToDotError::Load)?;
     let root = discovery.root.clone();
     let cluster_sources = discovery.cluster_sources;
     let clusters = discovery.clusters;
@@ -192,11 +172,7 @@ pub fn graph_to_dot_from_paths_typed(
     ))
 }
 
-pub fn graph_to_dot_from_assets(request: GraphToDotFromAssetsRequest) -> Result<String, String> {
-    graph_to_dot_from_assets_typed(request).map_err(|err| err.to_string())
-}
-
-pub fn graph_to_dot_from_assets_typed(
+pub fn graph_to_dot_from_assets(
     request: GraphToDotFromAssetsRequest,
 ) -> Result<String, GraphToDotError> {
     let GraphToDotFromAssetsRequest {
@@ -224,25 +200,12 @@ pub fn graph_to_dot_from_assets_typed(
     ))
 }
 
-fn map_graph_to_dot_load_error(err: LoaderError) -> GraphToDotError {
-    let kind = match &err {
-        LoaderError::Io(_) => GraphToDotLoadErrorKind::Io,
-        LoaderError::Decode(_) => GraphToDotLoadErrorKind::Decode,
-        LoaderError::Discovery(_) => GraphToDotLoadErrorKind::Discovery,
-    };
-    GraphToDotError::Load(GraphToDotLoadError {
-        kind,
-        detail: err.to_string(),
-    })
-}
-
 fn graph_to_dot_expansion_error_from_files(
     err: &ExpandError,
     cluster_sources: &HashMap<(String, Version), PathBuf>,
 ) -> GraphToDotError {
     GraphToDotError::Expansion(GraphToDotExpansionError {
-        rule_id: err.rule_id().to_string(),
-        summary: err.summary().to_string(),
+        source: err.clone(),
         context: GraphToDotExpansionContext::Filesystem,
         available_clusters: available_clusters_from_files(err, cluster_sources),
     })
@@ -253,8 +216,7 @@ fn graph_to_dot_expansion_error_from_labels(
     cluster_diagnostic_labels: &HashMap<(String, Version), String>,
 ) -> GraphToDotError {
     GraphToDotError::Expansion(GraphToDotExpansionError {
-        rule_id: err.rule_id().to_string(),
-        summary: err.summary().to_string(),
+        source: err.clone(),
         context: GraphToDotExpansionContext::Assets,
         available_clusters: available_clusters_from_labels(err, cluster_diagnostic_labels),
     })

@@ -1,3 +1,24 @@
+//! usecases process_driver tests
+//!
+//! Purpose:
+//! - Exercise the host-owned process-ingress protocol and lifecycle seam from
+//!   the outside through the canonical run surface.
+//!
+//! Owns:
+//! - Behavior checks for hello ordering, startup bounds, protocol violations,
+//!   and interruption/capture consequences specific to process ingress.
+//!
+//! Does not own:
+//! - The public contract for facade-level error enums; `contract.rs` locks that.
+//!
+//! Connects to:
+//! - `process_driver.rs`, `live_run.rs`, and shared host test helpers from the
+//!   parent `usecases::tests` module.
+//!
+//! Safety notes:
+//! - These tests intentionally pin the host-owned `ergo-driver.v0` lifecycle
+//!   boundary because CLI and SDK rely on the resulting run/error behavior.
+
 use super::super::process_driver::PROCESS_DRIVER_PROTOCOL_VERSION;
 use super::*;
 
@@ -199,13 +220,10 @@ fn process_driver_host_stop_before_first_committed_event_returns_host_run_error_
 
     stopper.join().expect("stopper thread must join");
     match err {
-        HostRunError::StepFailed(message) => {
-            assert!(
-                message.contains("host stop requested before first committed event"),
-                "unexpected error message: {message}"
-            );
-        }
-        other => panic!("expected StepFailed host-stop error, got {other:?}"),
+        HostRunError::Driver(HostDriverError::Output(
+            HostDriverOutputError::StopBeforeFirstCommittedEvent,
+        )) => {}
+        other => panic!("expected driver output host-stop error, got {other:?}"),
     }
     assert!(
         !capture.exists(),
@@ -551,7 +569,10 @@ fn process_driver_invalid_hello_fails_before_start() -> Result<(), Box<dyn std::
     })
     .expect_err("missing hello must fail before first committed step");
 
-    assert!(matches!(err, HostRunError::DriverProtocol(_)));
+    assert!(matches!(
+        err,
+        HostRunError::Driver(HostDriverError::Protocol(_))
+    ));
 
     let _ = fs::remove_dir_all(&temp_dir);
     Ok(())
@@ -592,7 +613,10 @@ fn process_driver_silent_before_hello_is_bounded_by_startup_grace(
     )
     .expect_err("silent startup must time out before canonical run begins");
 
-    assert!(matches!(err, HostRunError::DriverStart(_)));
+    assert!(matches!(
+        err,
+        HostRunError::Driver(HostDriverError::Start(_))
+    ));
     assert!(
         started.elapsed() < Duration::from_secs(1),
         "startup wait should be bounded"
@@ -639,7 +663,10 @@ fn process_driver_malformed_bytes_before_first_committed_step_return_driver_prot
     })
     .expect_err("malformed bytes before first committed step must be protocol failure");
 
-    assert!(matches!(err, HostRunError::DriverProtocol(_)));
+    assert!(matches!(
+        err,
+        HostRunError::Driver(HostDriverError::Protocol(_))
+    ));
 
     let _ = fs::remove_dir_all(&temp_dir);
     Ok(())

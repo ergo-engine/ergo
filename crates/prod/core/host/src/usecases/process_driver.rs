@@ -38,9 +38,9 @@
 //! - Process ingress currently synthesizes a single episode count under `"E1"`
 //!   because v0 has no episode boundary frame. That is correct for v0 but
 //!   remains a latent correctness seam tracked in issue #69.
-//! - `ProcessDriverReadFailure` still stringifies IO/encoding failures before
-//!   classification, matching the broader string-bucket debt tracked in issue
-//!   #60.
+//! - Driver start/protocol/I/O failures remain host-authored operational
+//!   diagnostics, but they now feed the typed `HostDriverError` surface
+//!   instead of collapsing back into the old `HostRunError` string variants.
 //! - On Unix, abort kills the host-managed process group configured during
 //!   spawn, not just the direct child.
 
@@ -87,18 +87,16 @@ pub(super) const DEFAULT_PROCESS_DRIVER_POLICY: ProcessDriverPolicy = ProcessDri
     event_recv_timeout: Duration::from_millis(100),
 };
 
-pub(super) fn validate_process_driver_command(command: &[String]) -> Result<(), HostRunError> {
+pub(super) fn validate_process_driver_command(
+    command: &[String],
+) -> Result<(), HostDriverInputError> {
     if command.is_empty() {
-        return Err(HostRunError::InvalidInput(
-            "process driver requires at least one argv element".to_string(),
-        ));
+        return Err(HostDriverInputError::ProcessCommandEmpty);
     }
 
     let program = command[0].trim();
     if program.is_empty() {
-        return Err(HostRunError::InvalidInput(
-            "process driver executable must not be empty".to_string(),
-        ));
+        return Err(HostDriverInputError::ProcessExecutableBlank);
     }
 
     if uses_explicit_program_path(program) {
@@ -131,18 +129,54 @@ fn process_driver_host_stop_execution(
     )
 }
 
+fn driver_start_error(detail: impl Into<String>) -> HostRunError {
+    HostRunError::Driver(HostDriverError::Start(HostDriverStartError::new(detail)))
+}
+
+fn driver_start_io_error(detail: impl Into<String>, source: std::io::Error) -> HostRunError {
+    HostRunError::Driver(HostDriverError::Start(HostDriverStartError::with_source(
+        detail, source,
+    )))
+}
+
+fn driver_protocol_error(detail: impl Into<String>) -> HostRunError {
+    HostRunError::Driver(HostDriverError::Protocol(HostDriverProtocolError::new(
+        detail,
+    )))
+}
+
+fn driver_protocol_json_error(
+    detail: impl Into<String>,
+    source: serde_json::Error,
+) -> HostRunError {
+    HostRunError::Driver(HostDriverError::Protocol(
+        HostDriverProtocolError::with_json_source(detail, source),
+    ))
+}
+
+fn driver_io_error(detail: impl Into<String>) -> HostRunError {
+    HostRunError::Driver(HostDriverError::Io(HostDriverIoError::new(detail)))
+}
+
+fn driver_io_source_error(detail: impl Into<String>, source: std::io::Error) -> HostRunError {
+    HostRunError::Driver(HostDriverError::Io(HostDriverIoError::with_source(
+        detail, source,
+    )))
+}
+
 pub(super) fn run_process_driver(
     command: Vec<String>,
     runner: HostedRunner,
     process_policy: ProcessDriverPolicy,
     lifecycle: &RunLifecycleState,
 ) -> Result<DriverExecution, HostRunError> {
-    validate_process_driver_command(&command)?;
+    validate_process_driver_command(&command)
+        .map_err(|err| HostRunError::Driver(HostDriverError::Input(err)))?;
     let command_display = format!("{command:?}");
     let mut child = spawn_process_driver(&command)?;
     let mut stderr_handle = child.stderr.take().map(drain_process_stderr);
     let stdout = child.stdout.take().ok_or_else(|| {
-        HostRunError::DriverStart(format!(
+        driver_start_error(format!(
             "process driver {command_display} did not expose a stdout protocol stream"
         ))
     })?;
@@ -173,7 +207,7 @@ pub(super) fn run_process_driver(
             } else {
                 format!(" ({detail})")
             };
-            return Err(HostRunError::DriverStart(format!(
+            return Err(driver_start_error(format!(
                 "process driver {command_display} did not emit a protocol frame within {}ms before startup completed{}",
                 process_policy.startup_grace.as_millis(),
                 suffix
@@ -216,11 +250,11 @@ pub(super) fn run_process_driver(
                 }
                 let detail = abort_process_child(&mut child, stderr_handle.take());
                 return Err(if detail.is_empty() {
-                    HostRunError::DriverIo(format!(
+                    driver_io_error(format!(
                         "receive process driver stdout for {command_display}: stdout reader disconnected unexpectedly"
                     ))
                 } else {
-                    HostRunError::DriverIo(format!(
+                    driver_io_error(format!(
                         "receive process driver stdout for {command_display}: stdout reader disconnected unexpectedly ({detail})"
                     ))
                 });
@@ -235,9 +269,12 @@ pub(super) fn run_process_driver(
                     Err(err) => {
                         let _detail = abort_process_child(&mut child, stderr_handle.take());
                         if committed_event_count == 0 {
-                            return Err(HostRunError::DriverProtocol(format!(
-                                "process driver {command_display} emitted invalid JSONL protocol before first committed step: {err}"
-                            )));
+                            return Err(driver_protocol_json_error(
+                                format!(
+                                    "process driver {command_display} emitted invalid JSONL protocol before first committed step: {err}"
+                                ),
+                                err,
+                            ));
                         }
                         return Ok(DriverExecution {
                             runner,
@@ -265,13 +302,19 @@ pub(super) fn run_process_driver(
                     wait_for_child_exit(&mut child, process_policy).map_err(|err| {
                         let detail = abort_process_child(&mut child, stderr_handle.take());
                         if detail.is_empty() {
-                            HostRunError::DriverIo(format!(
-                                "wait on process driver {command_display} after stdout EOF: {err}"
-                            ))
+                            driver_io_source_error(
+                                format!(
+                                    "wait on process driver {command_display} after stdout EOF: {err}"
+                                ),
+                                err,
+                            )
                         } else {
-                            HostRunError::DriverIo(format!(
-                                "wait on process driver {command_display} after stdout EOF: {err} ({detail})"
-                            ))
+                            driver_io_source_error(
+                                format!(
+                                    "wait on process driver {command_display} after stdout EOF: {err} ({detail})"
+                                ),
+                                err,
+                            )
                         }
                     })?;
 
@@ -298,7 +341,7 @@ pub(super) fn run_process_driver(
                             suffix
                         ),
                     };
-                    return Err(HostRunError::DriverStart(message));
+                    return Err(driver_start_error(message));
                 }
 
                 return Ok(DriverExecution {
@@ -332,7 +375,7 @@ pub(super) fn run_process_driver(
                             )
                         };
                         if committed_event_count == 0 {
-                            return Err(HostRunError::DriverProtocol(message));
+                            return Err(driver_protocol_error(message));
                         }
                         return Ok(DriverExecution {
                             runner,
@@ -352,7 +395,7 @@ pub(super) fn run_process_driver(
                             )
                         };
                         if committed_event_count == 0 {
-                            return Err(HostRunError::DriverIo(message));
+                            return Err(driver_io_error(message));
                         }
                         return Ok(DriverExecution {
                             runner,
@@ -375,13 +418,13 @@ pub(super) fn run_process_driver(
                 }
                 ProcessDriverMessage::Hello { protocol } => {
                     let _detail = abort_process_child(&mut child, stderr_handle.take());
-                    return Err(HostRunError::DriverProtocol(format!(
+                    return Err(driver_protocol_error(format!(
                         "process driver {command_display} declared unsupported protocol '{protocol}'"
                     )));
                 }
                 other => {
                     let _detail = abort_process_child(&mut child, stderr_handle.take());
-                    return Err(HostRunError::DriverProtocol(format!(
+                    return Err(driver_protocol_error(format!(
                         "process driver {command_display} must send hello first, got {}",
                         process_message_name(&other)
                     )));
@@ -393,7 +436,7 @@ pub(super) fn run_process_driver(
             ProcessDriverMessage::Hello { .. } => {
                 let _detail = abort_process_child(&mut child, stderr_handle.take());
                 if committed_event_count == 0 {
-                    return Err(HostRunError::DriverProtocol(format!(
+                    return Err(driver_protocol_error(format!(
                         "process driver {command_display} sent duplicate hello before first committed step"
                     )));
                 }
@@ -441,13 +484,13 @@ pub(super) fn run_process_driver(
                 }
                 Err(err) => {
                     let _detail = abort_process_child(&mut child, stderr_handle.take());
-                    return Err(HostRunError::StepFailed(format!("host step failed: {err}")));
+                    return Err(HostRunError::Step(err));
                 }
             },
             ProcessDriverMessage::End => {
                 if committed_event_count == 0 {
                     let _detail = abort_process_child(&mut child, stderr_handle.take());
-                    return Err(HostRunError::DriverProtocol(format!(
+                    return Err(driver_protocol_error(format!(
                         "process driver {command_display} ended before first committed step"
                     )));
                 }
@@ -459,7 +502,7 @@ pub(super) fn run_process_driver(
                     &mut stderr_handle,
                     process_policy,
                 )
-                .map_err(|message| HostRunError::DriverIo(message))?;
+                .map_err(|err| HostRunError::Driver(HostDriverError::Io(err)))?;
 
                 return Ok(DriverExecution {
                     runner,
@@ -481,24 +524,22 @@ fn uses_explicit_program_path(program: &str) -> bool {
 
 fn validate_explicit_process_driver_path(
     path: &Path,
-    command: &[String],
-) -> Result<(), HostRunError> {
-    let metadata = fs::metadata(path).map_err(|err| {
-        HostRunError::DriverStart(format!("spawn process driver {:?}: {err}", command))
-    })?;
+    _command: &[String],
+) -> Result<(), HostDriverInputError> {
+    let metadata =
+        fs::metadata(path).map_err(|source| HostDriverInputError::ProcessPathMetadata {
+            path: path.to_path_buf(),
+            source,
+        })?;
     if !metadata.is_file() {
-        return Err(HostRunError::DriverStart(format!(
-            "spawn process driver {:?}: '{}' is not a file",
-            command,
-            path.display()
-        )));
+        return Err(HostDriverInputError::ProcessPathNotFile {
+            path: path.to_path_buf(),
+        });
     }
     if !metadata_is_executable(&metadata) {
-        return Err(HostRunError::DriverStart(format!(
-            "spawn process driver {:?}: '{}' is not executable",
-            command,
-            path.display()
-        )));
+        return Err(HostDriverInputError::ProcessPathNotExecutable {
+            path: path.to_path_buf(),
+        });
     }
     Ok(())
 }
@@ -521,7 +562,7 @@ pub(super) fn spawn_process_driver(command: &[String]) -> Result<Child, HostRunE
     child.stderr(Stdio::piped());
     configure_host_managed_child(&mut child);
     child.spawn().map_err(|err| {
-        HostRunError::DriverStart(format!("spawn process driver {:?}: {err}", command))
+        driver_start_io_error(format!("spawn process driver {:?}: {err}", command), err)
     })
 }
 
@@ -642,7 +683,7 @@ fn drain_process_after_end(
     stdout_rx: &Receiver<ProcessDriverStreamObservation>,
     stderr_handle: &mut Option<JoinHandle<String>>,
     process_policy: ProcessDriverPolicy,
-) -> Result<DriverTerminal, String> {
+) -> Result<DriverTerminal, HostDriverIoError> {
     let deadline = Instant::now() + process_policy.termination_grace;
     let mut stdout_eof = false;
     let mut exit_status: Option<ExitStatus> = None;
@@ -654,10 +695,14 @@ fn drain_process_after_end(
                 Err(err) => {
                     let detail = abort_process_child(child, stderr_handle.take());
                     return if detail.is_empty() {
-                        Err(format!("wait on process driver {command_display}: {err}"))
+                        Err(HostDriverIoError::with_source(
+                            format!("wait on process driver {command_display}: {err}"),
+                            err,
+                        ))
                     } else {
-                        Err(format!(
-                            "wait on process driver {command_display}: {err} ({detail})"
+                        Err(HostDriverIoError::with_source(
+                            format!("wait on process driver {command_display}: {err} ({detail})"),
+                            err,
                         ))
                     };
                 }
@@ -714,13 +759,13 @@ fn drain_process_after_end(
                 ProcessDriverReadFailure::Io(detail) => {
                     let extra = abort_process_child(child, stderr_handle.take());
                     return if extra.is_empty() {
-                        Err(format!(
+                        Err(HostDriverIoError::new(format!(
                             "read process driver stdout for {command_display}: {detail}"
-                        ))
+                        )))
                     } else {
-                        Err(format!(
+                        Err(HostDriverIoError::new(format!(
                             "read process driver stdout for {command_display}: {detail} ({extra})"
-                        ))
+                        )))
                     };
                 }
             },
@@ -728,13 +773,13 @@ fn drain_process_after_end(
             Err(RecvTimeoutError::Disconnected) => {
                 let extra = abort_process_child(child, stderr_handle.take());
                 return if extra.is_empty() {
-                    Err(format!(
+                    Err(HostDriverIoError::new(format!(
                         "stdout reader disconnected unexpectedly for process driver {command_display}"
-                    ))
+                    )))
                 } else {
-                    Err(format!(
+                    Err(HostDriverIoError::new(format!(
                         "stdout reader disconnected unexpectedly for process driver {command_display} ({extra})"
-                    ))
+                    )))
                 };
             }
         }

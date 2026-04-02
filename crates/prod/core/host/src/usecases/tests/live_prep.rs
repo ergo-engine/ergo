@@ -1,3 +1,23 @@
+//! usecases live_prep tests
+//!
+//! Purpose:
+//! - Exercise the host setup and replay-prep seams owned by `live_prep.rs`.
+//!
+//! Owns:
+//! - Behavior checks for typed setup/replay failures, adapter requirements, and
+//!   surface-specific prep wiring.
+//!
+//! Does not own:
+//! - The public contract for facade-level error enums; `contract.rs` locks that.
+//!
+//! Connects to:
+//! - `live_prep.rs`, `usecases.rs`, and shared host test helpers from the
+//!   parent `usecases::tests` module.
+//!
+//! Safety notes:
+//! - These tests intentionally lock host-owned preparation and replay-preflight
+//!   behavior without redefining kernel semantics.
+
 use super::super::process_driver::PROCESS_DRIVER_PROTOCOL_VERSION;
 use super::*;
 
@@ -15,10 +35,11 @@ fn summarize_expand_error_falls_back_to_cluster_key_when_label_missing() {
         },
         &HashMap::new(),
     );
+    let rendered = detail.to_string();
 
-    assert!(detail.contains("available cluster sources"));
-    assert!(detail.contains("shared_value@1.0.0 at shared_value@1.0.0"));
-    assert!(detail.contains("shared_value@1.5.0 at shared_value@1.5.0"));
+    assert!(rendered.contains("available cluster sources"));
+    assert!(rendered.contains("shared_value@1.0.0 at shared_value@1.0.0"));
+    assert!(rendered.contains("shared_value@1.5.0 at shared_value@1.5.0"));
 }
 
 #[test]
@@ -352,7 +373,10 @@ fn validate_graph_in_memory_assets_use_label_first_cluster_version_details(
     .expect_err("in-memory version-miss must fail before runner construction");
 
     match err {
-        HostRunError::InvalidInput(detail) => {
+        HostRunError::Setup(HostSetupError::GraphPreparation(
+            detail @ HostGraphPreparationError::Expansion(_),
+        )) => {
+            let detail = detail.to_string();
             assert!(detail.contains("graph expansion failed"));
             assert!(detail.contains("shared_value"));
             assert!(detail.contains("^2.0"));
@@ -467,7 +491,10 @@ fn validate_run_graph_from_paths_rejects_missing_fixture_driver(
     .expect_err("missing fixture driver should fail full run validation");
 
     match err {
-        HostRunError::InvalidInput(detail) => {
+        HostRunError::Driver(HostDriverError::Input(
+            detail @ HostDriverInputError::FixtureParse(_),
+        )) => {
+            let detail = detail.to_string();
             assert!(detail.contains("failed to parse fixture"));
             assert!(detail.contains("read fixture"));
         }
@@ -526,9 +553,9 @@ fn validate_run_graph_from_assets_rejects_adapter_bound_fixture_items_missing_se
     .expect_err("adapter-bound fixture items missing semantic_kind must fail validation");
 
     match err {
-        HostRunError::InvalidInput(detail) => {
-            assert!(detail.contains("semantic_kind"));
-        }
+        HostRunError::Driver(HostDriverError::Input(
+            HostDriverInputError::MissingSemanticKind { .. },
+        )) => {}
         other => panic!("unexpected fixture-items validation error: {other:?}"),
     }
 
@@ -562,11 +589,12 @@ fn validate_graph_from_paths_enforces_handler_coverage_without_egress(
     .expect_err("handler coverage should fail without egress for external intent graphs");
 
     match err {
-        HostRunError::StepFailed(detail) => {
+        HostRunError::Setup(HostSetupError::HostedRunnerValidation(detail)) => {
+            let detail = detail.to_string();
             assert!(detail.contains("handler coverage failed"));
             assert!(!detail.contains("failed to initialize canonical host runner"));
         }
-        other => panic!("unexpected handler coverage validation error: {other:?}"),
+        other => panic!("unexpected handler-coverage validation error: {other:?}"),
     }
 
     let _ = fs::remove_dir_all(&temp_dir);
@@ -685,10 +713,10 @@ fn prepare_hosted_runner_from_paths_surfaces_egress_startup_failure_before_first
         Err(err) => err,
     };
 
-    assert!(
-        matches!(err, HostRunError::DriverIo(_)),
-        "expected HostRunError::DriverIo, got {err:?}"
-    );
+    assert!(matches!(
+        err,
+        HostRunError::Setup(HostSetupError::StartEgress(_))
+    ));
 
     let _ = fs::remove_dir_all(&temp_dir);
     Ok(())
@@ -737,10 +765,10 @@ fn prepare_hosted_runner_surfaces_egress_startup_failure_after_runner_constructi
         Err(err) => err,
     };
 
-    assert!(
-        matches!(err, HostRunError::DriverIo(_)),
-        "expected HostRunError::DriverIo, got {err:?}"
-    );
+    assert!(matches!(
+        err,
+        HostRunError::Setup(HostSetupError::StartEgress(_))
+    ));
 
     let _ = fs::remove_dir_all(&temp_dir);
     Ok(())
@@ -1297,8 +1325,8 @@ fn validate_graph_adapter_text_parse_error_mentions_source_label(
     .expect_err("invalid inline adapter YAML must fail");
 
     match err {
-        HostRunError::InvalidInput(detail) => {
-            assert!(detail.contains("inline-adapter-bad"));
+        HostRunError::Setup(HostSetupError::AdapterSetup(detail)) => {
+            assert!(detail.to_string().contains("inline-adapter-bad"));
         }
         other => panic!("unexpected inline adapter parse error: {other:?}"),
     }

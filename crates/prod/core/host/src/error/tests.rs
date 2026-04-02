@@ -9,6 +9,7 @@ use super::*;
 
 use crate::egress::{EgressProcessError, EgressValidationError};
 use ergo_adapter::host::{EffectApplyError, HandlerCoverageError};
+use ergo_adapter::{EventBindingError, ExternalEventPayloadError};
 use std::error::Error as _;
 use std::time::Duration;
 
@@ -76,12 +77,19 @@ fn hosted_step_error_display_contracts_are_stable() {
             "unknown semantic event kind 'command.place_order'",
         ),
         (
-            HostedStepError::BindingError("binder rejected payload".to_string()),
-            "semantic event binding failed: binder rejected payload",
+            HostedStepError::Binding(EventBindingError::PayloadSchemaMismatch {
+                kind: "command.place_order".to_string(),
+                detail: "binder rejected payload".to_string(),
+            }),
+            "semantic event binding failed: payload does not match schema for semantic event kind 'command.place_order': binder rejected payload",
         ),
         (
-            HostedStepError::EventBuildError("missing field 'price'".to_string()),
-            "event build failed: missing field 'price'",
+            HostedStepError::EventBuild(HostedEventBuildError::InvalidPayload(
+                ExternalEventPayloadError::PayloadMustBeJsonObject {
+                    got: "string".to_string(),
+                },
+            )),
+            "event build failed: payload must be a JSON object, got string",
         ),
         (
             HostedStepError::LifecycleViolation {
@@ -107,15 +115,16 @@ fn hosted_step_error_display_contracts_are_stable() {
         ),
         (
             HostedStepError::EgressValidation(
-                "egress configuration requires adapter-bound mode".to_string(),
+                HostedEgressValidationError::EgressConfigRequiresAdapterBoundMode,
             ),
             "egress configuration validation failed: egress configuration requires adapter-bound mode",
         ),
         (
-            HostedStepError::EgressLifecycle(
-                "egress startup error on channel 'broker': spawn failed".to_string(),
-            ),
-            "egress lifecycle failure: egress startup error on channel 'broker': spawn failed",
+            HostedStepError::EgressProcess(EgressProcessError::Startup {
+                channel: "broker".to_string(),
+                detail: "spawn failed".to_string(),
+            }),
+            "egress lifecycle failure: egress channel 'broker' startup failed: spawn failed",
         ),
         (
             HostedStepError::EgressDispatchFailure(EgressDispatchFailure::ProtocolViolation {
@@ -142,16 +151,18 @@ fn hosted_step_error_from_egress_validation_error_stringifies_currently() {
     });
 
     match step_error {
-        HostedStepError::EgressValidation(detail) => assert_eq!(
-            detail,
-            "egress route kind 'place_order' is not accepted by adapter (accepts.effects)"
-        ),
+        HostedStepError::EgressValidation(HostedEgressValidationError::Validation(detail)) => {
+            assert_eq!(
+                detail.to_string(),
+                "egress route kind 'place_order' is not accepted by adapter (accepts.effects)"
+            )
+        }
         other => panic!("unexpected step error variant: {other:?}"),
     }
 }
 
 #[test]
-fn hosted_step_error_from_egress_process_error_stringifies_currently() {
+fn hosted_step_error_from_egress_process_error_preserves_type() {
     let step_error = HostedStepError::from(EgressProcessError::Timeout {
         channel: "broker".to_string(),
         intent_id: "intent-123".to_string(),
@@ -159,8 +170,8 @@ fn hosted_step_error_from_egress_process_error_stringifies_currently() {
     });
 
     match step_error {
-        HostedStepError::EgressLifecycle(detail) => assert_eq!(
-            detail,
+        HostedStepError::EgressProcess(detail) => assert_eq!(
+            detail.to_string(),
             "egress channel 'broker' timed out waiting for durable-accept ack for intent 'intent-123' after 5000ms"
         ),
         other => panic!("unexpected step error variant: {other:?}"),
@@ -191,6 +202,55 @@ fn hosted_step_error_sources_chain_for_typed_wrappers_only() {
         "ambiguous coverage for kind 'set_context': claimed by both handler and egress"
     );
 
+    let binding = HostedStepError::Binding(EventBindingError::PayloadSchemaMismatch {
+        kind: "command.place_order".to_string(),
+        detail: "binder rejected payload".to_string(),
+    });
+    assert_eq!(
+        binding
+            .source()
+            .expect("binding wrapper should expose its source")
+            .to_string(),
+        "payload does not match schema for semantic event kind 'command.place_order': binder rejected payload"
+    );
+
+    let event_build = HostedStepError::EventBuild(HostedEventBuildError::InvalidPayload(
+        ExternalEventPayloadError::PayloadMustBeJsonObject {
+            got: "string".to_string(),
+        },
+    ));
+    assert_eq!(
+        event_build
+            .source()
+            .expect("event build wrapper should expose its source")
+            .to_string(),
+        "payload must be a JSON object, got string"
+    );
+
+    let egress_validation =
+        HostedStepError::from(EgressValidationError::RoutedKindNotAcceptedByAdapter {
+            intent_kind: "place_order".to_string(),
+        });
+    assert_eq!(
+        egress_validation
+            .source()
+            .expect("egress validation wrapper should expose its source")
+            .to_string(),
+        "egress route kind 'place_order' is not accepted by adapter (accepts.effects)"
+    );
+
+    let egress_process = HostedStepError::from(EgressProcessError::Startup {
+        channel: "broker".to_string(),
+        detail: "spawn failed".to_string(),
+    });
+    assert_eq!(
+        egress_process
+            .source()
+            .expect("egress process wrapper should expose its source")
+            .to_string(),
+        "egress channel 'broker' startup failed: spawn failed"
+    );
+
     let dispatch = HostedStepError::EgressDispatchFailure(EgressDispatchFailure::Io {
         channel: "broker".to_string(),
         detail: "broken pipe".to_string(),
@@ -214,18 +274,10 @@ fn hosted_step_error_sources_chain_for_typed_wrappers_only() {
         HostedStepError::UnknownSemanticKind {
             kind: "command.place_order".to_string(),
         },
-        HostedStepError::BindingError("binder rejected payload".to_string()),
-        HostedStepError::EventBuildError("missing field 'price'".to_string()),
         HostedStepError::LifecycleViolation {
             detail: "runner already finished".to_string(),
         },
         HostedStepError::MissingDecisionEntry,
-        HostedStepError::EgressValidation(
-            "egress configuration requires adapter-bound mode".to_string(),
-        ),
-        HostedStepError::EgressLifecycle(
-            "egress startup error on channel 'broker': spawn failed".to_string(),
-        ),
         HostedStepError::EffectsWithoutAdapter,
     ];
 

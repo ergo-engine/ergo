@@ -115,6 +115,30 @@ impl std::fmt::Display for EgressConfigError {
 
 impl std::error::Error for EgressConfigError {}
 
+#[derive(Debug)]
+pub enum EgressConfigParseError {
+    Toml(toml::de::Error),
+    Config(EgressConfigError),
+}
+
+impl std::fmt::Display for EgressConfigParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Toml(err) => write!(f, "parse egress config TOML: {err}"),
+            Self::Config(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for EgressConfigParseError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Toml(err) => Some(err),
+            Self::Config(err) => Some(err),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(try_from = "RawEgressConfig")]
 pub struct EgressConfig {
@@ -381,8 +405,9 @@ enum EgressProvenanceChannel<'a> {
     Process { command: &'a [String] },
 }
 
-pub fn parse_egress_config_toml(raw: &str) -> Result<EgressConfig, String> {
-    toml::from_str(raw).map_err(|err| format!("parse egress config TOML: {err}"))
+pub fn parse_egress_config_toml(raw: &str) -> Result<EgressConfig, EgressConfigParseError> {
+    let raw_config: RawEgressConfig = toml::from_str(raw).map_err(EgressConfigParseError::Toml)?;
+    EgressConfig::try_from(raw_config).map_err(EgressConfigParseError::Config)
 }
 
 pub fn compute_egress_provenance(config: &EgressConfig) -> String {

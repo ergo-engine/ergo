@@ -16,10 +16,10 @@ use ergo_host::{
     replay_graph_from_assets_with_surfaces, replay_graph_from_paths_with_surfaces,
     run_graph_from_assets_with_surfaces_and_control,
     run_graph_from_paths_with_surfaces_and_control, validate_run_graph_from_assets_with_surfaces,
-    validate_run_graph_from_paths_with_surfaces, DriverConfig, HostReplayError, HostRunError,
-    HostStopHandle, HostedRunner, LivePrepOptions, PrepareHostedRunnerFromPathsRequest,
-    ReplayGraphFromAssetsRequest, ReplayGraphFromPathsRequest, ReplayGraphResult, RunControl,
-    RunGraphFromAssetsRequest, RunGraphFromPathsRequest, RunOutcome, RuntimeSurfaces,
+    validate_run_graph_from_paths_with_surfaces, DriverConfig, HostStopHandle, HostedRunner,
+    LivePrepOptions, PrepareHostedRunnerFromPathsRequest, ReplayGraphFromAssetsRequest,
+    ReplayGraphFromPathsRequest, ReplayGraphResult, RunControl, RunGraphFromAssetsRequest,
+    RunGraphFromPathsRequest, RunOutcome, RuntimeSurfaces,
 };
 use ergo_loader::{
     load_project, PreparedGraphAssets, ProjectError as LoaderProjectError, ResolvedProject,
@@ -30,8 +30,13 @@ use ergo_runtime::catalog::{CatalogBuilder, CoreRegistrationError};
 pub use ergo_host::{
     parse_egress_config_toml, write_capture_bundle, AdapterInput, CaptureBundle, CaptureJsonStyle,
     CaptureWriteError, EgressChannelConfig, EgressConfig, EgressConfigBuilder, EgressConfigError,
-    EgressDispatchFailure, EgressRoute, HostedEvent, HostedStepError, HostedStepOutcome,
-    InterruptedRun, InterruptionReason, RunSummary,
+    EgressConfigParseError, EgressDispatchFailure, EgressRoute, HostAdapterCompositionError,
+    HostAdapterSetupError, HostAvailableCluster, HostDependencyScanError, HostDriverError,
+    HostDriverInputError, HostDriverIoError, HostDriverOutputError, HostDriverProtocolError,
+    HostDriverStartError, HostExpandContext, HostExpandError, HostGraphPreparationError,
+    HostReplayError, HostReplaySetupError, HostRunError, HostSetupError,
+    HostedEgressValidationError, HostedEvent, HostedEventBuildError, HostedStepError,
+    HostedStepOutcome, InterruptedRun, InterruptionReason, RunSummary,
 };
 pub use ergo_runtime::catalog::{build_core, build_core_catalog, core_registries};
 pub use ergo_runtime::runtime::ExecutionContext;
@@ -60,16 +65,16 @@ impl StopHandle {
 
 #[derive(Debug)]
 pub enum ErgoBuildError {
-    Registration(String),
-    ProjectConfig(String),
+    Registration(CoreRegistrationError),
+    ProjectConfig(ProjectError),
     ProjectSourceConflict,
 }
 
 impl std::fmt::Display for ErgoBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Registration(detail) => write!(f, "{detail}"),
-            Self::ProjectConfig(detail) => write!(f, "{detail}"),
+            Self::Registration(err) => write!(f, "primitive registration failed: {err}"),
+            Self::ProjectConfig(err) => write!(f, "{err}"),
             Self::ProjectSourceConflict => {
                 write!(
                     f,
@@ -80,7 +85,136 @@ impl std::fmt::Display for ErgoBuildError {
     }
 }
 
-impl std::error::Error for ErgoBuildError {}
+impl std::error::Error for ErgoBuildError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Registration(err) => Some(err),
+            Self::ProjectConfig(err) => Some(err),
+            Self::ProjectSourceConflict => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ProjectConfigError {
+    InMemoryProjectHasNoProfiles,
+    InMemoryFixtureSourceLabelEmpty {
+        profile: Option<String>,
+    },
+    InMemoryFixtureItemsEmpty {
+        profile: Option<String>,
+    },
+    InMemoryProcessCommandEmpty {
+        profile: Option<String>,
+    },
+    InMemoryProcessExecutableBlank {
+        profile: Option<String>,
+    },
+    ExplicitRunProcessCommandEmpty,
+    EgressConfigRead {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    EgressConfigParse {
+        path: PathBuf,
+        source: EgressConfigParseError,
+    },
+    FilesystemProfileCannotUseInMemoryCapture {
+        profile: String,
+    },
+    InMemoryAssetsCannotUseDefaultFilesystemCapture,
+}
+
+impl std::fmt::Display for ProjectConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InMemoryProjectHasNoProfiles => {
+                write!(f, "in-memory project snapshot must declare at least one profile")
+            }
+            Self::InMemoryFixtureSourceLabelEmpty {
+                profile: Some(profile),
+            } => write!(
+                f,
+                "in-memory project profile '{profile}' fixture ingress source_label must not be empty"
+            ),
+            Self::InMemoryFixtureSourceLabelEmpty { profile: None } => {
+                write!(f, "fixture ingress source_label must not be empty")
+            }
+            Self::InMemoryFixtureItemsEmpty {
+                profile: Some(profile),
+            } => write!(
+                f,
+                "in-memory project profile '{profile}' fixture ingress must declare at least one item"
+            ),
+            Self::InMemoryFixtureItemsEmpty { profile: None } => {
+                write!(f, "fixture ingress must declare at least one item")
+            }
+            Self::InMemoryProcessCommandEmpty {
+                profile: Some(profile),
+            } => write!(
+                f,
+                "in-memory project profile '{profile}' process ingress command must not be empty"
+            ),
+            Self::InMemoryProcessCommandEmpty { profile: None } => {
+                write!(f, "process ingress command must not be empty")
+            }
+            Self::InMemoryProcessExecutableBlank {
+                profile: Some(profile),
+            } => write!(
+                f,
+                "in-memory project profile '{profile}' process ingress executable must not be empty"
+            ),
+            Self::InMemoryProcessExecutableBlank { profile: None } => {
+                write!(f, "process ingress executable must not be empty")
+            }
+            Self::ExplicitRunProcessCommandEmpty => {
+                write!(
+                    f,
+                    "explicit run configuration is invalid: process ingress command must not be empty"
+                )
+            }
+            Self::EgressConfigRead { path, source } => {
+                write!(
+                    f,
+                    "failed to read egress config '{}': {source}",
+                    path.display()
+                )
+            }
+            Self::EgressConfigParse { path, source } => {
+                write!(
+                    f,
+                    "failed to parse egress config '{}': {source}",
+                    path.display()
+                )
+            }
+            Self::FilesystemProfileCannotUseInMemoryCapture { profile } => write!(
+                f,
+                "filesystem profile '{profile}' cannot use in-memory capture"
+            ),
+            Self::InMemoryAssetsCannotUseDefaultFilesystemCapture => write!(
+                f,
+                "default filesystem capture cannot be applied to in-memory graph assets"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ProjectConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::EgressConfigRead { source, .. } => Some(source),
+            Self::EgressConfigParse { source, .. } => Some(source),
+            Self::InMemoryProjectHasNoProfiles
+            | Self::InMemoryFixtureSourceLabelEmpty { .. }
+            | Self::InMemoryFixtureItemsEmpty { .. }
+            | Self::InMemoryProcessCommandEmpty { .. }
+            | Self::InMemoryProcessExecutableBlank { .. }
+            | Self::ExplicitRunProcessCommandEmpty
+            | Self::FilesystemProfileCannotUseInMemoryCapture { .. }
+            | Self::InMemoryAssetsCannotUseDefaultFilesystemCapture => None,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum ProjectError {
@@ -88,12 +222,9 @@ pub enum ProjectError {
     ProfileNotFound {
         name: String,
     },
-    ConfigInvalid {
-        detail: String,
-    },
-    ProjectLoad {
-        detail: String,
-    },
+    Config(ProjectConfigError),
+    Load(LoaderProjectError),
+    Host(HostRunError),
     UnsupportedOperation {
         operation: &'static str,
         transport: &'static str,
@@ -110,8 +241,9 @@ impl std::fmt::Display for ProjectError {
                 )
             }
             Self::ProfileNotFound { name } => write!(f, "project profile '{name}' does not exist"),
-            Self::ConfigInvalid { detail } => write!(f, "{detail}"),
-            Self::ProjectLoad { detail } => write!(f, "{detail}"),
+            Self::Config(err) => write!(f, "{err}"),
+            Self::Load(err) => write!(f, "{err}"),
+            Self::Host(err) => write!(f, "{err}"),
             Self::UnsupportedOperation {
                 operation,
                 transport,
@@ -125,7 +257,14 @@ impl std::fmt::Display for ProjectError {
 
 impl std::error::Error for ProjectError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
+        match self {
+            Self::Config(err) => Some(err),
+            Self::Load(err) => Some(err),
+            Self::Host(err) => Some(err),
+            Self::ProjectNotConfigured
+            | Self::ProfileNotFound { .. }
+            | Self::UnsupportedOperation { .. } => None,
+        }
     }
 }
 
@@ -186,15 +325,18 @@ impl std::error::Error for ErgoReplayError {
 #[derive(Debug)]
 pub enum ErgoValidateError {
     Project(ProjectError),
-    Validation { profile: String, detail: String },
+    Validation {
+        profile: String,
+        source: ProjectError,
+    },
 }
 
 impl std::fmt::Display for ErgoValidateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Project(err) => write!(f, "{err}"),
-            Self::Validation { profile, detail } => {
-                write!(f, "validation failed for profile '{profile}': {detail}")
+            Self::Validation { profile, source } => {
+                write!(f, "validation failed for profile '{profile}': {source}")
             }
         }
     }
@@ -204,7 +346,7 @@ impl std::error::Error for ErgoValidateError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Project(err) => Some(err),
-            Self::Validation { .. } => None,
+            Self::Validation { source, .. } => Some(source),
         }
     }
 }
@@ -491,7 +633,7 @@ impl InMemoryProfileConfig {
             max_duration: None,
             max_events: None,
         };
-        validate_in_memory_profile_config(None, &config)?;
+        validate_in_memory_profile_config(None, &config).map_err(ProjectError::Config)?;
         Ok(config)
     }
 
@@ -512,7 +654,7 @@ impl InMemoryProfileConfig {
             max_duration: None,
             max_events: None,
         };
-        validate_in_memory_profile_config(None, &config)?;
+        validate_in_memory_profile_config(None, &config).map_err(ProjectError::Config)?;
         Ok(config)
     }
 
@@ -590,12 +732,13 @@ impl InMemoryProjectSnapshot {
         profiles: BTreeMap<String, InMemoryProfileConfig>,
     ) -> Result<Self, ProjectError> {
         if profiles.is_empty() {
-            return Err(ProjectError::ConfigInvalid {
-                detail: "in-memory project snapshot must declare at least one profile".to_string(),
-            });
+            return Err(ProjectError::Config(
+                ProjectConfigError::InMemoryProjectHasNoProfiles,
+            ));
         }
         for (profile_name, profile) in &profiles {
-            validate_in_memory_profile_config(Some(profile_name.as_str()), profile)?;
+            validate_in_memory_profile_config(Some(profile_name.as_str()), profile)
+                .map_err(ProjectError::Config)?;
         }
         Ok(Self {
             name,
@@ -729,14 +872,12 @@ impl ErgoBuilder {
             return Err(ErgoBuildError::ProjectSourceConflict);
         }
         if let ProjectSource::InMemory(snapshot) = &self.project_source {
-            snapshot
-                .validate()
-                .map_err(|err| ErgoBuildError::ProjectConfig(err.to_string()))?;
+            snapshot.validate().map_err(ErgoBuildError::ProjectConfig)?;
         }
         let (registries, catalog) = self
             .catalog_builder
             .build()
-            .map_err(format_registration_error)?;
+            .map_err(ErgoBuildError::Registration)?;
         Ok(Ergo {
             runtime_surfaces: RuntimeSurfaces::new(registries, catalog),
             project_source: self.project_source,
@@ -794,11 +935,7 @@ impl Ergo {
         config: RunConfig,
         control: RunControl,
     ) -> Result<RunOutcome, ErgoRunError> {
-        let request = run_request_from_config(&config)
-            .map_err(|detail| ProjectError::ConfigInvalid {
-                detail: format!("explicit run configuration is invalid: {detail}"),
-            })
-            .map_err(ErgoRunError::Project)?;
+        let request = run_request_from_config(&config).map_err(ErgoRunError::Project)?;
 
         run_graph_from_paths_with_surfaces_and_control(
             request,
@@ -852,11 +989,8 @@ impl Ergo {
         config: ReplayBundleConfig,
     ) -> Result<ReplayGraphResult, ErgoReplayError> {
         let assets = load_graph_assets_from_paths(&config.graph_path, &config.cluster_paths)
-            .map_err(|err| {
-                ErgoReplayError::Project(ProjectError::ConfigInvalid {
-                    detail: err.to_string(),
-                })
-            })?;
+            .map_err(ProjectError::Host)
+            .map_err(ErgoReplayError::Project)?;
         replay_graph_from_assets_with_surfaces(
             ReplayGraphFromAssetsRequest {
                 bundle: config.bundle,
@@ -913,14 +1047,14 @@ impl Ergo {
                 let profiles = project.profile_names();
                 for profile_name in &profiles {
                     let plan = Self::resolve_profile_plan_from_project(&project, profile_name)
-                        .map_err(|err| ErgoValidateError::Validation {
+                        .map_err(|source| ErgoValidateError::Validation {
                             profile: profile_name.clone(),
-                            detail: err.to_string(),
+                            source,
                         })?;
-                    self.validate_profile_plan(&plan).map_err(|err| {
+                    self.validate_profile_plan(&plan).map_err(|source| {
                         ErgoValidateError::Validation {
                             profile: profile_name.clone(),
-                            detail: err.to_string(),
+                            source,
                         }
                     })?;
                 }
@@ -935,16 +1069,16 @@ impl Ergo {
             ProjectSource::InMemory(project) => {
                 let profiles = project.profile_names();
                 for profile_name in &profiles {
-                    let plan = self.resolve_profile_plan(profile_name).map_err(|err| {
+                    let plan = self.resolve_profile_plan(profile_name).map_err(|source| {
                         ErgoValidateError::Validation {
                             profile: profile_name.clone(),
-                            detail: err.to_string(),
+                            source,
                         }
                     })?;
-                    self.validate_profile_plan(&plan).map_err(|err| {
+                    self.validate_profile_plan(&plan).map_err(|source| {
                         ErgoValidateError::Validation {
                             profile: profile_name.clone(),
-                            detail: err.to_string(),
+                            source,
                         }
                     })?;
                 }
@@ -1015,12 +1149,11 @@ impl Ergo {
                     CapturePlan::DefaultFile { pretty } => (None, pretty),
                     CapturePlan::ExplicitFile { path, pretty } => (Some(path), pretty),
                     CapturePlan::InMemory => {
-                        return Err(ErgoRunError::Project(ProjectError::ConfigInvalid {
-                            detail: format!(
-                                "filesystem profile '{}' cannot use in-memory capture",
-                                profile_name
-                            ),
-                        }));
+                        return Err(ErgoRunError::Project(ProjectError::Config(
+                            ProjectConfigError::FilesystemProfileCannotUseInMemoryCapture {
+                                profile: profile_name,
+                            },
+                        )));
                     }
                 };
                 run_graph_from_paths_with_surfaces_and_control(
@@ -1057,14 +1190,11 @@ impl Ergo {
 
     fn validate_profile_plan(&self, plan: &ResolvedProfilePlan) -> Result<(), ProjectError> {
         match (&plan.runner_source, &plan.capture) {
-            (RunnerSource::Paths(_request), CapturePlan::InMemory) => {
-                Err(ProjectError::ConfigInvalid {
-                    detail: format!(
-                        "filesystem profile '{}' cannot use in-memory capture",
-                        plan.profile_name
-                    ),
-                })
-            }
+            (RunnerSource::Paths(_request), CapturePlan::InMemory) => Err(ProjectError::Config(
+                ProjectConfigError::FilesystemProfileCannotUseInMemoryCapture {
+                    profile: plan.profile_name.clone(),
+                },
+            )),
             (RunnerSource::Paths(request), CapturePlan::DefaultFile { pretty }) => {
                 validate_run_graph_from_paths_with_surfaces(
                     RunGraphFromPathsRequest {
@@ -1078,9 +1208,7 @@ impl Ergo {
                     },
                     self.runtime_surfaces.clone(),
                 )
-                .map_err(|err| ProjectError::ConfigInvalid {
-                    detail: err.to_string(),
-                })
+                .map_err(ProjectError::Host)
             }
             (RunnerSource::Paths(request), CapturePlan::ExplicitFile { path, pretty }) => {
                 validate_run_graph_from_paths_with_surfaces(
@@ -1095,9 +1223,7 @@ impl Ergo {
                     },
                     self.runtime_surfaces.clone(),
                 )
-                .map_err(|err| ProjectError::ConfigInvalid {
-                    detail: err.to_string(),
-                })
+                .map_err(ProjectError::Host)
             }
             (RunnerSource::Assets { assets, prep }, capture) => {
                 validate_run_graph_from_assets_with_surfaces(
@@ -1109,9 +1235,7 @@ impl Ergo {
                     },
                     self.runtime_surfaces.clone(),
                 )
-                .map_err(|err| ProjectError::ConfigInvalid {
-                    detail: err.to_string(),
-                })
+                .map_err(ProjectError::Host)
             }
         }
     }
@@ -1125,11 +1249,8 @@ impl Ergo {
             RunnerSource::Paths(request) => {
                 let assets =
                     load_graph_assets_from_paths(&request.graph_path, &request.cluster_paths)
-                        .map_err(|err| {
-                            ErgoReplayError::Project(ProjectError::ConfigInvalid {
-                                detail: err.to_string(),
-                            })
-                        })?;
+                        .map_err(ProjectError::Host)
+                        .map_err(ErgoReplayError::Project)?;
                 replay_graph_from_assets_with_surfaces(
                     ReplayGraphFromAssetsRequest {
                         bundle,
@@ -1313,53 +1434,36 @@ impl ProfileRunner {
 fn map_loader_project_error(err: LoaderProjectError) -> ProjectError {
     match err {
         LoaderProjectError::ProfileNotFound { name } => ProjectError::ProfileNotFound { name },
-        LoaderProjectError::ProfileInvalid { name, detail } => ProjectError::ConfigInvalid {
-            detail: format!("project profile '{name}' is invalid: {detail}"),
-        },
-        other => ProjectError::ProjectLoad {
-            detail: other.to_string(),
-        },
+        other => ProjectError::Load(other),
     }
 }
 
-fn invalid_in_memory_profile(
-    profile_name: Option<&str>,
-    detail: impl Into<String>,
-) -> ProjectError {
-    let detail = detail.into();
-    match profile_name {
-        Some(profile_name) => ProjectError::ConfigInvalid {
-            detail: format!("project profile '{profile_name}' is invalid: {detail}"),
-        },
-        None => ProjectError::ConfigInvalid { detail },
-    }
+fn profile_name_option(profile_name: Option<&str>) -> Option<String> {
+    profile_name.map(ToOwned::to_owned)
 }
 
 fn validate_in_memory_profile_config(
     profile_name: Option<&str>,
     profile: &InMemoryProfileConfig,
-) -> Result<(), ProjectError> {
+) -> Result<(), ProjectConfigError> {
     match &profile.ingress {
         InMemoryIngress::FixtureItems {
             items: _,
             source_label,
         } if source_label.trim().is_empty() => {
-            return Err(invalid_in_memory_profile(
-                profile_name,
-                "fixture ingress source_label must not be empty",
-            ));
+            return Err(ProjectConfigError::InMemoryFixtureSourceLabelEmpty {
+                profile: profile_name_option(profile_name),
+            });
         }
         InMemoryIngress::FixtureItems { items, .. } if items.is_empty() => {
-            return Err(invalid_in_memory_profile(
-                profile_name,
-                "fixture ingress must declare at least one item",
-            ));
+            return Err(ProjectConfigError::InMemoryFixtureItemsEmpty {
+                profile: profile_name_option(profile_name),
+            });
         }
         InMemoryIngress::Process { command } if command.is_empty() => {
-            return Err(invalid_in_memory_profile(
-                profile_name,
-                "process ingress command must not be empty",
-            ));
+            return Err(ProjectConfigError::InMemoryProcessCommandEmpty {
+                profile: profile_name_option(profile_name),
+            });
         }
         InMemoryIngress::Process { command }
             if command
@@ -1367,10 +1471,9 @@ fn validate_in_memory_profile_config(
                 .map(|program| program.trim().is_empty())
                 .unwrap_or(false) =>
         {
-            return Err(invalid_in_memory_profile(
-                profile_name,
-                "process ingress executable must not be empty",
-            ));
+            return Err(ProjectConfigError::InMemoryProcessExecutableBlank {
+                profile: profile_name_option(profile_name),
+            });
         }
         _ => {}
     }
@@ -1430,7 +1533,7 @@ fn prepare_host_request_from_profile(
         .as_deref()
         .map(load_egress_config)
         .transpose()
-        .map_err(|detail| ProjectError::ConfigInvalid { detail })?;
+        .map_err(ProjectError::Config)?;
     Ok(PrepareHostedRunnerFromPathsRequest {
         graph_path: profile.graph_path.clone(),
         cluster_paths: profile.cluster_paths.clone(),
@@ -1463,7 +1566,7 @@ fn resolve_profile_plan_from_in_memory_profile(
     profile_name: &str,
     profile: &InMemoryProfileConfig,
 ) -> Result<ResolvedProfilePlan, ProjectError> {
-    validate_in_memory_profile_config(Some(profile_name), profile)?;
+    validate_in_memory_profile_config(Some(profile_name), profile).map_err(ProjectError::Config)?;
     Ok(ResolvedProfilePlan {
         profile_name: profile_name.to_string(),
         runner_source: RunnerSource::Assets {
@@ -1486,15 +1589,10 @@ fn host_capture_policy_from_plan(
             path: path.clone(),
             pretty: *pretty,
         }),
-        CapturePlan::DefaultFile { .. } => Err(ProjectError::ConfigInvalid {
-            detail: "default filesystem capture cannot be applied to in-memory graph assets"
-                .to_string(),
-        }),
+        CapturePlan::DefaultFile { .. } => Err(ProjectError::Config(
+            ProjectConfigError::InMemoryAssetsCannotUseDefaultFilesystemCapture,
+        )),
     }
-}
-
-fn format_registration_error(err: CoreRegistrationError) -> ErgoBuildError {
-    ErgoBuildError::Registration(format!("primitive registration failed: {err:?}"))
 }
 
 fn lifecycle_violation(detail: impl Into<String>) -> HostedStepError {
@@ -1513,19 +1611,19 @@ fn is_recoverable_step_error(err: &HostedStepError) -> bool {
             | HostedStepError::MissingPayload
             | HostedStepError::PayloadMustBeObject
             | HostedStepError::UnknownSemanticKind { .. }
-            | HostedStepError::BindingError(_)
-            | HostedStepError::EventBuildError(_)
+            | HostedStepError::Binding(_)
+            | HostedStepError::EventBuild(_)
     )
 }
 
-fn run_request_from_config(config: &RunConfig) -> Result<RunGraphFromPathsRequest, String> {
+fn run_request_from_config(config: &RunConfig) -> Result<RunGraphFromPathsRequest, ProjectError> {
     Ok(RunGraphFromPathsRequest {
         graph_path: config.graph_path.clone(),
         cluster_paths: config.cluster_paths.clone(),
-        driver: ingress_to_driver(&config.ingress)?,
+        driver: ingress_to_driver(&config.ingress).map_err(ProjectError::Config)?,
         adapter_path: config.adapter_path.clone(),
         egress_config: match &config.egress_config_path {
-            Some(path) => Some(load_egress_config(path)?),
+            Some(path) => Some(load_egress_config(path).map_err(ProjectError::Config)?),
             None => None,
         },
         capture_output: config.capture_output.clone(),
@@ -1555,12 +1653,12 @@ fn apply_profile_limits(
     }
 }
 
-fn ingress_to_driver(ingress: &IngressConfig) -> Result<DriverConfig, String> {
+fn ingress_to_driver(ingress: &IngressConfig) -> Result<DriverConfig, ProjectConfigError> {
     match ingress {
         IngressConfig::Fixture { path } => Ok(DriverConfig::Fixture { path: path.clone() }),
         IngressConfig::Process { command } => {
             if command.is_empty() {
-                return Err("process ingress command must not be empty".to_string());
+                return Err(ProjectConfigError::ExplicitRunProcessCommandEmpty);
             }
             Ok(DriverConfig::Process {
                 command: command.clone(),
@@ -1569,2476 +1667,16 @@ fn ingress_to_driver(ingress: &IngressConfig) -> Result<DriverConfig, String> {
     }
 }
 
-fn load_egress_config(path: &Path) -> Result<EgressConfig, String> {
-    let raw = fs::read_to_string(path)
-        .map_err(|err| format!("failed to read egress config '{}': {err}", path.display()))?;
-    parse_egress_config_toml(&raw)
-        .map_err(|err| format!("failed to parse egress config '{}': {err}", path.display()))
+fn load_egress_config(path: &Path) -> Result<EgressConfig, ProjectConfigError> {
+    let raw = fs::read_to_string(path).map_err(|source| ProjectConfigError::EgressConfigRead {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    parse_egress_config_toml(&raw).map_err(|source| ProjectConfigError::EgressConfigParse {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use ergo_adapter::{EventTime, ExternalEventKind, RunTermination};
-    use ergo_loader::{load_graph_assets_from_memory, InMemorySourceInput};
-    use ergo_runtime::action::{
-        ActionEffects, ActionKind, ActionOutcome, ActionPrimitive, ActionPrimitiveManifest,
-        ActionValue, ActionValueType, Cardinality as ActionCardinality,
-        ExecutionSpec as ActionExecutionSpec, InputSpec as ActionInputSpec, IntentFieldSpec,
-        IntentSpec, OutputSpec as ActionOutputSpec, StateSpec as ActionStateSpec,
-    };
-    use ergo_runtime::common::{Value, ValueType};
-    use ergo_runtime::runtime::ExecutionContext;
-    use ergo_runtime::source::{
-        Cadence as SourceCadence, ExecutionSpec as SourceExecutionSpec,
-        OutputSpec as SourceOutputSpec, SourceKind, SourcePrimitive, SourcePrimitiveManifest,
-        SourceRequires, StateSpec as SourceStateSpec,
-    };
-    use std::collections::HashMap;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::thread;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-    struct InjectedNumberSource {
-        manifest: SourcePrimitiveManifest,
-        output: f64,
-    }
-
-    impl InjectedNumberSource {
-        fn new(output: f64) -> Self {
-            Self {
-                manifest: SourcePrimitiveManifest {
-                    id: "injected_number_source".to_string(),
-                    version: "0.1.0".to_string(),
-                    kind: SourceKind::Source,
-                    inputs: vec![],
-                    outputs: vec![SourceOutputSpec {
-                        name: "value".to_string(),
-                        value_type: ValueType::Number,
-                    }],
-                    parameters: vec![],
-                    requires: SourceRequires {
-                        context: Vec::new(),
-                    },
-                    execution: SourceExecutionSpec {
-                        deterministic: true,
-                        cadence: SourceCadence::Continuous,
-                    },
-                    state: SourceStateSpec { allowed: false },
-                    side_effects: false,
-                },
-                output,
-            }
-        }
-    }
-
-    impl SourcePrimitive for InjectedNumberSource {
-        fn manifest(&self) -> &SourcePrimitiveManifest {
-            &self.manifest
-        }
-
-        fn produce(
-            &self,
-            _parameters: &HashMap<String, source::ParameterValue>,
-            _ctx: &ExecutionContext,
-        ) -> HashMap<String, Value> {
-            HashMap::from([("value".to_string(), Value::Number(self.output))])
-        }
-    }
-
-    struct InjectedIntentAction {
-        manifest: ActionPrimitiveManifest,
-    }
-
-    impl InjectedIntentAction {
-        fn new() -> Self {
-            Self {
-                manifest: ActionPrimitiveManifest {
-                    id: "injected_intent_action".to_string(),
-                    version: "0.1.0".to_string(),
-                    kind: ActionKind::Action,
-                    inputs: vec![
-                        ActionInputSpec {
-                            name: "event".to_string(),
-                            value_type: ActionValueType::Event,
-                            required: true,
-                            cardinality: ActionCardinality::Single,
-                        },
-                        ActionInputSpec {
-                            name: "qty".to_string(),
-                            value_type: ActionValueType::Number,
-                            required: true,
-                            cardinality: ActionCardinality::Single,
-                        },
-                    ],
-                    outputs: vec![ActionOutputSpec {
-                        name: "outcome".to_string(),
-                        value_type: ActionValueType::Event,
-                    }],
-                    parameters: vec![],
-                    effects: ActionEffects {
-                        writes: vec![],
-                        intents: vec![IntentSpec {
-                            name: "place_order".to_string(),
-                            fields: vec![IntentFieldSpec {
-                                name: "qty".to_string(),
-                                value_type: ValueType::Number,
-                                from_input: Some("qty".to_string()),
-                                from_param: None,
-                            }],
-                            mirror_writes: vec![],
-                        }],
-                    },
-                    execution: ActionExecutionSpec {
-                        deterministic: true,
-                        retryable: false,
-                    },
-                    state: ActionStateSpec { allowed: false },
-                    side_effects: true,
-                },
-            }
-        }
-    }
-
-    impl ActionPrimitive for InjectedIntentAction {
-        fn manifest(&self) -> &ActionPrimitiveManifest {
-            &self.manifest
-        }
-
-        fn execute(
-            &self,
-            _inputs: &HashMap<String, ActionValue>,
-            _parameters: &HashMap<String, action::ParameterValue>,
-        ) -> HashMap<String, ActionValue> {
-            HashMap::from([(
-                "outcome".to_string(),
-                ActionValue::Event(ActionOutcome::Completed),
-            )])
-        }
-    }
-
-    fn make_temp_dir(label: &str) -> PathBuf {
-        let index = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "ergo_sdk_rust_{label}_{}_{}_{}",
-            std::process::id(),
-            index,
-            nanos
-        ));
-        fs::create_dir_all(&dir).expect("create temp dir");
-        dir
-    }
-
-    fn write_file(base: &Path, rel: &str, contents: &str) -> PathBuf {
-        let path = base.join(rel);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).expect("create parent");
-        }
-        fs::write(&path, contents).expect("write file");
-        path
-    }
-
-    fn write_intent_graph(base: &Path, graph_id: &str) -> PathBuf {
-        write_file(
-            base,
-            "graphs/strategy.yaml",
-            &format!(
-                r#"
-kind: cluster
-id: {graph_id}
-version: "0.1.0"
-nodes:
-  gate:
-    impl: const_bool@0.1.0
-    params:
-      value: true
-  emit:
-    impl: emit_if_true@0.1.0
-  qty:
-    impl: injected_number_source@0.1.0
-  place:
-    impl: injected_intent_action@0.1.0
-edges:
-  - "gate.value -> emit.input"
-  - "emit.event -> place.event"
-  - "qty.value -> place.qty"
-outputs:
-  outcome: place.outcome
-"#
-            ),
-        )
-    }
-
-    fn write_intent_adapter_manifest(base: &Path) -> PathBuf {
-        write_file(
-            base,
-            "adapters/trading.yaml",
-            r#"
-kind: adapter
-id: sdk_trading_adapter
-version: 1.0.0
-runtime_compatibility: 0.1.0
-context_keys:
-  - name: last_qty
-    type: Number
-    required: false
-    writable: true
-event_kinds:
-  - name: price_bar
-    payload_schema:
-      type: object
-      properties:
-        price: { type: number }
-      additionalProperties: false
-accepts:
-  effects:
-    - name: set_context
-      payload_schema:
-        type: object
-        additionalProperties: false
-    - name: place_order
-      payload_schema:
-        type: object
-        properties:
-          qty: { type: number }
-        required: [qty]
-        additionalProperties: false
-capture:
-  format_version: "1"
-  fields:
-    - event.price_bar
-    - meta.adapter_id
-    - meta.adapter_version
-    - meta.timestamp
-"#,
-        )
-    }
-
-    fn write_process_ingress_sentinel(base: &Path, sentinel_path: &Path) -> PathBuf {
-        write_file(
-            base,
-            "scripts/ingress.sh",
-            &format!(
-                r#"#!/bin/sh
-printf '%s\n' started > "{sentinel}"
-printf '%s\n' '{{"type":"hello","protocol":"ergo-driver.v0"}}'
-printf '%s\n' '{{"type":"end"}}'
-"#,
-                sentinel = sentinel_path.display()
-            ),
-        )
-    }
-
-    fn write_process_run_script(base: &Path) -> PathBuf {
-        let hello = serde_json::to_string(&serde_json::json!({
-            "type":"hello",
-            "protocol":"ergo-driver.v0"
-        }))
-        .expect("serialize hello frame");
-        let event = serde_json::to_string(&serde_json::json!({
-            "type":"event",
-            "event": manual_step_event("evt1"),
-        }))
-        .expect("serialize event frame");
-        let end =
-            serde_json::to_string(&serde_json::json!({"type":"end"})).expect("serialize end frame");
-        write_file(
-            base,
-            "scripts/process_ingress.sh",
-            &format!(
-                "#!/bin/sh\nprintf '%s\\n' '{hello}'\nprintf '%s\\n' '{event}'\nprintf '%s\\n' '{end}'\n"
-            ),
-        )
-    }
-
-    fn write_egress_ack_script(base: &Path) -> PathBuf {
-        write_file(
-            base,
-            "channels/egress/broker.sh",
-            r#"#!/bin/sh
-printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
-while IFS= read -r line; do
-  case "$line" in
-    *'"type":"intent"'*)
-      intent_id=$(printf '%s' "$line" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
-      printf '{"type":"intent_ack","intent_id":"%s","status":"accepted","acceptance":"durable"}\n' "$intent_id"
-      ;;
-    *'"type":"end"'*)
-      exit 0
-      ;;
-  esac
-done
-"#,
-        )
-    }
-
-    fn write_egress_io_script(base: &Path) -> PathBuf {
-        write_file(
-            base,
-            "channels/egress/broker.sh",
-            r#"#!/bin/sh
-printf '%s\n' '{"type":"ready","protocol":"ergo-egress.v1","handled_kinds":["place_order"]}'
-while IFS= read -r line; do
-  case "$line" in
-    *'"type":"intent"'*)
-      exit 1
-      ;;
-    *'"type":"end"'*)
-      exit 0
-      ;;
-  esac
-done
-"#,
-        )
-    }
-
-    fn write_egress_config(base: &Path, command: Vec<String>) -> PathBuf {
-        write_file(
-            base,
-            "egress/live.toml",
-            &format!(
-                r#"
-default_ack_timeout = "100ms"
-
-[channels.broker]
-type = "process"
-command = [{command}]
-
-[routes.place_order]
-channel = "broker"
-"#,
-                command = command
-                    .into_iter()
-                    .map(|part| format!("{part:?}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        )
-    }
-
-    fn manual_step_event(event_id: &str) -> HostedEvent {
-        HostedEvent {
-            event_id: event_id.to_string(),
-            kind: ExternalEventKind::Command,
-            at: EventTime::default(),
-            semantic_kind: None,
-            payload: Some(serde_json::json!({})),
-        }
-    }
-
-    fn load_memory_graph_assets(graph_id: &str) -> PreparedGraphAssets {
-        load_graph_assets_from_memory(
-            "graphs/root.yaml",
-            &[InMemorySourceInput {
-                source_id: "graphs/root.yaml".to_string(),
-                source_label: format!("{graph_id}-root"),
-                content: format!(
-                    r#"
-kind: cluster
-id: {graph_id}
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 3.0
-edges: []
-outputs:
-  value_out: src.value
-"#
-                ),
-            }],
-            &[],
-        )
-        .expect("load in-memory graph assets")
-    }
-
-    fn load_memory_intent_graph_assets(graph_id: &str) -> PreparedGraphAssets {
-        load_graph_assets_from_memory(
-            "graphs/root.yaml",
-            &[InMemorySourceInput {
-                source_id: "graphs/root.yaml".to_string(),
-                source_label: format!("{graph_id}-root"),
-                content: format!(
-                    r#"
-kind: cluster
-id: {graph_id}
-version: "0.1.0"
-nodes:
-  gate:
-    impl: const_bool@0.1.0
-    params:
-      value: true
-  emit:
-    impl: emit_if_true@0.1.0
-  qty:
-    impl: injected_number_source@0.1.0
-  place:
-    impl: injected_intent_action@0.1.0
-edges:
-  - "gate.value -> emit.input"
-  - "emit.event -> place.event"
-  - "qty.value -> place.qty"
-outputs:
-  outcome: place.outcome
-"#
-                ),
-            }],
-            &[],
-        )
-        .expect("load in-memory intent graph assets")
-    }
-
-    fn in_memory_project(
-        name: &str,
-        version: &str,
-        profile_name: &str,
-        profile: InMemoryProfileConfig,
-    ) -> InMemoryProjectSnapshot {
-        InMemoryProjectSnapshot::builder(name.to_string(), version.to_string())
-            .profile(profile_name.to_string(), profile)
-            .build()
-            .expect("in-memory project snapshot should validate")
-    }
-
-    fn in_memory_process_profile(
-        graph_assets: PreparedGraphAssets,
-        command: impl IntoIterator<Item = impl Into<String>>,
-    ) -> InMemoryProfileConfig {
-        InMemoryProfileConfig::process(graph_assets, command)
-            .expect("in-memory process profile should validate")
-    }
-
-    fn in_memory_fixture_profile(graph_assets: PreparedGraphAssets) -> InMemoryProfileConfig {
-        InMemoryProfileConfig::fixture_items(
-            graph_assets,
-            vec![
-                FixtureItem::EpisodeStart {
-                    label: "E1".to_string(),
-                },
-                FixtureItem::Event {
-                    id: Some("evt1".to_string()),
-                    kind: ExternalEventKind::Command,
-                    payload: Some(serde_json::json!({})),
-                    semantic_kind: None,
-                },
-            ],
-            "memory-fixture",
-        )
-        .expect("in-memory fixture profile should validate")
-    }
-
-    fn adapter_bound_event(event_id: &str, price: f64) -> HostedEvent {
-        HostedEvent {
-            event_id: event_id.to_string(),
-            kind: ExternalEventKind::Command,
-            at: EventTime::default(),
-            semantic_kind: Some("price_bar".to_string()),
-            payload: Some(serde_json::json!({ "price": price })),
-        }
-    }
-
-    #[test]
-    fn explicit_run_uses_registered_custom_source() -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("explicit_run");
-        let graph = write_file(
-            &root,
-            "graph.yaml",
-            r#"
-kind: cluster
-id: sdk_explicit_run
-version: "0.1.0"
-nodes:
-  src:
-    impl: injected_number_source@0.1.0
-edges: []
-outputs:
-  value_out: src.value
-"#,
-        );
-        let fixture = write_file(
-            &root,
-            "fixture.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-        let capture = root.join("capture.json");
-
-        let outcome = Ergo::builder()
-            .add_source(InjectedNumberSource::new(7.5))
-            .build()?
-            .run(RunConfig::new(graph, IngressConfig::fixture(fixture)).capture_output(&capture))?;
-
-        match outcome {
-            RunOutcome::Completed(summary) => {
-                assert_eq!(summary.events, 1);
-                assert_eq!(summary.capture_path, Some(capture));
-            }
-            other => panic!("expected completed run, got {other:?}"),
-        }
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn run_with_stop_can_request_zero_event_host_stop() -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("explicit_stop");
-        let graph = write_file(
-            &root,
-            "graph.yaml",
-            r#"
-kind: cluster
-id: sdk_explicit_stop
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 3.0
-edges: []
-outputs:
-  value_out: src.value
-"#,
-        );
-        let hello = serde_json::to_string(&serde_json::json!({
-            "type":"hello",
-            "protocol":"ergo-driver.v0"
-        }))?;
-        let driver = write_file(
-            &root,
-            "driver.sh",
-            &format!("#!/bin/sh\nprintf '%s\\n' '{hello}'\nexec sleep 5\n"),
-        );
-        let capture = root.join("capture.json");
-        let stop = StopHandle::new();
-        let stop_clone = stop.clone();
-        let stopper = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(20));
-            stop_clone.stop();
-        });
-
-        let err = Ergo::builder()
-            .build()?
-            .run_with_stop(
-                RunConfig::new(
-                    graph,
-                    IngressConfig::process(["/bin/sh".to_string(), driver.display().to_string()]),
-                )
-                .capture_output(&capture),
-                stop,
-            )
-            .expect_err("zero-event host stop should surface an SDK error");
-
-        stopper.join().expect("stopper thread must join");
-        match err {
-            ErgoRunError::Host(HostRunError::StepFailed(message)) => {
-                assert!(
-                    message.contains("host stop requested before first committed event"),
-                    "unexpected error message: {message}"
-                );
-            }
-            other => panic!("expected host stop StepFailed error, got {other:?}"),
-        }
-        assert!(
-            !capture.exists(),
-            "zero-event stop must not write a capture artifact"
-        );
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn run_profile_discovers_project_and_clusters() -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("project_run");
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.historical]
-graph = "graphs/strategy.yaml"
-fixture = "fixtures/historical.jsonl"
-capture_output = "captures/historical.capture.json"
-"#,
-        );
-        write_file(
-            &root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_project_graph
-version: "0.1.0"
-nodes:
-  shared:
-    cluster: shared_value@0.1.0
-edges: []
-outputs:
-  result: shared.value
-"#,
-        );
-        write_file(
-            &root,
-            "clusters/shared_value.yaml",
-            r#"
-kind: cluster
-id: shared_value
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 3.0
-edges: []
-outputs:
-  value: src.value
-"#,
-        );
-        write_file(
-            &root,
-            "fixtures/historical.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let outcome = Ergo::from_project(root.join("graphs"))
-            .build()?
-            .run_profile("historical")?;
-
-        let capture = root.join("captures/historical.capture.json");
-        match outcome {
-            RunOutcome::Completed(summary) => {
-                assert_eq!(summary.events, 1);
-                assert_eq!(summary.capture_path, Some(capture));
-            }
-            other => panic!("expected completed run, got {other:?}"),
-        }
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn run_profile_with_stop_honors_profile_max_events() -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("project_profile_bounds");
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.historical]
-graph = "graphs/strategy.yaml"
-fixture = "fixtures/historical.jsonl"
-capture_output = "captures/historical.capture.json"
-max_events = 1
-"#,
-        );
-        write_file(
-            &root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_profile_bounds
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 3.0
-edges: []
-outputs:
-  result: src.value
-"#,
-        );
-        write_file(
-            &root,
-            "fixtures/historical.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let outcome = Ergo::from_project(&root)
-            .build()?
-            .run_profile_with_stop("historical", StopHandle::new())?;
-
-        let capture = root.join("captures/historical.capture.json");
-        match outcome {
-            RunOutcome::Interrupted(interrupted) => {
-                assert_eq!(interrupted.reason, InterruptionReason::HostStopRequested);
-                assert_eq!(interrupted.summary.events, 1);
-                assert_eq!(interrupted.summary.capture_path, Some(capture));
-            }
-            other => panic!("expected interrupted host-stop outcome, got {other:?}"),
-        }
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn builder_rejects_conflicting_project_sources() {
-        let snapshot = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "historical",
-            in_memory_process_profile(
-                load_memory_graph_assets("sdk_builder_conflict"),
-                ["/bin/echo", "noop"],
-            )
-            .capture(ProfileCapture::file(
-                "captures/historical.capture.json",
-                false,
-            )),
-        );
-
-        let err = match Ergo::builder()
-            .project_root(".")
-            .in_memory_project(snapshot)
-            .build()
-        {
-            Ok(_) => panic!("conflicting project sources must fail build"),
-            Err(err) => err,
-        };
-        assert!(matches!(err, ErgoBuildError::ProjectSourceConflict));
-    }
-
-    #[test]
-    fn builder_allows_replacing_the_same_project_source_kind(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let first = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "historical",
-            in_memory_process_profile(
-                load_memory_graph_assets("sdk_builder_replace_first"),
-                ["/bin/echo", "noop"],
-            ),
-        );
-        let second = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "historical",
-            in_memory_process_profile(
-                load_memory_graph_assets("sdk_builder_replace_second"),
-                ["/bin/echo", "noop"],
-            ),
-        );
-
-        let _ = Ergo::builder()
-            .project_root(".")
-            .project_root("..")
-            .build()?;
-        let _ = Ergo::builder()
-            .in_memory_project(first)
-            .in_memory_project(second)
-            .build()?;
-        Ok(())
-    }
-
-    #[test]
-    fn in_memory_project_snapshot_rejects_empty_process_ingress() {
-        let err = InMemoryProfileConfig::process(
-            load_memory_graph_assets("sdk_memory_invalid_ingress"),
-            Vec::<String>::new(),
-        )
-        .expect_err("empty process ingress must fail");
-
-        assert!(matches!(err, ProjectError::ConfigInvalid { .. }));
-    }
-
-    #[test]
-    fn in_memory_project_snapshot_rejects_blank_process_executable() {
-        let err = InMemoryProfileConfig::process(
-            load_memory_graph_assets("sdk_memory_blank_process_ingress"),
-            ["", "--flag"],
-        )
-        .expect_err("blank process executable must fail");
-
-        assert!(matches!(err, ProjectError::ConfigInvalid { .. }));
-        assert!(err.to_string().contains("executable must not be empty"));
-    }
-
-    #[test]
-    fn in_memory_project_snapshot_rejects_whitespace_process_executable() {
-        let err = InMemoryProfileConfig::process(
-            load_memory_graph_assets("sdk_memory_whitespace_process_ingress"),
-            ["   ", "--flag"],
-        )
-        .expect_err("whitespace-only process executable must fail");
-
-        assert!(matches!(err, ProjectError::ConfigInvalid { .. }));
-        assert!(err.to_string().contains("executable must not be empty"));
-    }
-
-    #[test]
-    fn run_profile_uses_in_memory_project_process_ingress() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let root = make_temp_dir("memory_project_run");
-        let ingress_script = write_process_run_script(&root);
-        let capture = root.join("captures/historical.capture.json");
-        let snapshot = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "historical",
-            in_memory_process_profile(
-                load_memory_graph_assets("sdk_memory_project_run"),
-                ["/bin/sh", &ingress_script.display().to_string()],
-            )
-            .capture(ProfileCapture::file(&capture, false)),
-        );
-
-        let outcome = Ergo::builder()
-            .in_memory_project(snapshot)
-            .build()?
-            .run_profile("historical")?;
-
-        match outcome {
-            RunOutcome::Completed(summary) => {
-                assert_eq!(summary.events, 1);
-                assert_eq!(summary.capture_path, Some(capture));
-            }
-            other => panic!("expected completed run, got {other:?}"),
-        }
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn run_profile_uses_in_memory_capture_for_in_memory_project(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("memory_project_run_capture_bundle");
-        let ingress_script = write_process_run_script(&root);
-        let snapshot = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "historical",
-            in_memory_process_profile(
-                load_memory_graph_assets("sdk_memory_project_run_bundle"),
-                ["/bin/sh", &ingress_script.display().to_string()],
-            ),
-        );
-
-        let outcome = Ergo::builder()
-            .in_memory_project(snapshot)
-            .build()?
-            .run_profile("historical")?;
-
-        match outcome {
-            RunOutcome::Completed(summary) => {
-                assert_eq!(summary.events, 1);
-                assert_eq!(summary.capture_path, None);
-                assert_eq!(summary.capture_bundle.events.len(), 1);
-            }
-            other => panic!("expected completed run, got {other:?}"),
-        }
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn run_profile_supports_in_memory_fixture_items_ingress(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let snapshot = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "historical",
-            in_memory_fixture_profile(load_memory_graph_assets("sdk_memory_fixture_run")),
-        );
-
-        let outcome = Ergo::builder()
-            .in_memory_project(snapshot)
-            .build()?
-            .run_profile("historical")?;
-
-        match outcome {
-            RunOutcome::Completed(summary) => {
-                assert_eq!(summary.events, 1);
-                assert_eq!(summary.capture_path, None);
-                assert_eq!(summary.capture_bundle.events.len(), 1);
-            }
-            other => panic!("expected completed run, got {other:?}"),
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn run_profile_supports_in_memory_fixture_items_with_file_capture(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("memory_project_fixture_file_capture");
-        let capture = root.join("captures/historical.capture.json");
-        let snapshot = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "historical",
-            in_memory_fixture_profile(load_memory_graph_assets("sdk_memory_fixture_file_capture"))
-                .capture(ProfileCapture::file(&capture, false)),
-        );
-
-        let outcome = Ergo::builder()
-            .in_memory_project(snapshot)
-            .build()?
-            .run_profile("historical")?;
-
-        match outcome {
-            RunOutcome::Completed(summary) => {
-                assert_eq!(summary.events, 1);
-                assert_eq!(summary.capture_path, Some(capture.clone()));
-                assert!(capture.exists());
-                let written: CaptureBundle = serde_json::from_str(&fs::read_to_string(&capture)?)?;
-                assert_eq!(written.graph_id.as_str(), "sdk_memory_fixture_file_capture");
-            }
-            other => panic!("expected completed run, got {other:?}"),
-        }
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn replay_profile_on_in_memory_project_returns_unsupported_operation(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let snapshot = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "historical",
-            in_memory_process_profile(
-                load_memory_graph_assets("sdk_memory_replay_unsupported"),
-                ["/bin/echo", "noop"],
-            ),
-        );
-        let ergo = Ergo::builder().in_memory_project(snapshot).build()?;
-        let err = ergo
-            .replay_profile("historical", "capture.json")
-            .expect_err("in-memory replay_profile should be unsupported");
-
-        match err {
-            ErgoReplayError::Project(ProjectError::UnsupportedOperation {
-                operation,
-                transport,
-            }) => {
-                assert_eq!(operation, "replay_profile");
-                assert_eq!(transport, "in-memory");
-            }
-            other => panic!("unexpected in-memory replay_profile error: {other:?}"),
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn missing_profile_error_is_normalized_for_in_memory_project(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let snapshot = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "historical",
-            in_memory_process_profile(
-                load_memory_graph_assets("sdk_memory_missing_profile"),
-                ["/bin/echo", "noop"],
-            ),
-        );
-        let ergo = Ergo::builder().in_memory_project(snapshot).build()?;
-        let err = ergo
-            .run_profile("missing")
-            .expect_err("missing in-memory profile should use normalized error");
-        assert!(matches!(
-            err,
-            ErgoRunError::Project(ProjectError::ProfileNotFound { name }) if name == "missing"
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn replay_profile_reuses_project_resolution() -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("project_replay");
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.historical]
-graph = "graphs/strategy.yaml"
-fixture = "fixtures/historical.jsonl"
-capture_output = "captures/historical.capture.json"
-"#,
-        );
-        write_file(
-            &root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_replay_graph
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 2.0
-edges: []
-outputs:
-  value_out: src.value
-"#,
-        );
-        write_file(
-            &root,
-            "fixtures/historical.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let capture = root.join("captures/historical.capture.json");
-        let _ = Ergo::from_project(&root)
-            .build()?
-            .run_profile("historical")?;
-
-        let replay = Ergo::from_project(&root)
-            .build()?
-            .replay_profile("historical", &capture)?;
-
-        assert_eq!(replay.graph_id.as_str(), "sdk_replay_graph");
-        assert_eq!(replay.events, 1);
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn replay_profile_bundle_reuses_project_resolution() -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("project_replay_bundle");
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.historical]
-graph = "graphs/strategy.yaml"
-fixture = "fixtures/historical.jsonl"
-"#,
-        );
-        write_file(
-            &root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_replay_bundle_graph
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 2.0
-edges: []
-outputs:
-  value_out: src.value
-"#,
-        );
-        write_file(
-            &root,
-            "fixtures/historical.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let outcome = Ergo::from_project(&root)
-            .build()?
-            .run_profile("historical")?;
-        let bundle = match outcome {
-            RunOutcome::Completed(summary) => summary.capture_bundle,
-            other => panic!("expected completed run, got {other:?}"),
-        };
-
-        let replay = Ergo::from_project(&root)
-            .build()?
-            .replay_profile_bundle("historical", bundle)?;
-
-        assert_eq!(replay.graph_id.as_str(), "sdk_replay_bundle_graph");
-        assert_eq!(replay.events, 1);
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn replay_profile_bundle_supports_in_memory_projects() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let root = make_temp_dir("memory_project_replay_bundle");
-        let ingress_script = write_process_run_script(&root);
-        let snapshot = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "historical",
-            in_memory_process_profile(
-                load_memory_graph_assets("sdk_memory_replay_bundle"),
-                ["/bin/sh", &ingress_script.display().to_string()],
-            ),
-        );
-        let ergo = Ergo::builder().in_memory_project(snapshot).build()?;
-        let outcome = ergo.run_profile("historical")?;
-        let bundle = match outcome {
-            RunOutcome::Completed(summary) => summary.capture_bundle,
-            other => panic!("expected completed run, got {other:?}"),
-        };
-
-        let replay = ergo.replay_profile_bundle("historical", bundle)?;
-        assert_eq!(replay.graph_id.as_str(), "sdk_memory_replay_bundle");
-        assert_eq!(replay.events, 1);
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn replay_bundle_replays_capture_bundle_from_paths() -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("explicit_replay_bundle");
-        let graph = write_file(
-            &root,
-            "graph.yaml",
-            r#"
-kind: cluster
-id: sdk_explicit_replay_bundle
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 2.0
-edges: []
-outputs:
-  value_out: src.value
-"#,
-        );
-        let fixture = write_file(
-            &root,
-            "fixture.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let outcome = Ergo::builder()
-            .build()?
-            .run(RunConfig::new(&graph, IngressConfig::fixture(&fixture)))?;
-        let bundle = match outcome {
-            RunOutcome::Completed(summary) => summary.capture_bundle,
-            other => panic!("expected completed run, got {other:?}"),
-        };
-
-        let replay = Ergo::builder()
-            .build()?
-            .replay_bundle(ReplayBundleConfig::new(bundle, &graph))?;
-        assert_eq!(replay.graph_id.as_str(), "sdk_explicit_replay_bundle");
-        assert_eq!(replay.events, 1);
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn validate_project_rejects_profile_missing_required_adapter(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("validate_missing_adapter");
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.live]
-graph = "graphs/strategy.yaml"
-fixture = "fixtures/live.jsonl"
-"#,
-        );
-        write_file(
-            &root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_validate_missing_adapter
-version: "0.1.0"
-nodes:
-  gate:
-    impl: const_bool@0.1.0
-    params:
-      value: true
-  emit:
-    impl: emit_if_true@0.1.0
-  qty:
-    impl: injected_number_source@0.1.0
-  place:
-    impl: injected_intent_action@0.1.0
-edges:
-  - "gate.value -> emit.input"
-  - "emit.event -> place.event"
-  - "qty.value -> place.qty"
-outputs:
-  outcome: place.outcome
-"#,
-        );
-        write_file(
-            &root,
-            "fixtures/live.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let err = Ergo::from_project(&root)
-            .add_source(InjectedNumberSource::new(4.0))
-            .add_action(InjectedIntentAction::new())
-            .build()?
-            .validate_project()
-            .expect_err("adapter-less intent profile must fail validation");
-
-        match err {
-            ErgoValidateError::Validation { profile, detail } => {
-                assert_eq!(profile, "live");
-                assert!(detail.contains("adapter"));
-            }
-            other => panic!("unexpected error: {other}"),
-        }
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn validate_project_accepts_adapter_and_egress_profile(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("validate_egress");
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.live]
-graph = "graphs/strategy.yaml"
-adapter = "adapters/trading.yaml"
-fixture = "fixtures/live.jsonl"
-egress = "egress/live.toml"
-"#,
-        );
-        write_file(
-            &root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_validate_egress
-version: "0.1.0"
-nodes:
-  gate:
-    impl: const_bool@0.1.0
-    params:
-      value: true
-  emit:
-    impl: emit_if_true@0.1.0
-  qty:
-    impl: injected_number_source@0.1.0
-  place:
-    impl: injected_intent_action@0.1.0
-edges:
-  - "gate.value -> emit.input"
-  - "emit.event -> place.event"
-  - "qty.value -> place.qty"
-outputs:
-  outcome: place.outcome
-"#,
-        );
-        write_file(
-            &root,
-            "adapters/trading.yaml",
-            r#"
-kind: adapter
-id: sdk_trading_adapter
-version: 1.0.0
-runtime_compatibility: 0.1.0
-context_keys:
-  - name: last_qty
-    type: Number
-    required: false
-    writable: true
-event_kinds:
-  - name: price_bar
-    payload_schema:
-      type: object
-      properties:
-        price: { type: number }
-      additionalProperties: false
-accepts:
-  effects:
-    - name: set_context
-      payload_schema:
-        type: object
-        additionalProperties: false
-    - name: place_order
-      payload_schema:
-        type: object
-        properties:
-          qty: { type: number }
-        required: [qty]
-        additionalProperties: false
-capture:
-  format_version: "1"
-  fields:
-    - event.price_bar
-    - meta.adapter_id
-    - meta.adapter_version
-    - meta.timestamp
-"#,
-        );
-        write_file(
-            &root,
-            "egress/live.toml",
-            r#"
-default_ack_timeout = "5s"
-
-[channels.broker]
-type = "process"
-command = ["python3", "channels/egress/broker.py"]
-
-[routes.place_order]
-channel = "broker"
-ack_timeout = "10s"
-"#,
-        );
-        write_file(
-            &root,
-            "fixtures/live.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\",\"semantic_kind\":\"price_bar\",\"payload\":{\"price\":101.25}}}\n",
-        );
-
-        let summary = Ergo::from_project(&root)
-            .add_source(InjectedNumberSource::new(4.0))
-            .add_action(InjectedIntentAction::new())
-            .build()?
-            .validate_project()?;
-
-        assert_eq!(summary.name, "sdk-project");
-        assert_eq!(summary.root, Some(root.clone()));
-        assert_eq!(summary.profiles, vec!["live".to_string()]);
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn validate_project_returns_none_root_for_in_memory_project(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("memory_project_validate");
-        let snapshot = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "historical",
-            in_memory_process_profile(
-                load_memory_graph_assets("sdk_memory_validate"),
-                ["/bin/echo", "noop"],
-            ),
-        );
-
-        let summary = Ergo::builder()
-            .in_memory_project(snapshot)
-            .build()?
-            .validate_project()?;
-        assert_eq!(summary.name, "memory-project");
-        assert_eq!(summary.version, "0.1.0");
-        assert_eq!(summary.root, None);
-        assert_eq!(summary.profiles, vec!["historical".to_string()]);
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn validate_project_and_run_profile_agree_for_valid_in_memory_profile(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("memory_project_validate_and_run");
-        let ingress_script = write_process_run_script(&root);
-        let snapshot = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "historical",
-            in_memory_process_profile(
-                load_memory_graph_assets("sdk_memory_validate_and_run"),
-                ["/bin/sh", &ingress_script.display().to_string()],
-            ),
-        );
-        let ergo = Ergo::builder().in_memory_project(snapshot).build()?;
-
-        let summary = ergo.validate_project()?;
-        assert_eq!(summary.profiles, vec!["historical".to_string()]);
-        assert_eq!(summary.root, None);
-
-        let outcome = ergo.run_profile("historical")?;
-        match outcome {
-            RunOutcome::Completed(summary) => {
-                assert_eq!(summary.events, 1);
-                assert_eq!(summary.capture_path, None);
-                assert_eq!(summary.capture_bundle.events.len(), 1);
-            }
-            other => panic!("expected completed run, got {other:?}"),
-        }
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn validate_project_in_memory_preserves_adapter_required_preflight(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let snapshot = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "live",
-            in_memory_process_profile(
-                load_memory_intent_graph_assets("sdk_memory_validate_missing_adapter"),
-                ["/bin/echo", "noop"],
-            ),
-        );
-
-        let err = Ergo::builder()
-            .in_memory_project(snapshot)
-            .add_source(InjectedNumberSource::new(4.0))
-            .add_action(InjectedIntentAction::new())
-            .build()?
-            .validate_project()
-            .expect_err("adapter-less in-memory intent profile must fail validation");
-
-        match err {
-            ErgoValidateError::Validation { profile, detail } => {
-                assert_eq!(profile, "live");
-                assert!(detail.contains("adapter"));
-            }
-            other => panic!("unexpected error: {other}"),
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn validate_project_rejects_missing_fixture_before_run_profile(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("validate_missing_fixture_driver");
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.historical]
-graph = "graphs/strategy.yaml"
-fixture = "fixtures/missing.jsonl"
-"#,
-        );
-        write_file(
-            &root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_validate_missing_fixture
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 3.0
-edges: []
-outputs:
-  value_out: src.value
-"#,
-        );
-
-        let ergo = Ergo::from_project(&root).build()?;
-        let validate_err = ergo
-            .validate_project()
-            .expect_err("missing fixture should fail validation");
-        match validate_err {
-            ErgoValidateError::Validation { profile, detail } => {
-                assert_eq!(profile, "historical");
-                assert!(detail.contains("failed to parse fixture"));
-            }
-            other => panic!("unexpected validation error: {other}"),
-        }
-
-        let run_err = ergo
-            .run_profile("historical")
-            .expect_err("missing fixture should fail run_profile");
-        match run_err {
-            ErgoRunError::Host(HostRunError::InvalidInput(detail)) => {
-                assert!(detail.contains("failed to parse fixture"));
-            }
-            other => panic!("unexpected run_profile error: {other:?}"),
-        }
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn validate_project_rejects_missing_in_memory_process_driver_before_run_profile(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("validate_missing_process_driver");
-        let missing_driver = root.join("missing-driver.sh");
-        let snapshot = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "historical",
-            in_memory_process_profile(
-                load_memory_graph_assets("sdk_memory_missing_driver"),
-                [missing_driver.display().to_string()],
-            ),
-        );
-
-        let ergo = Ergo::builder().in_memory_project(snapshot).build()?;
-        let validate_err = ergo
-            .validate_project()
-            .expect_err("missing process driver should fail validation");
-        match validate_err {
-            ErgoValidateError::Validation { profile, detail } => {
-                assert_eq!(profile, "historical");
-                assert!(detail.contains("spawn process driver"));
-            }
-            other => panic!("unexpected validation error: {other}"),
-        }
-
-        let run_err = ergo
-            .run_profile("historical")
-            .expect_err("missing process driver should fail run_profile");
-        match run_err {
-            ErgoRunError::Host(HostRunError::DriverStart(detail)) => {
-                assert!(detail.contains("spawn process driver"));
-            }
-            other => panic!("unexpected run_profile error: {other:?}"),
-        }
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn validate_project_reports_invalid_egress_config_as_profile_validation(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("validate_invalid_egress_config");
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.live]
-graph = "graphs/strategy.yaml"
-fixture = "fixtures/live.jsonl"
-egress = "egress/live.toml"
-"#,
-        );
-        write_file(
-            &root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_validate_invalid_egress
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 4.0
-edges: []
-outputs:
-  result: src.value
-"#,
-        );
-        write_file(
-            &root,
-            "egress/live.toml",
-            r#"
-default_ack_timeout = "5s"
-
-[channels.broker]
-type = "process"
-command = ["oops"
-"#,
-        );
-        write_file(
-            &root,
-            "fixtures/live.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let err = Ergo::from_project(&root)
-            .build()?
-            .validate_project()
-            .expect_err("invalid egress config must fail profile validation");
-
-        match err {
-            ErgoValidateError::Validation { profile, detail } => {
-                assert_eq!(profile, "live");
-                assert!(detail.contains("failed to parse egress config"));
-            }
-            other => panic!("unexpected invalid-egress validation error: {other}"),
-        }
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn validate_project_surfaces_runtime_owned_cluster_version_details(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("validate_cluster_version_miss");
-        fs::create_dir_all(root.join("clusters")).expect("create clusters dir");
-
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.historical]
-graph = "graphs/strategy.yaml"
-fixture = "fixtures/historical.jsonl"
-"#,
-        );
-        write_file(
-            &root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_cluster_version_miss
-version: "0.1.0"
-nodes:
-  shared:
-    cluster: shared_value@^2.0
-edges: []
-outputs:
-  result: shared.value
-"#,
-        );
-        write_file(
-            &root,
-            "graphs/shared_value.yaml",
-            r#"
-kind: cluster
-id: shared_value
-version: "1.5.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 4.0
-edges: []
-outputs:
-  value: src.value
-"#,
-        );
-        write_file(
-            &root,
-            "clusters/shared_value.yaml",
-            r#"
-kind: cluster
-id: shared_value
-version: "1.0.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 3.0
-edges: []
-outputs:
-  value: src.value
-"#,
-        );
-        write_file(
-            &root,
-            "fixtures/historical.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let err = Ergo::from_project(&root)
-            .build()?
-            .validate_project()
-            .expect_err("version-miss cluster profile must fail validation");
-
-        match err {
-            ErgoValidateError::Validation { profile, detail } => {
-                assert_eq!(profile, "historical");
-                assert!(detail.contains("graph expansion failed"));
-                assert!(!detail.contains("cluster discovery failed"));
-                assert!(detail.contains("shared_value"));
-                assert!(detail.contains("^2.0"));
-                assert!(detail.contains("available: 1.0.0, 1.5.0"));
-                assert!(detail.contains("available cluster sources"));
-                assert!(detail.contains("shared_value@1.0.0"));
-                assert!(detail.contains("shared_value@1.5.0"));
-            }
-            other => panic!("unexpected error: {other}"),
-        }
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn ergo_handle_can_run_the_same_profile_twice() -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("reuse_run_profile");
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.historical]
-graph = "graphs/strategy.yaml"
-fixture = "fixtures/historical.jsonl"
-capture_output = "captures/historical.capture.json"
-"#,
-        );
-        write_file(
-            &root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_reuse_run_profile
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 4.0
-edges: []
-outputs:
-  result: src.value
-"#,
-        );
-        write_file(
-            &root,
-            "fixtures/historical.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let ergo = Ergo::from_project(&root).build()?;
-        let first = ergo.run_profile("historical")?;
-        let second = ergo.run_profile("historical")?;
-
-        match (first, second) {
-            (RunOutcome::Completed(first), RunOutcome::Completed(second)) => {
-                assert_eq!(first.events, 1);
-                assert_eq!(second.events, 1);
-                assert_eq!(first.capture_path, second.capture_path);
-            }
-            other => panic!("expected two completed runs, got {other:?}"),
-        }
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn ergo_handle_survives_errors_and_can_validate_run_and_replay(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("reuse_validate_run_replay");
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.historical]
-graph = "graphs/strategy.yaml"
-fixture = "fixtures/historical.jsonl"
-capture_output = "captures/historical.capture.json"
-"#,
-        );
-        write_file(
-            &root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_reuse_validate_run_replay
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 5.0
-edges: []
-outputs:
-  result: src.value
-"#,
-        );
-        write_file(
-            &root,
-            "fixtures/historical.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let ergo = Ergo::from_project(&root).build()?;
-        let err = ergo
-            .run_profile("missing")
-            .expect_err("missing profile should not consume the handle");
-        assert!(
-            matches!(
-                err,
-                ErgoRunError::Project(ProjectError::ProfileNotFound { ref name })
-                    if name == "missing"
-            ),
-            "unexpected missing-profile error: {err:?}"
-        );
-
-        let summary = ergo.validate_project()?;
-        assert_eq!(summary.root, Some(root.clone()));
-        assert_eq!(summary.profiles, vec!["historical".to_string()]);
-
-        let outcome = ergo.run_profile("historical")?;
-        let capture = root.join("captures/historical.capture.json");
-        match outcome {
-            RunOutcome::Completed(summary) => {
-                assert_eq!(summary.capture_path, Some(capture.clone()));
-                assert_eq!(summary.events, 1);
-            }
-            other => panic!("expected completed run, got {other:?}"),
-        }
-
-        let replay = ergo.replay_profile("historical", &capture)?;
-        assert_eq!(replay.graph_id.as_str(), "sdk_reuse_validate_run_replay");
-        assert_eq!(replay.events, 1);
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn runner_for_profile_supports_multiple_steps_without_launching_ingress_or_auto_writing_capture(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("manual_runner_no_ingress");
-        let ingress_sentinel = root.join("ingress-started.txt");
-        let ingress_script = write_process_ingress_sentinel(&root, &ingress_sentinel);
-        write_file(
-            &root,
-            "ergo.toml",
-            &format!(
-                r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.manual]
-graph = "graphs/strategy.yaml"
-capture_output = "captures/manual.capture.json"
-max_duration = "1ms"
-max_events = 1
-
-[profiles.manual.ingress]
-type = "process"
-command = ["/bin/sh", "{ingress_script}"]
-"#,
-                ingress_script = ingress_script.display()
-            ),
-        );
-        write_file(
-            &root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_manual_runner_no_ingress
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 6.0
-edges: []
-outputs:
-  result: src.value
-"#,
-        );
-
-        let ergo = Ergo::from_project(&root).build()?;
-        let mut runner = ergo.runner_for_profile("manual")?;
-        let capture = root.join("captures/manual.capture.json");
-        assert!(
-            !ingress_sentinel.exists(),
-            "manual runner must not launch ingress"
-        );
-
-        let first = runner.step(manual_step_event("e1"))?;
-        assert_eq!(first.termination, Some(RunTermination::Completed));
-        thread::sleep(Duration::from_millis(10));
-        let second = runner.step(manual_step_event("e2"))?;
-        assert_eq!(second.termination, Some(RunTermination::Completed));
-
-        let bundle = runner.finish()?;
-        assert_eq!(bundle.events.len(), 2);
-        assert_eq!(bundle.decisions.len(), 2);
-        assert!(
-            !capture.exists(),
-            "manual finish should return a bundle without auto-writing capture_output"
-        );
-        assert!(
-            !ingress_sentinel.exists(),
-            "manual runner must not launch ingress"
-        );
-
-        let err = runner
-            .step(manual_step_event("e3"))
-            .expect_err("step after finish must fail");
-        assert!(
-            matches!(err, HostedStepError::LifecycleViolation { .. }),
-            "unexpected step-after-finish error: {err:?}"
-        );
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn runner_for_profile_can_finish_and_write_capture_with_profile_settings(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("manual_runner_write_capture");
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.manual]
-graph = "graphs/strategy.yaml"
-fixture = "fixtures/historical.jsonl"
-capture_output = "captures/manual.capture.json"
-pretty_capture = true
-"#,
-        );
-        write_file(
-            &root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_manual_runner_write_capture
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 7.0
-edges: []
-outputs:
-  result: src.value
-"#,
-        );
-        write_file(
-            &root,
-            "fixtures/historical.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let ergo = Ergo::from_project(&root).build()?;
-        let mut runner = ergo.runner_for_profile("manual")?;
-        let capture = root.join("captures/manual.capture.json");
-        let outcome = runner.step(manual_step_event("e1"))?;
-        assert_eq!(outcome.termination, Some(RunTermination::Completed));
-        let bundle = runner.finish_and_write_capture()?;
-        let persisted: CaptureBundle = serde_json::from_str(&fs::read_to_string(&capture)?)?;
-
-        assert!(
-            capture.exists(),
-            "finish_and_write_capture should write capture_output"
-        );
-        assert_eq!(bundle.decisions.len(), 1);
-        assert_eq!(persisted.decisions.len(), 1);
-        assert!(fs::read_to_string(&capture)?.contains("\n  "));
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn runner_for_profile_preserves_bundle_when_capture_write_fails(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("manual_runner_write_capture_failure");
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.manual]
-graph = "graphs/strategy.yaml"
-fixture = "fixtures/historical.jsonl"
-capture_output = "captures/manual.capture.json"
-"#,
-        );
-        write_file(
-            &root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_manual_runner_write_capture_failure
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 7.0
-edges: []
-outputs:
-  result: src.value
-"#,
-        );
-        write_file(
-            &root,
-            "fixtures/historical.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-        write_file(&root, "captures", "not-a-directory");
-
-        let ergo = Ergo::from_project(&root).build()?;
-        let mut runner = ergo.runner_for_profile("manual")?;
-        let outcome = runner.step(manual_step_event("e1"))?;
-        assert_eq!(outcome.termination, Some(RunTermination::Completed));
-
-        let err = runner
-            .finish_and_write_capture()
-            .expect_err("capture write failure should preserve bundle in the error");
-
-        match &err {
-            ProfileRunnerCaptureError::Write { source, bundle } => {
-                assert!(source
-                    .to_string()
-                    .contains("create capture output directory"));
-                assert_eq!(bundle.decisions.len(), 1);
-            }
-            other => panic!("unexpected write-failure error: {other}"),
-        }
-        assert_eq!(
-            err.capture_bundle()
-                .expect("write failure should expose recovered bundle")
-                .decisions
-                .len(),
-            1
-        );
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn runner_for_profile_still_requires_a_declared_ingress_source(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("manual_runner_requires_ingress");
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.manual]
-graph = "graphs/strategy.yaml"
-"#,
-        );
-        write_file(
-            &root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_manual_runner_requires_ingress
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 8.0
-edges: []
-outputs:
-  result: src.value
-"#,
-        );
-
-        let ergo = Ergo::from_project(&root).build()?;
-        let err = match ergo.runner_for_profile("manual") {
-            Ok(_) => panic!("profile resolution should still require ingress"),
-            Err(err) => err,
-        };
-        match err {
-            ErgoRunnerError::Project(ProjectError::ConfigInvalid { detail }) => {
-                assert!(detail.contains("exactly one ingress source"))
-            }
-            other => panic!("unexpected runner_for_profile ingress error: {other:?}"),
-        }
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn runner_for_profile_preserves_adapter_required_preflight(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("manual_runner_adapter_preflight");
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.live]
-graph = "graphs/strategy.yaml"
-fixture = "fixtures/live.jsonl"
-"#,
-        );
-        write_intent_graph(&root, "sdk_manual_runner_adapter_preflight");
-        write_file(
-            &root,
-            "fixtures/live.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let ergo = Ergo::from_project(&root)
-            .add_source(InjectedNumberSource::new(4.0))
-            .add_action(InjectedIntentAction::new())
-            .build()?;
-        let err = match ergo.runner_for_profile("live") {
-            Ok(_) => panic!("adapter-required profile should fail before returning runner"),
-            Err(err) => err,
-        };
-        match err {
-            ErgoRunnerError::Host(HostRunError::AdapterRequired(summary)) => {
-                assert!(summary.requires_adapter);
-            }
-            other => panic!("unexpected adapter-preflight error: {other:?}"),
-        }
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn runner_for_profile_surfaces_egress_startup_failure_at_creation(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("manual_runner_egress_startup");
-        let missing_binary = "/definitely/missing-egress-binary".to_string();
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.live]
-graph = "graphs/strategy.yaml"
-adapter = "adapters/trading.yaml"
-fixture = "fixtures/live.jsonl"
-egress = "egress/live.toml"
-"#,
-        );
-        write_intent_graph(&root, "sdk_manual_runner_egress_startup");
-        write_intent_adapter_manifest(&root);
-        write_egress_config(&root, vec![missing_binary]);
-        write_file(
-            &root,
-            "fixtures/live.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let ergo = Ergo::from_project(&root)
-            .add_source(InjectedNumberSource::new(4.0))
-            .add_action(InjectedIntentAction::new())
-            .build()?;
-        let err = match ergo.runner_for_profile("live") {
-            Ok(_) => panic!("egress startup failure should surface during runner creation"),
-            Err(err) => err,
-        };
-        assert!(
-            matches!(err, ErgoRunnerError::Host(HostRunError::DriverIo(_))),
-            "unexpected startup error: {err:?}"
-        );
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn profile_runner_zero_step_finish_fails_but_recoverable_input_errors_do_not_poison_session(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let zero_root = make_temp_dir("manual_runner_zero_step");
-        write_file(
-            &zero_root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.manual]
-graph = "graphs/strategy.yaml"
-fixture = "fixtures/live.jsonl"
-"#,
-        );
-        write_file(
-            &zero_root,
-            "graphs/strategy.yaml",
-            r#"
-kind: cluster
-id: sdk_manual_runner_zero_step
-version: "0.1.0"
-nodes:
-  src:
-    impl: number_source@0.1.0
-    params:
-      value: 9.0
-edges: []
-outputs:
-  result: src.value
-"#,
-        );
-        write_file(
-            &zero_root,
-            "fixtures/live.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let ergo = Ergo::from_project(&zero_root).build()?;
-        let mut zero_runner = ergo.runner_for_profile("manual")?;
-        let zero_err = zero_runner
-            .finish()
-            .expect_err("zero-step finish must fail");
-        assert!(
-            matches!(zero_err, HostedStepError::LifecycleViolation { .. }),
-            "unexpected zero-step finish error: {zero_err:?}"
-        );
-        let _ = fs::remove_dir_all(&zero_root);
-
-        let failure_root = make_temp_dir("manual_runner_recoverable_input_error");
-        write_file(
-            &failure_root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.live]
-graph = "graphs/strategy.yaml"
-adapter = "adapters/trading.yaml"
-fixture = "fixtures/live.jsonl"
-egress = "egress/live.toml"
-"#,
-        );
-        write_intent_graph(&failure_root, "sdk_manual_runner_nonfinalizable");
-        write_intent_adapter_manifest(&failure_root);
-        let egress_script = write_egress_ack_script(&failure_root);
-        write_egress_config(
-            &failure_root,
-            vec!["/bin/sh".to_string(), egress_script.display().to_string()],
-        );
-        write_file(
-            &failure_root,
-            "fixtures/live.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let ergo = Ergo::from_project(&failure_root)
-            .add_source(InjectedNumberSource::new(4.0))
-            .add_action(InjectedIntentAction::new())
-            .build()?;
-        let mut runner = ergo.runner_for_profile("live")?;
-        let step_err = runner
-            .step(HostedEvent {
-                event_id: "evt_bad".to_string(),
-                kind: ExternalEventKind::Command,
-                at: EventTime::default(),
-                semantic_kind: None,
-                payload: Some(serde_json::json!({"price": 100.0})),
-            })
-            .expect_err("missing semantic kind should surface a recoverable input error");
-        assert!(matches!(step_err, HostedStepError::MissingSemanticKind));
-
-        let recovered = runner.step(adapter_bound_event("evt_good", 101.5))?;
-        assert_eq!(recovered.termination, Some(RunTermination::Completed));
-
-        let bundle = runner.finish()?;
-        assert_eq!(bundle.events.len(), 1);
-        assert_eq!(bundle.decisions.len(), 1);
-
-        let _ = fs::remove_dir_all(failure_root);
-        Ok(())
-    }
-
-    #[test]
-    fn profile_runner_can_finalize_after_egress_dispatch_failure(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("manual_runner_dispatch_failure");
-        let egress_script = write_egress_io_script(&root);
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.live]
-graph = "graphs/strategy.yaml"
-adapter = "adapters/trading.yaml"
-fixture = "fixtures/live.jsonl"
-egress = "egress/live.toml"
-"#,
-        );
-        write_intent_graph(&root, "sdk_manual_runner_dispatch_failure");
-        write_intent_adapter_manifest(&root);
-        write_egress_config(
-            &root,
-            vec!["/bin/sh".to_string(), egress_script.display().to_string()],
-        );
-        write_file(
-            &root,
-            "fixtures/live.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let ergo = Ergo::from_project(&root)
-            .add_source(InjectedNumberSource::new(4.0))
-            .add_action(InjectedIntentAction::new())
-            .build()?;
-        let mut runner = ergo.runner_for_profile("live")?;
-        let step_err = runner
-            .step(adapter_bound_event("evt1", 101.5))
-            .expect_err("egress dispatch failure should interrupt manual stepping");
-        assert!(
-            matches!(step_err, HostedStepError::EgressDispatchFailure(_)),
-            "unexpected dispatch failure: {step_err:?}"
-        );
-
-        let step_again = runner
-            .step(adapter_bound_event("evt2", 101.6))
-            .expect_err("runner should require finalization after dispatch failure");
-        assert!(
-            matches!(step_again, HostedStepError::LifecycleViolation { .. }),
-            "unexpected post-dispatch step result: {step_again:?}"
-        );
-
-        let bundle = runner.finish()?;
-        assert_eq!(bundle.events.len(), 1);
-        assert_eq!(bundle.decisions.len(), 1);
-        assert!(bundle.decisions[0].interruption.is_some());
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn profile_runner_dispatches_egress_and_finishes_with_a_bundle(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = make_temp_dir("manual_runner_egress_success");
-        let egress_script = write_egress_ack_script(&root);
-        write_file(
-            &root,
-            "ergo.toml",
-            r#"
-name = "sdk-project"
-version = "0.1.0"
-
-[profiles.live]
-graph = "graphs/strategy.yaml"
-adapter = "adapters/trading.yaml"
-fixture = "fixtures/live.jsonl"
-egress = "egress/live.toml"
-capture_output = "captures/live.capture.json"
-"#,
-        );
-        write_intent_graph(&root, "sdk_manual_runner_egress_success");
-        write_intent_adapter_manifest(&root);
-        write_egress_config(
-            &root,
-            vec!["/bin/sh".to_string(), egress_script.display().to_string()],
-        );
-        write_file(
-            &root,
-            "fixtures/live.jsonl",
-            "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n",
-        );
-
-        let ergo = Ergo::from_project(&root)
-            .add_source(InjectedNumberSource::new(4.0))
-            .add_action(InjectedIntentAction::new())
-            .build()?;
-        let mut runner = ergo.runner_for_profile("live")?;
-        let outcome = runner.step(adapter_bound_event("evt1", 101.5))?;
-        assert_eq!(outcome.termination, Some(RunTermination::Completed));
-
-        let bundle = runner.finish()?;
-        assert_eq!(bundle.events.len(), 1);
-        assert_eq!(bundle.decisions.len(), 1);
-        assert_eq!(bundle.decisions[0].intent_acks.len(), 1);
-        assert!(
-            !root.join("captures/live.capture.json").exists(),
-            "manual finish should not auto-write capture_output"
-        );
-
-        let _ = fs::remove_dir_all(root);
-        Ok(())
-    }
-
-    #[test]
-    fn runner_for_profile_returns_working_profile_runner_for_in_memory_project(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let snapshot = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "manual",
-            in_memory_process_profile(
-                load_memory_graph_assets("sdk_memory_manual_runner"),
-                ["/bin/echo", "noop"],
-            ),
-        );
-
-        let ergo = Ergo::builder().in_memory_project(snapshot).build()?;
-        let mut runner = ergo.runner_for_profile("manual")?;
-        let outcome = runner.step(manual_step_event("evt1"))?;
-        assert_eq!(outcome.termination, Some(RunTermination::Completed));
-
-        let bundle = runner.finish()?;
-        assert_eq!(bundle.events.len(), 1);
-
-        Ok(())
-    }
-
-    #[test]
-    fn runner_for_profile_in_memory_without_file_capture_path_cannot_auto_write_capture(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let snapshot = in_memory_project(
-            "memory-project",
-            "0.1.0",
-            "manual",
-            in_memory_process_profile(
-                load_memory_graph_assets("sdk_memory_manual_capture"),
-                ["/bin/echo", "noop"],
-            ),
-        );
-
-        let ergo = Ergo::builder().in_memory_project(snapshot).build()?;
-        let mut runner = ergo.runner_for_profile("manual")?;
-        let _ = runner.step(manual_step_event("evt1"))?;
-        let err = runner
-            .finish_and_write_capture()
-            .expect_err("in-memory runner without file capture must not auto-write");
-        assert!(matches!(
-            err,
-            ProfileRunnerCaptureError::CaptureOutputNotConfigured
-        ));
-
-        Ok(())
-    }
-}
+mod tests;

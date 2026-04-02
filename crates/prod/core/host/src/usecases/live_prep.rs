@@ -34,17 +34,22 @@
 //!   entrypoints re-exported through `usecases.rs` and `lib.rs`.
 //!
 //! Safety notes:
-//! - `HostedRunnerFinalizeFailure` is load-bearing: `live_run.rs` maps pending
-//!   ack failures and egress-stop failures to different host error surfaces.
+//! - `HostedRunnerFinalizeFailure` is load-bearing even though both branches
+//!   currently preserve typed `HostedStepError` at the public run boundary:
+//!   it keeps the finalization phases explicit so future host decisions do not
+//!   have to rediscover where pending-ack versus stop-egress failures split.
 //! - Replay representability checks intentionally treat `set_context` as the
 //!   host-internal handler effect path and exclude it from replay-owned
 //!   external kinds.
-//! - `summarize_error_info(...)` still string-buckets structured adapter
-//!   validation errors at the host setup boundary.
-//! - `core_registries()` failures currently require debug formatting because
-//!   `CoreRegistrationError` does not expose `Display` / `Error`.
-//! - Shared replay-setup duplication and host-internal handler-kind authority
-//!   split are deferred to issue #71.
+//! - Loader, expansion, adapter-setup, hosted-runner validation, and replay
+//!   capture read/parse failures now cross this seam as typed host setup
+//!   errors rather than flattened strings.
+//! - Replay representability failures still remain host-owned setup checks
+//!   because they depend on host handler ownership doctrine, not just kernel
+//!   replay semantics.
+//! - Shared replay-setup orchestration and host-internal handler-kind
+//!   authority still create refactor pressure here and are tracked in issue
+//!   #71.
 
 #![allow(clippy::arc_with_non_send_sync)]
 
@@ -55,7 +60,7 @@ const HOST_INTERNAL_SET_CONTEXT_KIND: &str = "set_context";
 fn map_live_prep_loader_result(
     result: Result<ergo_loader::PreparedGraphAssets, ergo_loader::LoaderError>,
 ) -> Result<ergo_loader::PreparedGraphAssets, HostRunError> {
-    result.map_err(|err| HostRunError::InvalidInput(err.to_string()))
+    result.map_err(|err| HostRunError::Setup(HostSetupError::LoadGraphAssets(err)))
 }
 
 pub fn load_graph_assets_from_paths(
@@ -132,86 +137,84 @@ pub(super) struct CanonicalAdapterSetup {
     pub(super) expected_adapter_provenance: String,
 }
 
-fn parse_adapter_manifest(path: &Path) -> Result<AdapterManifest, String> {
-    let data = fs::read_to_string(path)
-        .map_err(|err| format!("read adapter manifest '{}': {err}", path.display()))?;
-    let value = serde_yaml::from_str::<serde_json::Value>(&data)
-        .map_err(|err| format!("parse adapter manifest '{}': {err}", path.display()))?;
-    serde_json::from_value::<AdapterManifest>(value)
-        .map_err(|err| format!("decode adapter manifest '{}': {err}", path.display()))
+fn parse_adapter_manifest(path: &Path) -> Result<AdapterManifest, HostAdapterSetupError> {
+    let data = fs::read_to_string(path).map_err(|source| HostAdapterSetupError::ManifestRead {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let source_label = path.display().to_string();
+    let value = serde_yaml::from_str::<serde_json::Value>(&data).map_err(|source| {
+        HostAdapterSetupError::ManifestParse {
+            source_label: source_label.clone(),
+            source,
+        }
+    })?;
+    serde_json::from_value::<AdapterManifest>(value).map_err(|source| {
+        HostAdapterSetupError::ManifestDecode {
+            source_label,
+            source,
+        }
+    })
 }
 
-fn parse_adapter_manifest_text(source_label: &str, data: &str) -> Result<AdapterManifest, String> {
+fn parse_adapter_manifest_text(
+    source_label: &str,
+    data: &str,
+) -> Result<AdapterManifest, HostAdapterSetupError> {
     if source_label.is_empty() {
-        return Err("adapter manifest source_label must not be empty".to_string());
+        return Err(HostAdapterSetupError::ManifestSourceLabelEmpty);
     }
-    let value = serde_yaml::from_str::<serde_json::Value>(data)
-        .map_err(|err| format!("parse adapter manifest '{source_label}': {err}"))?;
-    serde_json::from_value::<AdapterManifest>(value)
-        .map_err(|err| format!("decode adapter manifest '{source_label}': {err}"))
+    let value = serde_yaml::from_str::<serde_json::Value>(data).map_err(|source| {
+        HostAdapterSetupError::ManifestParse {
+            source_label: source_label.to_string(),
+            source,
+        }
+    })?;
+    serde_json::from_value::<AdapterManifest>(value).map_err(|source| {
+        HostAdapterSetupError::ManifestDecode {
+            source_label: source_label.to_string(),
+            source,
+        }
+    })
 }
 
 fn materialize_runtime_surfaces(
     runtime_surfaces: Option<RuntimeSurfaces>,
-) -> Result<(Arc<CorePrimitiveCatalog>, Arc<CoreRegistries>), String> {
+) -> Result<(Arc<CorePrimitiveCatalog>, Arc<CoreRegistries>), HostGraphPreparationError> {
     match runtime_surfaces {
         Some(runtime_surfaces) => Ok(runtime_surfaces.into_shared_parts()),
         None => {
             let catalog = build_core_catalog();
             let registries =
-                core_registries().map_err(|err| format!("core registries: {err:?}"))?;
+                core_registries().map_err(HostGraphPreparationError::CoreRegistries)?;
             Ok((Arc::new(catalog), Arc::new(registries)))
         }
     }
 }
 
+#[cfg(test)]
 pub(super) fn prepare_graph_runtime(
     graph_path: &Path,
     cluster_paths: &[PathBuf],
     runtime_surfaces: Option<RuntimeSurfaces>,
-) -> Result<PreparedGraphRuntime, String> {
-    let discovery = ergo_loader::discovery::discover_cluster_tree(graph_path, cluster_paths)
-        .map_err(|err| err.to_string())?;
-    let root = discovery.root.clone();
-    let cluster_sources = discovery.cluster_sources;
-    let clusters = discovery.clusters;
-    let loader = PreloadedClusterLoader::new(clusters);
-
-    let (catalog, registries) = materialize_runtime_surfaces(runtime_surfaces)?;
-    let expanded = expand(&root, &loader, catalog.as_ref()).map_err(|err| {
-        format!(
-            "graph expansion failed: {}",
-            summarize_filesystem_expand_error(&err, &cluster_sources)
-        )
-    })?;
-    let runtime_provenance = compute_runtime_provenance(
-        RuntimeProvenanceScheme::Rpv1,
-        &root.id,
-        &expanded,
-        catalog.as_ref(),
-    )
-    .map_err(|err| format!("runtime provenance compute failed: {err}"))?;
-
-    Ok(PreparedGraphRuntime {
-        graph_id: root.id,
-        runtime_provenance,
-        expanded,
-        catalog,
-        registries,
-    })
+) -> Result<PreparedGraphRuntime, HostSetupError> {
+    let assets = ergo_loader::load_graph_assets_from_paths(graph_path, cluster_paths)
+        .map_err(HostSetupError::LoadGraphAssets)?;
+    prepare_graph_runtime_from_assets(&assets, runtime_surfaces)
+        .map_err(HostSetupError::GraphPreparation)
 }
 
 fn prepare_graph_runtime_from_assets(
     assets: &ergo_loader::PreparedGraphAssets,
     runtime_surfaces: Option<RuntimeSurfaces>,
-) -> Result<PreparedGraphRuntime, String> {
+) -> Result<PreparedGraphRuntime, HostGraphPreparationError> {
     let loader = PreloadedClusterLoader::new(assets.clusters().clone());
     let (catalog, registries) = materialize_runtime_surfaces(runtime_surfaces)?;
     let expanded = expand(assets.root(), &loader, catalog.as_ref()).map_err(|err| {
-        format!(
-            "graph expansion failed: {}",
-            summarize_expand_error(&err, assets.cluster_diagnostic_labels())
-        )
+        HostGraphPreparationError::Expansion(summarize_expand_error(
+            &err,
+            assets.cluster_diagnostic_labels(),
+        ))
     })?;
     let runtime_provenance = compute_runtime_provenance(
         RuntimeProvenanceScheme::Rpv1,
@@ -219,7 +222,7 @@ fn prepare_graph_runtime_from_assets(
         &expanded,
         catalog.as_ref(),
     )
-    .map_err(|err| format!("runtime provenance compute failed: {err}"))?;
+    .map_err(HostGraphPreparationError::RuntimeProvenance)?;
 
     Ok(PreparedGraphRuntime {
         graph_id: assets.root().id.clone(),
@@ -233,7 +236,7 @@ fn prepare_graph_runtime_from_assets(
 pub(super) fn prepare_adapter_setup(
     adapter: Option<&AdapterInput>,
     prepared: &PreparedGraphRuntime,
-) -> Result<CanonicalAdapterSetup, String> {
+) -> Result<CanonicalAdapterSetup, HostAdapterSetupError> {
     let manifest = match adapter {
         None => {
             return Ok(CanonicalAdapterSetup {
@@ -251,22 +254,17 @@ pub(super) fn prepare_adapter_setup(
         Some(AdapterInput::Manifest(manifest)) => manifest.clone(),
     };
 
-    ergo_adapter::validate_adapter(&manifest).map_err(|err| {
-        format!(
-            "adapter manifest validation failed: {}",
-            summarize_error_info(&err)
-        )
-    })?;
+    ergo_adapter::validate_adapter(&manifest).map_err(HostAdapterSetupError::Validation)?;
     let provides = AdapterProvides::from_manifest(&manifest);
     validate_adapter_composition(
         &prepared.expanded,
         &prepared.catalog,
         &prepared.registries,
         &provides,
-    )?;
+    )
+    .map_err(HostAdapterSetupError::Composition)?;
     let adapter_provenance = adapter_fingerprint(&manifest);
-    let binder = compile_event_binder(&provides)
-        .map_err(|err| format!("adapter event binder compilation failed: {err}"))?;
+    let binder = compile_event_binder(&provides).map_err(HostAdapterSetupError::BinderCompile)?;
 
     Ok(CanonicalAdapterSetup {
         adapter_bound: true,
@@ -294,11 +292,11 @@ pub(super) fn ensure_adapter_requirement_satisfied(
 pub(super) fn start_live_runner_egress(runner: &mut HostedRunner) -> Result<(), HostRunError> {
     runner
         .start_egress_channels()
-        .map_err(|err| HostRunError::DriverIo(format!("start egress channels: {err}")))
+        .map_err(|err| HostRunError::Setup(HostSetupError::StartEgress(err)))
 }
 
 fn hosted_runner_setup_error(err: HostedStepError) -> HostRunError {
-    HostRunError::StepFailed(format!("host configuration validation failed: {err}"))
+    HostRunError::Setup(HostSetupError::HostedRunnerValidation(err))
 }
 
 fn validate_live_runner_setup_from_assets(
@@ -307,12 +305,12 @@ fn validate_live_runner_setup_from_assets(
     runtime_surfaces: Option<RuntimeSurfaces>,
 ) -> Result<ValidatedLiveRunnerSetup, HostRunError> {
     let prepared = prepare_graph_runtime_from_assets(assets, runtime_surfaces)
-        .map_err(HostRunError::InvalidInput)?;
+        .map_err(|err| HostRunError::Setup(HostSetupError::GraphPreparation(err)))?;
     let dependency_summary =
         scan_adapter_dependencies(&prepared.expanded, &prepared.catalog, &prepared.registries)
-            .map_err(HostRunError::InvalidInput)?;
+            .map_err(|err| HostRunError::Setup(HostSetupError::DependencyScan(err)))?;
     let adapter_setup = prepare_adapter_setup(options.adapter.as_ref(), &prepared)
-        .map_err(HostRunError::InvalidInput)?;
+        .map_err(|err| HostRunError::Setup(HostSetupError::AdapterSetup(err)))?;
 
     ensure_adapter_requirement_satisfied(adapter_setup.adapter_bound, &dependency_summary)?;
 
@@ -396,8 +394,8 @@ pub(super) fn prepare_live_runner_setup_from_assets(
     Ok(build_live_runner_from_validated(validated))
 }
 
-fn host_replay_setup_error(message: impl Into<String>) -> HostReplayError {
-    HostReplayError::Setup(message.into())
+fn host_replay_setup_error(err: HostReplaySetupError) -> HostReplayError {
+    HostReplayError::Setup(err)
 }
 
 #[derive(Debug)]
@@ -692,21 +690,30 @@ fn replay_graph_from_paths_internal(
         adapter_path,
     } = request;
 
-    let data = fs::read_to_string(&capture_path).map_err(|err| {
-        host_replay_setup_error(format!(
-            "failed to read capture artifact '{}': {err}",
-            capture_path.display()
-        ))
+    let data = fs::read_to_string(&capture_path).map_err(|source| {
+        host_replay_setup_error(HostReplaySetupError::CaptureRead {
+            path: capture_path.clone(),
+            source,
+        })
     })?;
-    let bundle = serde_json::from_str::<CaptureBundle>(&data).map_err(|err| {
-        host_replay_setup_error(format!(
-            "failed to parse capture artifact '{}': {err}",
-            capture_path.display()
-        ))
+    let bundle = serde_json::from_str::<CaptureBundle>(&data).map_err(|source| {
+        host_replay_setup_error(HostReplaySetupError::CaptureParse {
+            path: capture_path.clone(),
+            source,
+        })
     })?;
 
-    let prepared = prepare_graph_runtime(&graph_path, &cluster_paths, runtime_surfaces)
-        .map_err(host_replay_setup_error)?;
+    let assets =
+        ergo_loader::load_graph_assets_from_paths(&graph_path, &cluster_paths).map_err(|err| {
+            host_replay_setup_error(HostReplaySetupError::Setup(
+                HostSetupError::LoadGraphAssets(err),
+            ))
+        })?;
+    let prepared = prepare_graph_runtime_from_assets(&assets, runtime_surfaces).map_err(|err| {
+        host_replay_setup_error(HostReplaySetupError::Setup(
+            HostSetupError::GraphPreparation(err),
+        ))
+    })?;
     if bundle.graph_id.as_str() != prepared.graph_id {
         return Err(HostReplayError::GraphIdMismatch {
             expected: prepared.graph_id,
@@ -715,8 +722,11 @@ fn replay_graph_from_paths_internal(
     }
 
     let adapter = adapter_path.map(AdapterInput::Path);
-    let adapter_setup =
-        prepare_adapter_setup(adapter.as_ref(), &prepared).map_err(host_replay_setup_error)?;
+    let adapter_setup = prepare_adapter_setup(adapter.as_ref(), &prepared).map_err(|err| {
+        host_replay_setup_error(HostReplaySetupError::Setup(HostSetupError::AdapterSetup(
+            err,
+        )))
+    })?;
     let PreparedGraphRuntime {
         runtime_provenance,
         expanded,
@@ -754,8 +764,8 @@ fn replay_graph_from_paths_internal(
         Some(replay_external_kinds),
     )
     .map_err(|err| {
-        host_replay_setup_error(format!(
-            "failed to initialize canonical host replay runner: {err}"
+        host_replay_setup_error(HostReplaySetupError::Setup(
+            HostSetupError::HostedRunnerInitialization(err),
         ))
     })?;
 
@@ -778,12 +788,15 @@ fn replay_graph_from_assets_internal(
     } = request;
     if prep.egress_config.is_some() {
         return Err(host_replay_setup_error(
-            "replay does not accept live egress configuration".to_string(),
+            HostReplaySetupError::LiveEgressConfigurationNotAllowed,
         ));
     }
 
-    let prepared = prepare_graph_runtime_from_assets(&assets, runtime_surfaces)
-        .map_err(host_replay_setup_error)?;
+    let prepared = prepare_graph_runtime_from_assets(&assets, runtime_surfaces).map_err(|err| {
+        host_replay_setup_error(HostReplaySetupError::Setup(
+            HostSetupError::GraphPreparation(err),
+        ))
+    })?;
     if bundle.graph_id.as_str() != prepared.graph_id {
         return Err(HostReplayError::GraphIdMismatch {
             expected: prepared.graph_id,
@@ -791,8 +804,11 @@ fn replay_graph_from_assets_internal(
         });
     }
 
-    let adapter_setup =
-        prepare_adapter_setup(prep.adapter.as_ref(), &prepared).map_err(host_replay_setup_error)?;
+    let adapter_setup = prepare_adapter_setup(prep.adapter.as_ref(), &prepared).map_err(|err| {
+        host_replay_setup_error(HostReplaySetupError::Setup(HostSetupError::AdapterSetup(
+            err,
+        )))
+    })?;
     let PreparedGraphRuntime {
         runtime_provenance,
         expanded,
@@ -830,8 +846,8 @@ fn replay_graph_from_assets_internal(
         Some(replay_external_kinds),
     )
     .map_err(|err| {
-        host_replay_setup_error(format!(
-            "failed to initialize canonical host replay runner: {err}"
+        host_replay_setup_error(HostReplaySetupError::Setup(
+            HostSetupError::HostedRunnerInitialization(err),
         ))
     })?;
 

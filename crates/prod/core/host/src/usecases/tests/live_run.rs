@@ -1,3 +1,24 @@
+//! usecases live_run tests
+//!
+//! Purpose:
+//! - Exercise the canonical host live-run and run-summary seams owned by
+//!   `live_run.rs`.
+//!
+//! Owns:
+//! - Behavior checks for completed versus interrupted runs, capture handling,
+//!   and live-run error propagation through the public host run surface.
+//!
+//! Does not own:
+//! - The public contract for facade-level error enums; `contract.rs` locks that.
+//!
+//! Connects to:
+//! - `live_run.rs`, `process_driver.rs`, and shared host test helpers from the
+//!   parent `usecases::tests` module.
+//!
+//! Safety notes:
+//! - These tests intentionally lock host orchestration behavior where partial
+//!   capture and interruption semantics are downstream-significant.
+
 use super::super::process_driver::PROCESS_DRIVER_PROTOCOL_VERSION;
 use super::*;
 
@@ -87,7 +108,10 @@ fn run_graph_from_paths_surfaces_runtime_owned_cluster_version_details(
     .expect_err("version-miss cluster graph must fail before run");
 
     match err {
-        HostRunError::InvalidInput(detail) => {
+        HostRunError::Setup(HostSetupError::GraphPreparation(
+            detail @ HostGraphPreparationError::Expansion(_),
+        )) => {
+            let detail = detail.to_string();
             assert!(detail.contains("graph expansion failed"));
             assert!(detail.contains("shared_value"));
             assert!(detail.contains("^2.0"));
@@ -226,7 +250,8 @@ fn live_run_with_external_intent_graph_requires_egress_config(
     );
 
     match outcome {
-        Err(HostRunError::StepFailed(detail)) => {
+        Err(HostRunError::Setup(HostSetupError::HostedRunnerValidation(detail))) => {
+            let detail = detail.to_string();
             assert!(
                 detail.contains("handler coverage failed"),
                 "unexpected setup error: {detail}"
@@ -688,10 +713,10 @@ fn egress_startup_failure_surfaces_host_run_error() -> Result<(), Box<dyn std::e
     )
     .expect_err("startup failure should surface as host run error");
 
-    assert!(
-        matches!(err, HostRunError::DriverIo(_)),
-        "expected HostRunError::DriverIo, got {err:?}"
-    );
+    assert!(matches!(
+        err,
+        HostRunError::Setup(HostSetupError::StartEgress(_))
+    ));
 
     let _ = fs::remove_dir_all(&temp_dir);
     Ok(())
@@ -751,10 +776,10 @@ fn egress_shutdown_failure_surfaces_host_run_error() -> Result<(), Box<dyn std::
     )
     .expect_err("shutdown timeout should surface as host run error");
 
-    assert!(
-        matches!(err, HostRunError::DriverIo(_)),
-        "expected HostRunError::DriverIo, got {err:?}"
-    );
+    assert!(matches!(
+        err,
+        HostRunError::Step(HostedStepError::EgressProcess(_))
+    ));
 
     let _ = fs::remove_dir_all(&temp_dir);
     Ok(())

@@ -243,15 +243,20 @@ pub(super) fn validate_driver_input(
     match driver {
         DriverConfig::Fixture { path } => {
             let fixture_items = fixture::parse_fixture(path).map_err(|err| {
-                HostRunError::InvalidInput(format!("failed to parse fixture: {err}"))
+                HostRunError::Driver(HostDriverError::Input(HostDriverInputError::FixtureParse(
+                    err,
+                )))
             })?;
             validate_fixture_items_input(&fixture_items, &path.display().to_string(), adapter_bound)
+                .map_err(|err| HostRunError::Driver(HostDriverError::Input(err)))
         }
         DriverConfig::FixtureItems {
             items,
             source_label,
-        } => validate_fixture_items_input(items, source_label, adapter_bound),
-        DriverConfig::Process { command } => validate_process_driver_command(command),
+        } => validate_fixture_items_input(items, source_label, adapter_bound)
+            .map_err(|err| HostRunError::Driver(HostDriverError::Input(err))),
+        DriverConfig::Process { command } => validate_process_driver_command(command)
+            .map_err(|err| HostRunError::Driver(HostDriverError::Input(err))),
     }
 }
 
@@ -361,7 +366,7 @@ fn validate_fixture_items_input(
     fixture_items: &[fixture::FixtureItem],
     source_label: &str,
     adapter_bound: bool,
-) -> Result<(), HostRunError> {
+) -> Result<(), HostDriverInputError> {
     let mut episodes: Vec<(String, usize)> = Vec::new();
     let mut current_episode: Option<usize> = None;
     let mut event_counter = 0usize;
@@ -387,24 +392,15 @@ fn validate_fixture_items_input(
                     .clone()
                     .unwrap_or_else(|| format!("fixture_evt_{event_counter}"));
                 if !seen_fixture_event_ids.insert(event_id.clone()) {
-                    return Err(HostRunError::InvalidInput(format!(
-                        "fixture event id '{}' appears more than once in canonical run input",
-                        event_id
-                    )));
+                    return Err(HostDriverInputError::DuplicateEventId { event_id });
                 }
 
                 if adapter_bound {
                     if semantic_kind.is_none() {
-                        return Err(HostRunError::InvalidInput(format!(
-                            "fixture event '{}' is missing semantic_kind in adapter-bound canonical run",
-                            event_id
-                        )));
+                        return Err(HostDriverInputError::MissingSemanticKind { event_id });
                     }
                 } else if semantic_kind.is_some() {
-                    return Err(HostRunError::InvalidInput(format!(
-                        "fixture event '{}' set semantic_kind but canonical run is not adapter-bound",
-                        event_id
-                    )));
+                    return Err(HostDriverInputError::UnexpectedSemanticKind { event_id });
                 }
 
                 let index = current_episode.expect("episode index set");
@@ -414,20 +410,19 @@ fn validate_fixture_items_input(
     }
 
     if episodes.is_empty() {
-        return Err(HostRunError::InvalidInput(format!(
-            "fixture input '{source_label}' contained no episodes"
-        )));
+        return Err(HostDriverInputError::NoEpisodes {
+            source_label: source_label.to_string(),
+        });
     }
     if event_counter == 0 {
-        return Err(HostRunError::InvalidInput(format!(
-            "fixture input '{source_label}' contained no events"
-        )));
+        return Err(HostDriverInputError::NoEvents {
+            source_label: source_label.to_string(),
+        });
     }
     if let Some((label, _)) = episodes.iter().find(|(_, count)| *count == 0) {
-        return Err(HostRunError::InvalidInput(format!(
-            "episode '{}' has no events",
-            label
-        )));
+        return Err(HostDriverInputError::EpisodeWithoutEvents {
+            label: label.clone(),
+        });
     }
 
     Ok(())
@@ -467,8 +462,11 @@ fn run_fixture_driver(
     runner: HostedRunner,
     lifecycle: &RunLifecycleState,
 ) -> Result<DriverExecution, HostRunError> {
-    let fixture_items = fixture::parse_fixture(&fixture_path)
-        .map_err(|err| HostRunError::InvalidInput(format!("failed to parse fixture: {err}")))?;
+    let fixture_items = fixture::parse_fixture(&fixture_path).map_err(|err| {
+        HostRunError::Driver(HostDriverError::Input(HostDriverInputError::FixtureParse(
+            err,
+        )))
+    })?;
     run_fixture_items_driver(
         fixture_items,
         &fixture_path.display().to_string(),
@@ -530,45 +528,43 @@ fn run_fixture_items_driver(
                 event_counter += 1;
                 let event_id = id.unwrap_or_else(|| format!("fixture_evt_{}", event_counter));
                 if !seen_fixture_event_ids.insert(event_id.clone()) {
-                    return Err(HostRunError::InvalidInput(format!(
-                        "fixture event id '{}' appears more than once in canonical run input",
-                        event_id
+                    return Err(HostRunError::Driver(HostDriverError::Input(
+                        HostDriverInputError::DuplicateEventId { event_id },
                     )));
                 }
 
-                let hosted_event = if adapter_bound {
-                    let semantic = semantic_kind.ok_or_else(|| {
-                        HostRunError::InvalidInput(format!(
-                            "fixture event '{}' is missing semantic_kind in adapter-bound canonical run",
-                            event_id
-                        ))
-                    })?;
-                    HostedEvent {
-                        event_id,
-                        kind,
-                        at: EventTime::default(),
-                        semantic_kind: Some(semantic),
-                        payload: Some(
-                            payload.unwrap_or_else(|| {
+                let hosted_event =
+                    if adapter_bound {
+                        let semantic = semantic_kind.ok_or_else(|| {
+                            HostRunError::Driver(HostDriverError::Input(
+                                HostDriverInputError::MissingSemanticKind {
+                                    event_id: event_id.clone(),
+                                },
+                            ))
+                        })?;
+                        HostedEvent {
+                            event_id,
+                            kind,
+                            at: EventTime::default(),
+                            semantic_kind: Some(semantic),
+                            payload: Some(payload.unwrap_or_else(|| {
                                 serde_json::Value::Object(serde_json::Map::new())
-                            }),
-                        ),
-                    }
-                } else {
-                    if semantic_kind.is_some() {
-                        return Err(HostRunError::InvalidInput(format!(
-                            "fixture event '{}' set semantic_kind but canonical run is not adapter-bound",
-                            event_id
-                        )));
-                    }
-                    HostedEvent {
-                        event_id,
-                        kind,
-                        at: EventTime::default(),
-                        semantic_kind: None,
-                        payload,
-                    }
-                };
+                            })),
+                        }
+                    } else {
+                        if semantic_kind.is_some() {
+                            return Err(HostRunError::Driver(HostDriverError::Input(
+                                HostDriverInputError::UnexpectedSemanticKind { event_id },
+                            )));
+                        }
+                        HostedEvent {
+                            event_id,
+                            kind,
+                            at: EventTime::default(),
+                            semantic_kind: None,
+                            payload,
+                        }
+                    };
 
                 match runner.step(hosted_event) {
                     Ok(_) => {
@@ -597,7 +593,7 @@ fn run_fixture_items_driver(
                         });
                     }
                     Err(err) => {
-                        return Err(HostRunError::StepFailed(format!("host step failed: {err}")));
+                        return Err(HostRunError::Step(err));
                     }
                 }
             }
@@ -609,19 +605,24 @@ fn run_fixture_items_driver(
     }
 
     if episodes.is_empty() {
-        return Err(HostRunError::InvalidInput(format!(
-            "fixture input '{source_label}' contained no episodes"
+        return Err(HostRunError::Driver(HostDriverError::Input(
+            HostDriverInputError::NoEpisodes {
+                source_label: source_label.to_string(),
+            },
         )));
     }
     if event_counter == 0 {
-        return Err(HostRunError::InvalidInput(format!(
-            "fixture input '{source_label}' contained no events"
+        return Err(HostRunError::Driver(HostDriverError::Input(
+            HostDriverInputError::NoEvents {
+                source_label: source_label.to_string(),
+            },
         )));
     }
     if let Some((label, _)) = episodes.iter().find(|(_, count)| *count == 0) {
-        return Err(HostRunError::InvalidInput(format!(
-            "episode '{}' has no events",
-            label
+        return Err(HostRunError::Driver(HostDriverError::Input(
+            HostDriverInputError::EpisodeWithoutEvents {
+                label: label.clone(),
+            },
         )));
     }
 
@@ -646,9 +647,9 @@ pub(super) fn host_stop_driver_execution(
     episode_event_counts: Vec<(String, usize)>,
 ) -> Result<DriverExecution, HostRunError> {
     if committed_event_count == 0 {
-        return Err(HostRunError::StepFailed(
-            "host stop requested before first committed event".to_string(),
-        ));
+        return Err(HostRunError::Driver(HostDriverError::Output(
+            HostDriverOutputError::StopBeforeFirstCommittedEvent,
+        )));
     }
 
     Ok(DriverExecution {
@@ -675,30 +676,27 @@ fn finalize_run_capture(
     host_stop_requested: bool,
 ) -> Result<FinalizedRunCapture, HostRunError> {
     if episode_event_counts.is_empty() {
-        return Err(HostRunError::InvalidInput(
-            "driver produced no episodes".to_string(),
-        ));
+        return Err(HostRunError::Driver(HostDriverError::Output(
+            HostDriverOutputError::ProducedNoEpisodes,
+        )));
     }
     if event_count == 0 {
-        return Err(HostRunError::InvalidInput(
-            "driver produced no events".to_string(),
-        ));
+        return Err(HostRunError::Driver(HostDriverError::Output(
+            HostDriverOutputError::ProducedNoEvents,
+        )));
     }
     if let Some((label, _)) = episode_event_counts.iter().find(|(_, count)| *count == 0) {
-        return Err(HostRunError::InvalidInput(format!(
-            "episode '{}' has no events",
-            label
+        return Err(HostRunError::Driver(HostDriverError::Output(
+            HostDriverOutputError::EpisodeWithoutEvents {
+                label: label.clone(),
+            },
         )));
     }
 
     let bundle = finalize_hosted_runner_capture_with_stage(runner, host_stop_requested).map_err(
         |failure| match failure {
-            HostedRunnerFinalizeFailure::PendingAcks(err) => {
-                HostRunError::StepFailed(format!("egress pending-ack invariant: {err}"))
-            }
-            HostedRunnerFinalizeFailure::StopEgress(err) => {
-                HostRunError::DriverIo(format!("stop egress channels: {err}"))
-            }
+            HostedRunnerFinalizeFailure::PendingAcks(err) => HostRunError::Step(err),
+            HostedRunnerFinalizeFailure::StopEgress(err) => HostRunError::Step(err),
         },
     )?;
     let (invoked, deferred, _) = decision_counts(&bundle);
@@ -731,8 +729,7 @@ fn write_run_capture_bundle(
     } else {
         CaptureJsonStyle::Compact
     };
-    write_capture_bundle(capture_path, bundle, style)
-        .map_err(|err| HostRunError::Io(format!("write capture bundle: {err}")))
+    write_capture_bundle(capture_path, bundle, style).map_err(HostRunError::CaptureWrite)
 }
 
 fn capture_policy_for_paths(
@@ -814,15 +811,15 @@ pub fn run_fixture(request: RunFixtureRequest) -> Result<RunFixtureResult, HostR
     let summary = match outcome {
         RunOutcome::Completed(summary) => summary,
         RunOutcome::Interrupted(_) => {
-            return Err(HostRunError::StepFailed(
-                "fixture driver returned interrupted outcome unexpectedly".to_string(),
-            ))
+            return Err(HostRunError::Driver(HostDriverError::Output(
+                HostDriverOutputError::UnexpectedInterruptedOutcome,
+            )))
         }
     };
     let Some(capture_path) = summary.capture_path else {
-        return Err(HostRunError::StepFailed(
-            "fixture run did not produce a capture file path unexpectedly".to_string(),
-        ));
+        return Err(HostRunError::Driver(HostDriverError::Output(
+            HostDriverOutputError::MissingCapturePath,
+        )));
     };
     Ok(RunFixtureResult {
         capture_path,

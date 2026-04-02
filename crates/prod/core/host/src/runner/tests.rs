@@ -11,6 +11,7 @@
 use super::*;
 use ergo_adapter::host::{EffectApplyError, HandlerCoverageError};
 use ergo_adapter::{compile_event_binder, ContextKeyProvision, RuntimeHandle};
+use ergo_adapter::{EventBindingError, ExternalEventPayloadError};
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
 use ergo_runtime::cluster::{
     ExpandedEdge, ExpandedEndpoint, ExpandedGraph, ExpandedNode, ImplementationInstance,
@@ -22,6 +23,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::egress::{EgressChannelConfig, EgressConfig, EgressRoute};
+use crate::error::{HostedEgressValidationError, HostedEventBuildError};
 
 fn build_context_set_bool_graph() -> ExpandedGraph {
     let mut nodes = HashMap::new();
@@ -564,11 +566,18 @@ fn hosted_step_error_recoverability_contract_is_locked() {
             true,
         ),
         (
-            HostedStepError::BindingError("binding failed".to_string()),
+            HostedStepError::Binding(EventBindingError::PayloadSchemaMismatch {
+                kind: "price_bar".to_string(),
+                detail: "binding failed".to_string(),
+            }),
             true,
         ),
         (
-            HostedStepError::EventBuildError("bad payload".to_string()),
+            HostedStepError::EventBuild(HostedEventBuildError::InvalidPayload(
+                ExternalEventPayloadError::PayloadMustBeJsonObject {
+                    got: "string".to_string(),
+                },
+            )),
             true,
         ),
         (
@@ -591,11 +600,16 @@ fn hosted_step_error_recoverability_contract_is_locked() {
             false,
         ),
         (
-            HostedStepError::EgressValidation("invalid config".to_string()),
+            HostedStepError::EgressValidation(
+                HostedEgressValidationError::EgressConfigRequiresAdapterBoundMode,
+            ),
             false,
         ),
         (
-            HostedStepError::EgressLifecycle("child exited".to_string()),
+            HostedStepError::EgressProcess(EgressProcessError::Startup {
+                channel: "broker".to_string(),
+                detail: "child exited".to_string(),
+            }),
             false,
         ),
         (
@@ -955,8 +969,8 @@ fn replay_mode_does_not_start_egress_channels() {
         })
         .expect_err("live mode should attempt egress startup and fail");
     assert!(
-        matches!(live_err, HostedStepError::EgressLifecycle(_)),
-        "expected egress lifecycle error, got {live_err:?}"
+        matches!(live_err, HostedStepError::EgressProcess(_)),
+        "expected egress process error, got {live_err:?}"
     );
 }
 

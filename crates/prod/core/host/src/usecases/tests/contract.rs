@@ -8,6 +8,7 @@
 //!   and SDK.
 
 use super::*;
+use std::io;
 
 #[test]
 fn host_run_error_display_contract_is_locked() {
@@ -23,26 +24,42 @@ fn host_run_error_display_contract_is_locked() {
             "graph requires adapter capabilities but no adapter was provided (required context nodes: [src_ctx], write nodes: [act_write])",
         ),
         (
-            HostRunError::InvalidInput("bad fixture".to_string()),
-            "bad fixture",
+            HostRunError::Setup(HostSetupError::DependencyScan(
+                HostDependencyScanError::MissingActionPrimitive {
+                    primitive_id: "bad_action".to_string(),
+                },
+            )),
+            "action 'bad_action' missing in core registry",
         ),
         (
-            HostRunError::DriverStart("spawn failed".to_string()),
+            HostRunError::Driver(HostDriverError::Start(HostDriverStartError::new(
+                "spawn failed",
+            ))),
             "spawn failed",
         ),
         (
-            HostRunError::DriverProtocol("bad frame".to_string()),
+            HostRunError::Driver(HostDriverError::Protocol(
+                HostDriverProtocolError::new("bad frame"),
+            )),
             "bad frame",
         ),
         (
-            HostRunError::DriverIo("pipe closed".to_string()),
+            HostRunError::Driver(HostDriverError::Io(HostDriverIoError::new(
+                "pipe closed",
+            ))),
             "pipe closed",
         ),
         (
-            HostRunError::StepFailed("host step failed".to_string()),
-            "host step failed",
+            HostRunError::Step(HostedStepError::MissingPayload),
+            "payload is required in adapter-bound mode",
         ),
-        (HostRunError::Io("write capture".to_string()), "write capture"),
+        (
+            HostRunError::CaptureWrite(CaptureWriteError::CreateOutputDirectory {
+                path: PathBuf::from("capture"),
+                source: io::Error::other("write capture"),
+            }),
+            "create capture output directory: write capture",
+        ),
     ];
 
     for (err, expected) in cases {
@@ -71,8 +88,8 @@ fn host_replay_error_display_contract_is_locked() {
             "capture includes external effect kinds not representable by replay graph ownership surface: [place_order, send_email]",
         ),
         (
-            HostReplayError::Setup("replay setup failed".to_string()),
-            "replay setup failed",
+            HostReplayError::Setup(HostReplaySetupError::LiveEgressConfigurationNotAllowed),
+            "replay does not accept live egress configuration",
         ),
     ];
 
@@ -107,8 +124,13 @@ fn host_replay_error_source_contract_is_locked() {
     };
     assert!(std::error::Error::source(&external).is_none());
 
-    let setup = HostReplayError::Setup("setup failed".to_string());
-    assert!(std::error::Error::source(&setup).is_none());
+    let setup = HostReplayError::Setup(HostReplaySetupError::LiveEgressConfigurationNotAllowed);
+    let setup_source = std::error::Error::source(&setup).expect("setup should chain");
+    assert_eq!(
+        setup_source.to_string(),
+        "replay does not accept live egress configuration"
+    );
+    assert!(std::error::Error::source(setup_source).is_none());
 }
 
 #[test]

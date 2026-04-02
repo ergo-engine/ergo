@@ -16,6 +16,7 @@
 //!   other product renderers consume this table directly.
 
 use super::*;
+use crate::HostReplaySetupError;
 
 use ergo_adapter::capture::CaptureError;
 use ergo_adapter::EventId;
@@ -289,10 +290,10 @@ fn descriptor_contract_table_is_stable() {
                 rule_id: None,
                 where_field: Some("ergo-host replay setup".to_string()),
                 fix: Some("verify capture/graph/adapter paths and retry"),
-                details: vec!["failed to read capture artifact".to_string()],
+                details: vec!["replay does not accept live egress configuration".to_string()],
             },
             describe_host_replay_error(&HostReplayError::Setup(
-                "failed to read capture artifact".to_string(),
+                HostReplaySetupError::LiveEgressConfigurationNotAllowed,
             )),
         ),
         (

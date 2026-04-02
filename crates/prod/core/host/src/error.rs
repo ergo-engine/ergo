@@ -9,6 +9,8 @@
 //!   effect-application, and egress failures.
 //! - The public `EgressDispatchFailure` taxonomy for in-run egress dispatch
 //!   failures that later map to interruption reasons.
+//! - Host-owned typed wrappers for event-build and egress-validation failures
+//!   that add host boundary meaning without flattening lower-level sources.
 //! - Conversion bridges from lower-level adapter and egress errors into the
 //!   host step boundary.
 //!
@@ -26,17 +28,17 @@
 //! Safety notes:
 //! - `EgressDispatchFailure` is fully typed and intentionally mirrors the decided
 //!   in-run egress dispatch taxonomy.
-//! - `HostedStepError` mixes typed wrappers (`EffectApply`, `HandlerCoverage`,
-//!   `EgressDispatchFailure`) with string buckets (`BindingError`,
-//!   `EventBuildError`, `EgressValidation`, `EgressLifecycle`).
-//! - Those string buckets are not produced only by the `From` impls below:
-//!   `runner.rs` also constructs `EgressValidation(String)` directly for runner
-//!   precondition failures and constructs `EgressLifecycle(String)` by
-//!   destructuring `EgressProcessError` and adding host-owned channel context.
+//! - `HostedStepError` preserves typed adapter, event-build, and egress
+//!   failures directly; only host-authored lifecycle/precondition diagnostics
+//!   remain string-detailed.
+//! - `runner.rs` still constructs host-owned `LifecycleViolation` and
+//!   `HostedEgressValidationError` variants directly for runner precondition
+//!   failures where there is no lower-level source error to preserve.
 //! - Variant names and field shapes are live public API because `ergo-host` and
 //!   `sdk-rust` both re-export them and downstream code pattern-matches them.
 
 use ergo_adapter::host::{EffectApplyError, HandlerCoverageError};
+use ergo_adapter::{EventBindingError, ExternalEventPayloadError};
 
 use crate::egress::{EgressProcessError, EgressValidationError};
 
@@ -77,20 +79,99 @@ impl std::fmt::Display for EgressDispatchFailure {
 impl std::error::Error for EgressDispatchFailure {}
 
 #[derive(Debug)]
+pub enum HostedEventBuildError {
+    SerializePayload(serde_json::Error),
+    InvalidPayload(ExternalEventPayloadError),
+}
+
+impl std::fmt::Display for HostedEventBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SerializePayload(err) => write!(f, "serialize event payload: {err}"),
+            Self::InvalidPayload(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for HostedEventBuildError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::SerializePayload(err) => Some(err),
+            Self::InvalidPayload(err) => Some(err),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostedEgressValidationError {
+    ReplayOwnershipWithLiveEgress,
+    ReplayOwnedKindConflictsWithHandler { kind: String },
+    EgressConfigRequiresAdapterBoundMode,
+    ReplayOwnershipRequiresAdapterBoundMode,
+    EgressProvenanceRequiresConfig,
+    MissingEgressProvenance,
+    Validation(EgressValidationError),
+}
+
+impl std::fmt::Display for HostedEgressValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ReplayOwnershipWithLiveEgress => write!(
+                f,
+                "replay ownership cannot be supplied when live egress configuration is present"
+            ),
+            Self::ReplayOwnedKindConflictsWithHandler { kind } => write!(
+                f,
+                "replay-owned effect kind '{}' conflicts with handler-owned kind",
+                kind
+            ),
+            Self::EgressConfigRequiresAdapterBoundMode => {
+                write!(f, "egress configuration requires adapter-bound mode")
+            }
+            Self::ReplayOwnershipRequiresAdapterBoundMode => {
+                write!(f, "replay ownership requires adapter-bound mode")
+            }
+            Self::EgressProvenanceRequiresConfig => {
+                write!(f, "egress provenance requires egress configuration")
+            }
+            Self::MissingEgressProvenance => write!(
+                f,
+                "egress provenance is required when egress configuration is present"
+            ),
+            Self::Validation(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for HostedEgressValidationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Validation(err) => Some(err),
+            Self::ReplayOwnershipWithLiveEgress
+            | Self::ReplayOwnedKindConflictsWithHandler { .. }
+            | Self::EgressConfigRequiresAdapterBoundMode
+            | Self::ReplayOwnershipRequiresAdapterBoundMode
+            | Self::EgressProvenanceRequiresConfig
+            | Self::MissingEgressProvenance => None,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum HostedStepError {
     DuplicateEventId { event_id: String },
     MissingSemanticKind,
     MissingPayload,
     PayloadMustBeObject,
     UnknownSemanticKind { kind: String },
-    BindingError(String),
-    EventBuildError(String),
+    Binding(EventBindingError),
+    EventBuild(HostedEventBuildError),
     LifecycleViolation { detail: String },
     MissingDecisionEntry,
     EffectApply(EffectApplyError),
     HandlerCoverage(HandlerCoverageError),
-    EgressValidation(String),
-    EgressLifecycle(String),
+    EgressValidation(HostedEgressValidationError),
+    EgressProcess(EgressProcessError),
     EgressDispatchFailure(EgressDispatchFailure),
     EffectsWithoutAdapter,
 }
@@ -113,18 +194,18 @@ impl std::fmt::Display for HostedStepError {
             Self::UnknownSemanticKind { kind } => {
                 write!(f, "unknown semantic event kind '{kind}'")
             }
-            Self::BindingError(detail) => write!(f, "semantic event binding failed: {detail}"),
-            Self::EventBuildError(detail) => write!(f, "event build failed: {detail}"),
+            Self::Binding(err) => write!(f, "semantic event binding failed: {err}"),
+            Self::EventBuild(err) => write!(f, "event build failed: {err}"),
             Self::LifecycleViolation { detail } => write!(f, "host lifecycle violation: {detail}"),
             Self::MissingDecisionEntry => {
                 write!(f, "missing decision log entry for the completed host step")
             }
             Self::EffectApply(err) => write!(f, "effect application failed: {err}"),
             Self::HandlerCoverage(err) => write!(f, "handler coverage failed: {err}"),
-            Self::EgressValidation(detail) => {
-                write!(f, "egress configuration validation failed: {detail}")
+            Self::EgressValidation(err) => {
+                write!(f, "egress configuration validation failed: {err}")
             }
-            Self::EgressLifecycle(detail) => write!(f, "egress lifecycle failure: {detail}"),
+            Self::EgressProcess(err) => write!(f, "egress lifecycle failure: {err}"),
             Self::EgressDispatchFailure(detail) => {
                 write!(f, "egress dispatch failure: {detail}")
             }
@@ -136,10 +217,21 @@ impl std::fmt::Display for HostedStepError {
 impl std::error::Error for HostedStepError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Binding(err) => Some(err),
+            Self::EventBuild(err) => Some(err),
             Self::EffectApply(err) => Some(err),
             Self::HandlerCoverage(err) => Some(err),
+            Self::EgressValidation(err) => Some(err),
+            Self::EgressProcess(err) => Some(err),
             Self::EgressDispatchFailure(err) => Some(err),
-            _ => None,
+            Self::DuplicateEventId { .. }
+            | Self::MissingSemanticKind
+            | Self::MissingPayload
+            | Self::PayloadMustBeObject
+            | Self::UnknownSemanticKind { .. }
+            | Self::LifecycleViolation { .. }
+            | Self::MissingDecisionEntry
+            | Self::EffectsWithoutAdapter => None,
         }
     }
 }
@@ -158,13 +250,13 @@ impl From<HandlerCoverageError> for HostedStepError {
 
 impl From<EgressValidationError> for HostedStepError {
     fn from(value: EgressValidationError) -> Self {
-        Self::EgressValidation(value.to_string())
+        Self::EgressValidation(HostedEgressValidationError::Validation(value))
     }
 }
 
 impl From<EgressProcessError> for HostedStepError {
     fn from(value: EgressProcessError) -> Self {
-        Self::EgressLifecycle(value.to_string())
+        Self::EgressProcess(value)
     }
 }
 

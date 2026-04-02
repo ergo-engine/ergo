@@ -2,8 +2,8 @@
 //!
 //! Purpose:
 //! - Smoke-test that the DOT rendering pipeline produces expected output from
-//!   an in-memory graph, while locking the typed DOT error surface and its
-//!   Display compatibility for filesystem and asset-backed failures.
+//!   an in-memory graph, while locking the canonical typed DOT error surface
+//!   and its Display compatibility for filesystem and asset-backed failures.
 
 use super::*;
 
@@ -67,7 +67,7 @@ fn write_temp_file(dir: &Path, name: &str, contents: &str) -> Result<PathBuf, St
 }
 
 #[test]
-fn graph_to_dot_from_assets_typed_renders_loaded_in_memory_graph(
+fn graph_to_dot_from_assets_renders_loaded_in_memory_graph(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let assets = load_graph_assets_from_memory(
         "mem/root.yaml",
@@ -95,7 +95,7 @@ outputs:
         &[],
     )?;
 
-    let dot = graph_to_dot_from_assets_typed(GraphToDotFromAssetsRequest {
+    let dot = graph_to_dot_from_assets(GraphToDotFromAssetsRequest {
         assets,
         show_ports: true,
         show_impl: false,
@@ -110,14 +110,14 @@ outputs:
 }
 
 #[test]
-fn graph_to_dot_from_paths_typed_distinguishes_loader_failures() {
+fn graph_to_dot_from_paths_distinguishes_loader_failures() {
     let missing = std::env::temp_dir().join(format!(
         "ergo-host-graph-dot-missing-{}-{}.yaml",
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::SeqCst)
     ));
 
-    let err = graph_to_dot_from_paths_typed(GraphToDotFromPathsRequest {
+    let err = graph_to_dot_from_paths(GraphToDotFromPathsRequest {
         graph_path: missing.clone(),
         cluster_paths: Vec::new(),
         show_ports: false,
@@ -127,18 +127,19 @@ fn graph_to_dot_from_paths_typed_distinguishes_loader_failures() {
     .expect_err("missing graph path should surface a typed load error");
 
     match err {
-        GraphToDotError::Load(GraphToDotLoadError { kind, detail }) => {
-            assert_eq!(kind, GraphToDotLoadErrorKind::Io);
-            assert!(detail.contains("io error at"));
-            assert!(detail.contains(&missing.display().to_string()));
+        GraphToDotError::Load(LoaderError::Io(detail)) => {
+            assert_eq!(detail.path, missing);
+            assert!(
+                detail.message.contains("No such file") || detail.message.contains("not found")
+            );
         }
         other => panic!("unexpected error: {other:?}"),
     }
 }
 
 #[test]
-fn graph_to_dot_from_assets_typed_preserves_expand_diagnostics(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn graph_to_dot_from_assets_preserves_expand_diagnostics() -> Result<(), Box<dyn std::error::Error>>
+{
     let assets = load_graph_assets_from_memory(
         "mem/root.yaml",
         &[
@@ -161,7 +162,7 @@ fn graph_to_dot_from_assets_typed_preserves_expand_diagnostics(
         &["search-a".to_string(), "search-b".to_string()],
     )?;
 
-    let err = graph_to_dot_from_assets_typed(GraphToDotFromAssetsRequest {
+    let err = graph_to_dot_from_assets(GraphToDotFromAssetsRequest {
         assets,
         show_ports: false,
         show_impl: false,
@@ -171,14 +172,13 @@ fn graph_to_dot_from_assets_typed_preserves_expand_diagnostics(
 
     match &err {
         GraphToDotError::Expansion(GraphToDotExpansionError {
-            rule_id,
-            summary,
+            source,
             context,
             available_clusters,
         }) => {
-            assert_eq!(rule_id, "I.6");
-            assert!(summary.contains("shared_value"));
-            assert!(summary.contains("^2.0"));
+            assert_eq!(source.rule_id(), "I.6");
+            assert!(source.summary().contains("shared_value"));
+            assert!(source.summary().contains("^2.0"));
             assert_eq!(*context, GraphToDotExpansionContext::Assets);
             assert_eq!(available_clusters.len(), 2);
             assert_eq!(available_clusters[0].location, "shared-v1-row");
@@ -196,7 +196,7 @@ fn graph_to_dot_from_assets_typed_preserves_expand_diagnostics(
 }
 
 #[test]
-fn graph_to_dot_from_paths_typed_preserves_filesystem_expand_diagnostics(
+fn graph_to_dot_from_paths_preserves_filesystem_expand_diagnostics(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = make_temp_dir("paths")?;
     let search_a = temp_dir.join("search-a");
@@ -222,7 +222,7 @@ fn graph_to_dot_from_paths_typed_preserves_filesystem_expand_diagnostics(
     let shared_v1_canonical = fs::canonicalize(&shared_v1)?.display().to_string();
     let shared_v1_5_canonical = fs::canonicalize(&shared_v1_5)?.display().to_string();
 
-    let err = graph_to_dot_from_paths_typed(GraphToDotFromPathsRequest {
+    let err = graph_to_dot_from_paths(GraphToDotFromPathsRequest {
         graph_path,
         cluster_paths: vec![search_a, search_b],
         show_ports: false,
@@ -233,12 +233,12 @@ fn graph_to_dot_from_paths_typed_preserves_filesystem_expand_diagnostics(
 
     match &err {
         GraphToDotError::Expansion(GraphToDotExpansionError {
-            rule_id,
+            source,
             context,
             available_clusters,
             ..
         }) => {
-            assert_eq!(rule_id, "I.6");
+            assert_eq!(source.rule_id(), "I.6");
             assert_eq!(*context, GraphToDotExpansionContext::Filesystem);
             assert_eq!(available_clusters.len(), 2);
             assert!(available_clusters

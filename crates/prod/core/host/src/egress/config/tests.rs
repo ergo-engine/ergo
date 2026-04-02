@@ -30,6 +30,10 @@ fn sample_config() -> EgressConfig {
     parse_egress_config_toml(sample_config_toml()).expect("sample config should parse")
 }
 
+fn parse_config_text(raw: &str) -> Result<EgressConfig, String> {
+    parse_egress_config_toml(raw).map_err(|err| err.to_string())
+}
+
 fn process_channel(command: &[&str]) -> EgressChannelConfig {
     EgressChannelConfig::process(command.iter().map(|item| item.to_string()).collect())
         .expect("channel config should be valid")
@@ -41,7 +45,7 @@ fn route(channel: &str, ack_timeout: Option<Duration>) -> EgressRoute {
 
 #[test]
 fn parse_example_toml() -> Result<(), String> {
-    let config = parse_egress_config_toml(sample_config_toml())?;
+    let config = parse_config_text(sample_config_toml())?;
     assert_eq!(config.default_ack_timeout(), Duration::from_secs(5));
     assert_eq!(
         config
@@ -74,6 +78,7 @@ type = "process"
 command = ["python3", "broker.py"]
 "#;
     let err = parse_egress_config_toml(raw).expect_err("missing default/routes should fail");
+    let err = err.to_string();
     assert!(
         err.contains("default_ack_timeout"),
         "unexpected error: {err}"
@@ -95,6 +100,7 @@ channel = "broker"
 "#,
     )
     .expect_err("unsupported suffix should fail");
+    let unsupported_suffix = unsupported_suffix.to_string();
     assert!(
         unsupported_suffix.contains("unsupported duration '5d'"),
         "unexpected error: {unsupported_suffix}"
@@ -113,6 +119,7 @@ channel = "broker"
 "#,
     )
     .expect_err("invalid number should fail");
+    let invalid_number = invalid_number.to_string();
     assert!(
         invalid_number.contains("invalid duration 'xs'"),
         "unexpected error: {invalid_number}"
@@ -173,6 +180,7 @@ channel = "broker"
 "#,
     )
     .expect_err("empty process command must fail");
+    let err = err.to_string();
 
     assert!(
         err.contains("egress channel 'broker' process command must not be empty"),
@@ -195,6 +203,7 @@ channel = "broker"
 "#,
     )
     .expect_err("blank process executable must fail");
+    let err = err.to_string();
 
     assert!(
         err.contains("egress channel 'broker' process executable must not be blank"),
@@ -236,7 +245,7 @@ fn builder_rejects_duplicate_keys() {
 
 #[test]
 fn duration_literals_normalize_in_canonical_json_output() -> Result<(), String> {
-    let config = parse_egress_config_toml(
+    let config = parse_config_text(
         r#"
 default_ack_timeout = "1m"
 
@@ -353,7 +362,7 @@ fn provenance_changes_when_route_changes() {
 
 #[test]
 fn provenance_changes_when_channel_command_changes() -> Result<(), String> {
-    let base = parse_egress_config_toml(
+    let base = parse_config_text(
         r#"
 default_ack_timeout = "60s"
 
@@ -366,7 +375,7 @@ channel = "broker"
 ack_timeout = "1500ms"
 "#,
     )?;
-    let changed = parse_egress_config_toml(
+    let changed = parse_config_text(
         r#"
 default_ack_timeout = "60s"
 

@@ -61,7 +61,9 @@ use crate::egress::{
     validate_egress_config, EgressConfig, EgressProcessError, EgressRuntime,
     EgressValidationWarning,
 };
-use crate::error::{EgressDispatchFailure, HostedStepError};
+use crate::error::{
+    EgressDispatchFailure, HostedEgressValidationError, HostedEventBuildError, HostedStepError,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostedEvent {
@@ -157,8 +159,7 @@ pub(crate) fn validate_hosted_runner_configuration(
 
     if egress_config.is_some() && !replay_external_kinds.is_empty() {
         return Err(HostedStepError::EgressValidation(
-            "replay ownership cannot be supplied when live egress configuration is present"
-                .to_string(),
+            HostedEgressValidationError::ReplayOwnershipWithLiveEgress,
         ));
     }
 
@@ -166,10 +167,11 @@ pub(crate) fn validate_hosted_runner_configuration(
         .iter()
         .find(|kind| handler_kinds.contains(*kind))
     {
-        return Err(HostedStepError::EgressValidation(format!(
-            "replay-owned effect kind '{}' conflicts with handler-owned kind",
-            conflict
-        )));
+        return Err(HostedStepError::EgressValidation(
+            HostedEgressValidationError::ReplayOwnedKindConflictsWithHandler {
+                kind: conflict.clone(),
+            },
+        ));
     }
 
     if let Some(config) = adapter {
@@ -191,22 +193,22 @@ pub(crate) fn validate_hosted_runner_configuration(
         }
     } else if egress_config.is_some() {
         return Err(HostedStepError::EgressValidation(
-            "egress configuration requires adapter-bound mode".to_string(),
+            HostedEgressValidationError::EgressConfigRequiresAdapterBoundMode,
         ));
     } else if !replay_external_kinds.is_empty() {
         return Err(HostedStepError::EgressValidation(
-            "replay ownership requires adapter-bound mode".to_string(),
+            HostedEgressValidationError::ReplayOwnershipRequiresAdapterBoundMode,
         ));
     }
 
     if egress_config.is_none() && egress_provenance.is_some() {
         return Err(HostedStepError::EgressValidation(
-            "egress provenance requires egress configuration".to_string(),
+            HostedEgressValidationError::EgressProvenanceRequiresConfig,
         ));
     }
     if egress_config.is_some() && egress_provenance.is_none() {
         return Err(HostedStepError::EgressValidation(
-            "egress provenance is required when egress configuration is present".to_string(),
+            HostedEgressValidationError::MissingEgressProvenance,
         ));
     }
 
@@ -695,7 +697,7 @@ impl HostedRunner {
                 semantic_kind,
                 serde_json::Value::Object(merged),
             )
-            .map_err(|err| HostedStepError::BindingError(err.to_string()));
+            .map_err(HostedStepError::Binding);
         }
 
         match event.payload {
@@ -703,15 +705,18 @@ impl HostedRunner {
                 let object = payload
                     .as_object()
                     .ok_or(HostedStepError::PayloadMustBeObject)?;
-                let bytes = serde_json::to_vec(object)
-                    .map_err(|err| HostedStepError::EventBuildError(err.to_string()))?;
+                let bytes = serde_json::to_vec(object).map_err(|err| {
+                    HostedStepError::EventBuild(HostedEventBuildError::SerializePayload(err))
+                })?;
                 ExternalEvent::with_payload(
                     EventId::new(event.event_id),
                     event.kind,
                     event.at,
                     ergo_adapter::EventPayload { data: bytes },
                 )
-                .map_err(|err| HostedStepError::EventBuildError(err.to_string()))
+                .map_err(|err| {
+                    HostedStepError::EventBuild(HostedEventBuildError::InvalidPayload(err))
+                })
             }
             None => Ok(ExternalEvent::mechanical_at(
                 EventId::new(event.event_id),
@@ -730,8 +735,8 @@ fn is_recoverable_step_error(err: &HostedStepError) -> bool {
             | HostedStepError::MissingPayload
             | HostedStepError::PayloadMustBeObject
             | HostedStepError::UnknownSemanticKind { .. }
-            | HostedStepError::BindingError(_)
-            | HostedStepError::EventBuildError(_)
+            | HostedStepError::Binding(_)
+            | HostedStepError::EventBuild(_)
     )
 }
 
@@ -748,15 +753,9 @@ fn map_egress_dispatch_error(
         EgressProcessError::Io { channel, detail } => {
             Ok(EgressDispatchFailure::Io { channel, detail })
         }
-        EgressProcessError::Startup { channel, detail } => Err(HostedStepError::EgressLifecycle(
-            format!("egress startup error on channel '{channel}': {detail}"),
-        )),
-        EgressProcessError::InvalidConfig(detail) => Err(HostedStepError::EgressValidation(detail)),
-        EgressProcessError::PendingAcks { channel, detail } => {
-            Err(HostedStepError::EgressLifecycle(format!(
-                "egress pending-ack invariant failed on channel '{channel}': {detail}"
-            )))
-        }
+        EgressProcessError::Startup { .. }
+        | EgressProcessError::InvalidConfig(..)
+        | EgressProcessError::PendingAcks { .. } => Err(HostedStepError::EgressProcess(err)),
     }
 }
 

@@ -35,7 +35,10 @@ use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceSche
 use ergo_supervisor::demo::demo_1;
 use ergo_supervisor::Constraints;
 
-use crate::usecases::{run_fixture, HostRunError, RunFixtureRequest, RunFixtureResult};
+use crate::usecases::{
+    run_fixture, HostAdapterSetupError, HostGraphPreparationError, HostRunError, HostSetupError,
+    RunFixtureRequest, RunFixtureResult,
+};
 use crate::HostedRunner;
 
 const DEMO_GRAPH_ID: &str = "demo_1";
@@ -58,13 +61,19 @@ pub fn run_demo_fixture_from_path(
 
     let graph = Arc::new(demo_1::build_demo_1_graph());
     let catalog = Arc::new(build_core_catalog());
-    let core_registries = Arc::new(
-        core_registries()
-            .map_err(|err| HostRunError::InvalidInput(format!("core registries: {err:?}")))?,
-    );
+    let core_registries = Arc::new(core_registries().map_err(|err| {
+        HostRunError::Setup(HostSetupError::GraphPreparation(
+            HostGraphPreparationError::CoreRegistries(err),
+        ))
+    })?);
 
-    ensure_demo_sources_have_no_required_context(&graph, &catalog, &core_registries)
-        .map_err(|err| HostRunError::InvalidInput(err.to_string()))?;
+    ensure_demo_sources_have_no_required_context(&graph, &catalog, &core_registries).map_err(
+        |err| {
+            HostRunError::Setup(HostSetupError::AdapterSetup(
+                HostAdapterSetupError::DemoSourceContext(err),
+            ))
+        },
+    )?;
 
     let runtime = RuntimeHandle::new(
         graph.clone(),
@@ -79,7 +88,9 @@ pub fn run_demo_fixture_from_path(
         catalog.as_ref(),
     )
     .map_err(|err| {
-        HostRunError::InvalidInput(format!("runtime provenance compute failed: {err}"))
+        HostRunError::Setup(HostSetupError::GraphPreparation(
+            HostGraphPreparationError::RuntimeProvenance(err),
+        ))
     })?;
     let runner = HostedRunner::new(
         GraphId::new(DEMO_GRAPH_ID),
@@ -91,9 +102,7 @@ pub fn run_demo_fixture_from_path(
         None,
         None,
     )
-    .map_err(|err| {
-        HostRunError::StepFailed(format!("failed to initialize hosted fixture runner: {err}"))
-    })?;
+    .map_err(|err| HostRunError::Setup(HostSetupError::HostedRunnerInitialization(err)))?;
 
     let capture_output =
         capture_output.unwrap_or_else(|| fixture::fixture_output_path(&fixture_path));

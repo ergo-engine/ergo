@@ -24,32 +24,39 @@
 //! Safety notes:
 //! - This file is a public compatibility seam: CLI and SDK pattern-match on `HostRunError`,
 //!   `HostReplayError`, `InterruptionReason`, and request/response field names directly.
-//! - `HostRunError` and `HostReplayError::Setup(...)` remain string-bucket surfaces; broader
-//!   typing cleanup is tracked in issue #60.
+//! - `HostRunError` and `HostReplayError` now preserve typed setup/driver/step
+//!   sources; only host-authored operational detail remains string-shaped.
 //! - `interruption_from_egress_dispatch_failure(...)` intentionally drops protocol/I/O detail and
 //!   maps into status-oriented interruption reasons.
 //! - The broad `pub(super)` prelude and helper duplication in this facade, plus the shared
 //!   `usecases/tests` infrastructure cleanup, are tracked in issue #74.
 
 pub(super) use ergo_adapter::{
-    adapter_fingerprint, compile_event_binder, fixture, validate_action_adapter_composition,
-    validate_capture_format, validate_source_adapter_composition, AdapterManifest, AdapterProvides,
-    EventTime, GraphId, RuntimeHandle,
+    adapter_fingerprint, compile_event_binder,
+    fixture::{self, FixtureParseError},
+    validate_action_adapter_composition, validate_capture_format,
+    validate_source_adapter_composition, AdapterManifest, AdapterProvides, CompositionError,
+    DemoSourceContextError, EventBindingError, EventTime, GraphId, InvalidAdapter, RuntimeHandle,
 };
+pub(super) use ergo_loader::LoaderError;
 pub(super) use ergo_runtime::catalog::{
-    build_core_catalog, core_registries, CorePrimitiveCatalog, CoreRegistries,
+    build_core_catalog, core_registries, CorePrimitiveCatalog, CoreRegistrationError,
+    CoreRegistries,
 };
 pub(super) use ergo_runtime::cluster::{
     expand, ClusterDefinition, ClusterLoader, ClusterVersionIndex, ExpandError, ExpandedGraph,
     PrimitiveCatalog, PrimitiveKind, Version, VersionTargetKind,
 };
 pub(super) use ergo_runtime::common::ErrorInfo;
-pub(super) use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceScheme};
+pub(super) use ergo_runtime::provenance::{
+    compute_runtime_provenance, RuntimeProvenanceError, RuntimeProvenanceScheme,
+};
 pub(super) use ergo_supervisor::replay::StrictReplayExpectations;
 #[cfg(test)]
 pub(super) use ergo_supervisor::Decision;
 pub(super) use ergo_supervisor::{
-    write_capture_bundle, CaptureBundle, CaptureJsonStyle, Constraints, NO_ADAPTER_PROVENANCE,
+    write_capture_bundle, CaptureBundle, CaptureJsonStyle, CaptureWriteError, Constraints,
+    NO_ADAPTER_PROVENANCE,
 };
 pub(super) use serde::{Deserialize, Serialize};
 pub(super) use std::collections::{BTreeSet, HashMap, HashSet};
@@ -81,17 +88,15 @@ pub fn scan_adapter_dependencies(
     expanded: &ExpandedGraph,
     catalog: &CorePrimitiveCatalog,
     registries: &CoreRegistries,
-) -> Result<AdapterDependencySummary, String> {
+) -> Result<AdapterDependencySummary, HostDependencyScanError> {
     let mut summary = AdapterDependencySummary::default();
 
     for (runtime_id, node) in &expanded.nodes {
         let meta = catalog
             .get(&node.implementation.impl_id, &node.implementation.version)
-            .ok_or_else(|| {
-                format!(
-                    "missing catalog metadata for primitive '{}@{}'",
-                    node.implementation.impl_id, node.implementation.version
-                )
+            .ok_or_else(|| HostDependencyScanError::MissingCatalogMetadata {
+                primitive_id: node.implementation.impl_id.clone(),
+                version: node.implementation.version.clone(),
             })?;
 
         match meta.kind {
@@ -99,11 +104,8 @@ pub fn scan_adapter_dependencies(
                 let source = registries
                     .sources
                     .get(&node.implementation.impl_id)
-                    .ok_or_else(|| {
-                        format!(
-                            "source '{}' missing in core registry",
-                            node.implementation.impl_id
-                        )
+                    .ok_or_else(|| HostDependencyScanError::MissingSourcePrimitive {
+                        primitive_id: node.implementation.impl_id.clone(),
                     })?;
                 if source
                     .manifest()
@@ -119,11 +121,8 @@ pub fn scan_adapter_dependencies(
                 let action = registries
                     .actions
                     .get(&node.implementation.impl_id)
-                    .ok_or_else(|| {
-                        format!(
-                            "action '{}' missing in core registry",
-                            node.implementation.impl_id
-                        )
+                    .ok_or_else(|| HostDependencyScanError::MissingActionPrimitive {
+                        primitive_id: node.implementation.impl_id.clone(),
                     })?;
                 if !action.manifest().effects.writes.is_empty()
                     || !action.manifest().effects.intents.is_empty()
@@ -145,64 +144,53 @@ pub fn validate_adapter_composition(
     catalog: &CorePrimitiveCatalog,
     registries: &CoreRegistries,
     provides: &AdapterProvides,
-) -> Result<(), String> {
+) -> Result<(), HostAdapterCompositionError> {
     validate_capture_format(&provides.capture_format_version)
-        .map_err(|err| format!("adapter composition failed: {}", summarize_error_info(&err)))?;
+        .map_err(HostAdapterCompositionError::CaptureFormat)?;
 
     for (runtime_id, node) in &expanded.nodes {
         let meta = catalog
             .get(&node.implementation.impl_id, &node.implementation.version)
-            .ok_or_else(|| {
-                format!(
-                    "missing catalog metadata for primitive '{}@{}'",
-                    node.implementation.impl_id, node.implementation.version
-                )
+            .ok_or_else(|| HostAdapterCompositionError::MissingCatalogMetadata {
+                runtime_id: runtime_id.clone(),
+                primitive_id: node.implementation.impl_id.clone(),
+                version: node.implementation.version.clone(),
             })?;
         match meta.kind {
             PrimitiveKind::Source => {
                 let source = registries
                     .sources
                     .get(&node.implementation.impl_id)
-                    .ok_or_else(|| {
-                        format!(
-                            "source '{}' missing in core registry",
-                            node.implementation.impl_id
-                        )
+                    .ok_or_else(|| HostAdapterCompositionError::MissingSourcePrimitive {
+                        runtime_id: runtime_id.clone(),
+                        primitive_id: node.implementation.impl_id.clone(),
                     })?;
                 validate_source_adapter_composition(
                     &source.manifest().requires,
                     provides,
                     &node.parameters,
                 )
-                .map_err(|err| {
-                    format!(
-                        "source composition failed for node '{}': {}",
-                        runtime_id,
-                        summarize_error_info(&err)
-                    )
+                .map_err(|source| HostAdapterCompositionError::Source {
+                    runtime_id: runtime_id.clone(),
+                    source,
                 })?;
             }
             PrimitiveKind::Action => {
                 let action = registries
                     .actions
                     .get(&node.implementation.impl_id)
-                    .ok_or_else(|| {
-                        format!(
-                            "action '{}' missing in core registry",
-                            node.implementation.impl_id
-                        )
+                    .ok_or_else(|| HostAdapterCompositionError::MissingActionPrimitive {
+                        runtime_id: runtime_id.clone(),
+                        primitive_id: node.implementation.impl_id.clone(),
                     })?;
                 validate_action_adapter_composition(
                     &action.manifest().effects,
                     provides,
                     &node.parameters,
                 )
-                .map_err(|err| {
-                    format!(
-                        "action composition failed for node '{}': {}",
-                        runtime_id,
-                        summarize_error_info(&err)
-                    )
+                .map_err(|source| HostAdapterCompositionError::Action {
+                    runtime_id: runtime_id.clone(),
+                    source,
                 })?;
             }
             _ => {}
@@ -215,85 +203,672 @@ fn summarize_error_info(err: &impl ErrorInfo) -> String {
     format!("{} ({})", err.summary(), err.rule_id())
 }
 
-fn summarize_filesystem_expand_error(
-    err: &ExpandError,
-    cluster_sources: &HashMap<(String, Version), PathBuf>,
-) -> String {
-    let base = summarize_error_info(err);
-    match err {
-        ExpandError::UnsatisfiedVersionConstraint {
-            target_kind: VersionTargetKind::Cluster,
-            id,
-            available_versions,
-            ..
-        } => {
-            let available = available_versions
-                .iter()
-                .filter_map(|version| {
-                    cluster_sources
-                        .get(&(id.clone(), version.clone()))
-                        .map(|path| format!("- {}@{} at {}", id, version, path.display()))
-                })
-                .collect::<Vec<_>>();
-            if available.is_empty() {
-                base
-            } else {
-                format!(
-                    "{}\navailable cluster files:\n{}",
-                    base,
-                    available.join("\n")
-                )
-            }
-        }
-        _ => base,
-    }
-}
-
 fn summarize_expand_error(
     err: &ExpandError,
     diagnostic_labels: &HashMap<(String, Version), String>,
-) -> String {
-    let base = summarize_error_info(err);
-    match err {
+) -> HostExpandError {
+    let available_clusters = match err {
         ExpandError::UnsatisfiedVersionConstraint {
             target_kind: VersionTargetKind::Cluster,
             id,
             available_versions,
             ..
-        } => {
-            let available = available_versions
+        } => available_versions
+            .iter()
+            .map(|version| HostAvailableCluster {
+                id: id.clone(),
+                version: version.to_string(),
+                location: diagnostic_labels
+                    .get(&(id.clone(), version.clone()))
+                    .cloned()
+                    .unwrap_or_else(|| format!("{id}@{version}")),
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+
+    HostExpandError {
+        source: err.clone(),
+        context: HostExpandContext::Assets,
+        available_clusters,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostAvailableCluster {
+    pub id: String,
+    pub version: String,
+    pub location: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostExpandContext {
+    Filesystem,
+    Assets,
+}
+
+impl HostExpandContext {
+    fn available_heading(self) -> &'static str {
+        match self {
+            Self::Filesystem => "available cluster files",
+            Self::Assets => "available cluster sources",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HostExpandError {
+    pub source: ExpandError,
+    pub context: HostExpandContext,
+    pub available_clusters: Vec<HostAvailableCluster>,
+}
+
+impl std::fmt::Display for HostExpandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({})", self.source.summary(), self.source.rule_id())?;
+        if !self.available_clusters.is_empty() {
+            let available = self
+                .available_clusters
                 .iter()
-                .map(|version| {
-                    let label = diagnostic_labels
-                        .get(&(id.clone(), version.clone()))
-                        .cloned()
-                        .unwrap_or_else(|| format!("{id}@{version}"));
-                    format!("- {}@{} at {}", id, version, label)
+                .map(|cluster| {
+                    format!(
+                        "- {}@{} at {}",
+                        cluster.id, cluster.version, cluster.location
+                    )
                 })
-                .collect::<Vec<_>>();
-            if available.is_empty() {
-                base
-            } else {
-                format!(
-                    "{}\navailable cluster sources:\n{}",
-                    base,
-                    available.join("\n")
+                .collect::<Vec<_>>()
+                .join("\n");
+            write!(f, "\n{}:\n{}", self.context.available_heading(), available)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for HostExpandError {}
+
+#[derive(Debug)]
+pub enum HostGraphPreparationError {
+    CoreRegistries(CoreRegistrationError),
+    Expansion(HostExpandError),
+    RuntimeProvenance(RuntimeProvenanceError),
+}
+
+impl std::fmt::Display for HostGraphPreparationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CoreRegistries(err) => write!(f, "core registries: {err}"),
+            Self::Expansion(err) => write!(f, "graph expansion failed: {err}"),
+            Self::RuntimeProvenance(err) => {
+                write!(f, "runtime provenance compute failed: {err}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for HostGraphPreparationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::CoreRegistries(err) => Some(err),
+            Self::RuntimeProvenance(err) => Some(err),
+            Self::Expansion(_) => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum HostDependencyScanError {
+    MissingCatalogMetadata {
+        primitive_id: String,
+        version: Version,
+    },
+    MissingSourcePrimitive {
+        primitive_id: String,
+    },
+    MissingActionPrimitive {
+        primitive_id: String,
+    },
+}
+
+impl std::fmt::Display for HostDependencyScanError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingCatalogMetadata {
+                primitive_id,
+                version,
+            } => write!(
+                f,
+                "missing catalog metadata for primitive '{}@{}'",
+                primitive_id, version
+            ),
+            Self::MissingSourcePrimitive { primitive_id } => {
+                write!(f, "source '{}' missing in core registry", primitive_id)
+            }
+            Self::MissingActionPrimitive { primitive_id } => {
+                write!(f, "action '{}' missing in core registry", primitive_id)
+            }
+        }
+    }
+}
+
+impl std::error::Error for HostDependencyScanError {}
+
+#[derive(Debug)]
+pub enum HostAdapterCompositionError {
+    CaptureFormat(CompositionError),
+    Source {
+        runtime_id: String,
+        source: CompositionError,
+    },
+    Action {
+        runtime_id: String,
+        source: CompositionError,
+    },
+    MissingCatalogMetadata {
+        runtime_id: String,
+        primitive_id: String,
+        version: Version,
+    },
+    MissingSourcePrimitive {
+        runtime_id: String,
+        primitive_id: String,
+    },
+    MissingActionPrimitive {
+        runtime_id: String,
+        primitive_id: String,
+    },
+}
+
+impl std::fmt::Display for HostAdapterCompositionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CaptureFormat(source) => {
+                write!(
+                    f,
+                    "adapter composition failed: {}",
+                    summarize_error_info(source)
+                )
+            }
+            Self::Source { runtime_id, source } => write!(
+                f,
+                "source composition failed for node '{}': {}",
+                runtime_id,
+                summarize_error_info(source)
+            ),
+            Self::Action { runtime_id, source } => write!(
+                f,
+                "action composition failed for node '{}': {}",
+                runtime_id,
+                summarize_error_info(source)
+            ),
+            Self::MissingCatalogMetadata {
+                primitive_id,
+                version,
+                ..
+            } => write!(
+                f,
+                "missing catalog metadata for primitive '{}@{}'",
+                primitive_id, version
+            ),
+            Self::MissingSourcePrimitive { primitive_id, .. } => {
+                write!(f, "source '{}' missing in core registry", primitive_id)
+            }
+            Self::MissingActionPrimitive { primitive_id, .. } => {
+                write!(f, "action '{}' missing in core registry", primitive_id)
+            }
+        }
+    }
+}
+
+impl std::error::Error for HostAdapterCompositionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::CaptureFormat(source)
+            | Self::Source { source, .. }
+            | Self::Action { source, .. } => Some(source),
+            Self::MissingCatalogMetadata { .. }
+            | Self::MissingSourcePrimitive { .. }
+            | Self::MissingActionPrimitive { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum HostAdapterSetupError {
+    ManifestRead {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    ManifestSourceLabelEmpty,
+    ManifestParse {
+        source_label: String,
+        source: serde_yaml::Error,
+    },
+    ManifestDecode {
+        source_label: String,
+        source: serde_json::Error,
+    },
+    Validation(InvalidAdapter),
+    Composition(HostAdapterCompositionError),
+    BinderCompile(EventBindingError),
+    DemoSourceContext(DemoSourceContextError),
+}
+
+impl std::fmt::Display for HostAdapterSetupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ManifestRead { path, source } => {
+                write!(f, "read adapter manifest '{}': {source}", path.display())
+            }
+            Self::ManifestSourceLabelEmpty => {
+                write!(f, "adapter manifest source_label must not be empty")
+            }
+            Self::ManifestParse {
+                source_label,
+                source,
+            } => write!(f, "parse adapter manifest '{source_label}': {source}"),
+            Self::ManifestDecode {
+                source_label,
+                source,
+            } => write!(f, "decode adapter manifest '{source_label}': {source}"),
+            Self::Validation(source) => write!(
+                f,
+                "adapter manifest validation failed: {}",
+                summarize_error_info(source)
+            ),
+            Self::Composition(source) => write!(f, "{source}"),
+            Self::BinderCompile(source) => {
+                write!(f, "adapter event binder compilation failed: {source}")
+            }
+            Self::DemoSourceContext(source) => write!(f, "{source}"),
+        }
+    }
+}
+
+impl std::error::Error for HostAdapterSetupError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ManifestRead { source, .. } => Some(source),
+            Self::ManifestParse { source, .. } => Some(source),
+            Self::ManifestDecode { source, .. } => Some(source),
+            Self::Validation(source) => Some(source),
+            Self::Composition(source) => Some(source),
+            Self::BinderCompile(source) => Some(source),
+            Self::DemoSourceContext(source) => Some(source),
+            Self::ManifestSourceLabelEmpty => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum HostSetupError {
+    LoadGraphAssets(LoaderError),
+    DependencyScan(HostDependencyScanError),
+    GraphPreparation(HostGraphPreparationError),
+    AdapterSetup(HostAdapterSetupError),
+    HostedRunnerValidation(HostedStepError),
+    HostedRunnerInitialization(HostedStepError),
+    StartEgress(HostedStepError),
+}
+
+impl std::fmt::Display for HostSetupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LoadGraphAssets(err) => write!(f, "{err}"),
+            Self::DependencyScan(err) => write!(f, "{err}"),
+            Self::GraphPreparation(err) => write!(f, "{err}"),
+            Self::AdapterSetup(err) => write!(f, "{err}"),
+            Self::HostedRunnerValidation(err) => {
+                write!(f, "host configuration validation failed: {err}")
+            }
+            Self::HostedRunnerInitialization(err) => {
+                write!(f, "failed to initialize canonical host runner: {err}")
+            }
+            Self::StartEgress(err) => write!(f, "start egress channels: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for HostSetupError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::LoadGraphAssets(err) => Some(err),
+            Self::DependencyScan(err) => Some(err),
+            Self::GraphPreparation(err) => Some(err),
+            Self::AdapterSetup(err) => Some(err),
+            Self::HostedRunnerValidation(err) | Self::HostedRunnerInitialization(err) => Some(err),
+            Self::StartEgress(err) => Some(err),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum HostReplaySetupError {
+    CaptureRead {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    CaptureParse {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+    LiveEgressConfigurationNotAllowed,
+    Setup(HostSetupError),
+}
+
+impl std::fmt::Display for HostReplaySetupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CaptureRead { path, source } => write!(
+                f,
+                "failed to read capture artifact '{}': {source}",
+                path.display()
+            ),
+            Self::CaptureParse { path, source } => write!(
+                f,
+                "failed to parse capture artifact '{}': {source}",
+                path.display()
+            ),
+            Self::LiveEgressConfigurationNotAllowed => {
+                write!(f, "replay does not accept live egress configuration")
+            }
+            Self::Setup(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for HostReplaySetupError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::CaptureRead { source, .. } => Some(source),
+            Self::CaptureParse { source, .. } => Some(source),
+            Self::Setup(err) => Some(err),
+            Self::LiveEgressConfigurationNotAllowed => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum HostDriverInputError {
+    FixtureParse(FixtureParseError),
+    DuplicateEventId {
+        event_id: String,
+    },
+    MissingSemanticKind {
+        event_id: String,
+    },
+    UnexpectedSemanticKind {
+        event_id: String,
+    },
+    NoEpisodes {
+        source_label: String,
+    },
+    NoEvents {
+        source_label: String,
+    },
+    EpisodeWithoutEvents {
+        label: String,
+    },
+    ProcessCommandEmpty,
+    ProcessExecutableBlank,
+    ProcessPathMetadata {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    ProcessPathNotFile {
+        path: PathBuf,
+    },
+    ProcessPathNotExecutable {
+        path: PathBuf,
+    },
+}
+
+impl std::fmt::Display for HostDriverInputError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FixtureParse(source) => write!(f, "failed to parse fixture: {source}"),
+            Self::DuplicateEventId { event_id } => write!(
+                f,
+                "fixture event id '{}' appears more than once in canonical run input",
+                event_id
+            ),
+            Self::MissingSemanticKind { event_id } => write!(
+                f,
+                "fixture event '{}' is missing semantic_kind in adapter-bound canonical run",
+                event_id
+            ),
+            Self::UnexpectedSemanticKind { event_id } => write!(
+                f,
+                "fixture event '{}' set semantic_kind but canonical run is not adapter-bound",
+                event_id
+            ),
+            Self::NoEpisodes { source_label } => {
+                write!(f, "fixture input '{source_label}' contained no episodes")
+            }
+            Self::NoEvents { source_label } => {
+                write!(f, "fixture input '{source_label}' contained no events")
+            }
+            Self::EpisodeWithoutEvents { label } => {
+                write!(f, "episode '{}' has no events", label)
+            }
+            Self::ProcessCommandEmpty => {
+                write!(f, "process driver requires at least one argv element")
+            }
+            Self::ProcessExecutableBlank => {
+                write!(f, "process driver executable must not be empty")
+            }
+            Self::ProcessPathMetadata { path, source } => {
+                write!(f, "inspect process driver '{}': {source}", path.display())
+            }
+            Self::ProcessPathNotFile { path } => {
+                write!(f, "process driver '{}' is not a file", path.display())
+            }
+            Self::ProcessPathNotExecutable { path } => {
+                write!(f, "process driver '{}' is not executable", path.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for HostDriverInputError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::FixtureParse(source) => Some(source),
+            Self::DuplicateEventId { .. }
+            | Self::MissingSemanticKind { .. }
+            | Self::UnexpectedSemanticKind { .. }
+            | Self::NoEpisodes { .. }
+            | Self::NoEvents { .. }
+            | Self::EpisodeWithoutEvents { .. }
+            | Self::ProcessCommandEmpty
+            | Self::ProcessExecutableBlank
+            | Self::ProcessPathNotFile { .. }
+            | Self::ProcessPathNotExecutable { .. } => None,
+            Self::ProcessPathMetadata { source, .. } => Some(source),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum HostDriverOutputError {
+    StopBeforeFirstCommittedEvent,
+    ProducedNoEpisodes,
+    ProducedNoEvents,
+    EpisodeWithoutEvents { label: String },
+    UnexpectedInterruptedOutcome,
+    MissingCapturePath,
+}
+
+impl std::fmt::Display for HostDriverOutputError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::StopBeforeFirstCommittedEvent => {
+                write!(f, "host stop requested before first committed event")
+            }
+            Self::ProducedNoEpisodes => write!(f, "driver produced no episodes"),
+            Self::ProducedNoEvents => write!(f, "driver produced no events"),
+            Self::EpisodeWithoutEvents { label } => {
+                write!(f, "episode '{}' has no events", label)
+            }
+            Self::UnexpectedInterruptedOutcome => {
+                write!(
+                    f,
+                    "fixture driver returned interrupted outcome unexpectedly"
+                )
+            }
+            Self::MissingCapturePath => {
+                write!(
+                    f,
+                    "fixture run did not produce a capture file path unexpectedly"
                 )
             }
         }
-        _ => base,
+    }
+}
+
+impl std::error::Error for HostDriverOutputError {}
+
+#[derive(Debug)]
+pub struct HostDriverStartError {
+    detail: String,
+    source: Option<std::io::Error>,
+}
+
+impl HostDriverStartError {
+    fn new(detail: impl Into<String>) -> Self {
+        Self {
+            detail: detail.into(),
+            source: None,
+        }
+    }
+
+    fn with_source(detail: impl Into<String>, source: std::io::Error) -> Self {
+        Self {
+            detail: detail.into(),
+            source: Some(source),
+        }
+    }
+}
+
+impl std::fmt::Display for HostDriverStartError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.detail)
+    }
+}
+
+impl std::error::Error for HostDriverStartError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.as_ref().map(|source| source as _)
+    }
+}
+
+#[derive(Debug)]
+pub struct HostDriverProtocolError {
+    detail: String,
+    source: Option<serde_json::Error>,
+}
+
+impl HostDriverProtocolError {
+    fn new(detail: impl Into<String>) -> Self {
+        Self {
+            detail: detail.into(),
+            source: None,
+        }
+    }
+
+    fn with_json_source(detail: impl Into<String>, source: serde_json::Error) -> Self {
+        Self {
+            detail: detail.into(),
+            source: Some(source),
+        }
+    }
+}
+
+impl std::fmt::Display for HostDriverProtocolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.detail)
+    }
+}
+
+impl std::error::Error for HostDriverProtocolError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.as_ref().map(|source| source as _)
+    }
+}
+
+#[derive(Debug)]
+pub struct HostDriverIoError {
+    detail: String,
+    source: Option<std::io::Error>,
+}
+
+impl HostDriverIoError {
+    fn new(detail: impl Into<String>) -> Self {
+        Self {
+            detail: detail.into(),
+            source: None,
+        }
+    }
+
+    fn with_source(detail: impl Into<String>, source: std::io::Error) -> Self {
+        Self {
+            detail: detail.into(),
+            source: Some(source),
+        }
+    }
+}
+
+impl std::fmt::Display for HostDriverIoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.detail)
+    }
+}
+
+impl std::error::Error for HostDriverIoError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.as_ref().map(|source| source as _)
+    }
+}
+
+#[derive(Debug)]
+pub enum HostDriverError {
+    Input(HostDriverInputError),
+    Start(HostDriverStartError),
+    Protocol(HostDriverProtocolError),
+    Io(HostDriverIoError),
+    Output(HostDriverOutputError),
+}
+
+impl std::fmt::Display for HostDriverError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Input(err) => write!(f, "{err}"),
+            Self::Start(err) => write!(f, "{err}"),
+            Self::Protocol(err) => write!(f, "{err}"),
+            Self::Io(err) => write!(f, "{err}"),
+            Self::Output(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for HostDriverError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Input(err) => Some(err),
+            Self::Start(err) => Some(err),
+            Self::Protocol(err) => Some(err),
+            Self::Io(err) => Some(err),
+            Self::Output(err) => Some(err),
+        }
     }
 }
 
 #[derive(Debug)]
 pub enum HostRunError {
     AdapterRequired(AdapterDependencySummary),
-    InvalidInput(String),
-    DriverStart(String),
-    DriverProtocol(String),
-    DriverIo(String),
-    StepFailed(String),
-    Io(String),
+    Setup(HostSetupError),
+    Driver(HostDriverError),
+    Step(HostedStepError),
+    CaptureWrite(CaptureWriteError),
 }
 
 impl std::fmt::Display for HostRunError {
@@ -305,24 +880,32 @@ impl std::fmt::Display for HostRunError {
                 summary.required_context_nodes.join(", "),
                 summary.write_nodes.join(", ")
             ),
-            Self::InvalidInput(message)
-            | Self::DriverStart(message)
-            | Self::DriverProtocol(message)
-            | Self::DriverIo(message)
-            | Self::StepFailed(message)
-            | Self::Io(message) => write!(f, "{message}"),
+            Self::Setup(err) => write!(f, "{err}"),
+            Self::Driver(err) => write!(f, "{err}"),
+            Self::Step(err) => write!(f, "{err}"),
+            Self::CaptureWrite(err) => write!(f, "{err}"),
         }
     }
 }
 
-impl std::error::Error for HostRunError {}
+impl std::error::Error for HostRunError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::AdapterRequired(_) => None,
+            Self::Setup(err) => Some(err),
+            Self::Driver(err) => Some(err),
+            Self::Step(err) => Some(err),
+            Self::CaptureWrite(err) => Some(err),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum HostReplayError {
     Hosted(HostedReplayError),
     GraphIdMismatch { expected: String, got: String },
     ExternalKindsNotRepresentable { missing: Vec<String> },
-    Setup(String),
+    Setup(HostReplaySetupError),
 }
 
 impl std::fmt::Display for HostReplayError {
@@ -339,7 +922,7 @@ impl std::fmt::Display for HostReplayError {
                 "capture includes external effect kinds not representable by replay graph ownership surface: [{}]",
                 missing.join(", ")
             ),
-            Self::Setup(message) => write!(f, "{message}"),
+            Self::Setup(err) => write!(f, "{err}"),
         }
     }
 }
@@ -348,7 +931,8 @@ impl std::error::Error for HostReplayError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Hosted(err) => Some(err),
-            _ => None,
+            Self::Setup(err) => Some(err),
+            Self::GraphIdMismatch { .. } | Self::ExternalKindsNotRepresentable { .. } => None,
         }
     }
 }

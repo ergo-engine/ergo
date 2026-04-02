@@ -1,3 +1,25 @@
+//! error_format
+//!
+//! Purpose:
+//! - Define the small CLI-owned error rendering primitive used to shape
+//!   human-readable and JSON diagnostics at the command boundary.
+//!
+//! Owns:
+//! - The `CliErrorInfo` transport shape and the canonical text/JSON rendering
+//!   used by CLI command handlers.
+//!
+//! Does not own:
+//! - Command-specific error-code policy; individual CLI modules choose codes,
+//!   messages, and fixes before calling these helpers.
+//!
+//! Connects to:
+//! - CLI command modules and output renderers that need stable end-user error
+//!   formatting.
+//!
+//! Safety notes:
+//! - `CliErrorInfo` stores owned strings so command modules can pass typed
+//!   errors at the final boundary without retaining borrowed state.
+
 use serde_json::{json, Value as JsonValue};
 
 #[derive(Debug, Clone)]
@@ -11,10 +33,10 @@ pub struct CliErrorInfo {
 }
 
 impl CliErrorInfo {
-    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn new(code: impl Into<String>, message: impl ToString) -> Self {
         Self {
             code: code.into(),
-            message: message.into(),
+            message: message.to_string(),
             rule_id: None,
             where_field: None,
             fix: None,
