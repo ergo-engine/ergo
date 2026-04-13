@@ -23,9 +23,7 @@ use super::*;
 use crate::error::EgressDispatchFailure;
 use crate::{HostedAdapterConfig, HostedEvent};
 use ergo_adapter::capture::CaptureError;
-use ergo_adapter::{
-    compile_event_binder, AdapterProvides, ContextKeyProvision, EventId, ExternalEventKind,
-};
+use ergo_adapter::{AdapterProvides, ContextKeyProvision, EventId, ExternalEventKind};
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
 use ergo_runtime::cluster::{
     ExpandedEdge, ExpandedEndpoint, ExpandedGraph, ExpandedNode, ImplementationInstance,
@@ -689,12 +687,8 @@ fn runner_for_graph(graph: ExpandedGraph, provides: AdapterProvides) -> HostedRu
         Arc::new(core_registries().expect("core registries must initialize for host replay tests")),
         provides.clone(),
     );
-    let binder = compile_event_binder(&provides).expect("binder must compile");
-    let adapter = HostedAdapterConfig {
-        provides,
-        binder,
-        adapter_provenance: ADAPTER_PROVENANCE.to_string(),
-    };
+    let adapter =
+        HostedAdapterConfig::new(provides, ADAPTER_PROVENANCE).expect("binder must compile");
     HostedRunner::new(
         ergo_adapter::GraphId::new(GRAPH_ID),
         Constraints::default(),

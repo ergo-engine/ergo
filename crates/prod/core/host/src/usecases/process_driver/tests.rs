@@ -13,6 +13,7 @@
 //!   already exercised by `usecases/tests/process_driver.rs`.
 
 use super::*;
+use crate::PROCESS_DRIVER_PROTOCOL_VERSION;
 use ergo_adapter::{EventTime, ExternalEventKind};
 
 #[test]
@@ -55,5 +56,43 @@ fn process_driver_end_wire_shape_is_stable() {
     assert_eq!(
         serde_json::to_string(&ProcessDriverMessage::End).expect("end frame must serialize"),
         r#"{"type":"end"}"#
+    );
+}
+
+#[test]
+fn process_driver_progress_tracks_first_committed_step_explicitly() {
+    let mut progress = ProcessDriverProgress::new_v0();
+
+    assert_eq!(
+        progress.commit_phase(),
+        ProcessDriverCommitPhase::BeforeFirstCommittedStep
+    );
+
+    progress.record_interrupted_event();
+    assert_eq!(
+        progress.commit_phase(),
+        ProcessDriverCommitPhase::BeforeFirstCommittedStep
+    );
+
+    progress.record_committed_event();
+    assert_eq!(
+        progress.commit_phase(),
+        ProcessDriverCommitPhase::AfterFirstCommittedStep
+    );
+}
+
+#[test]
+fn process_driver_v0_episode_ledger_materializes_one_episode_only_when_events_exist() {
+    assert!(ProcessDriverEpisodeLedger::new_v0()
+        .into_episode_event_counts()
+        .is_empty());
+
+    let mut ledger = ProcessDriverEpisodeLedger::new_v0();
+    ledger.record_event();
+    ledger.record_event();
+
+    assert_eq!(
+        ledger.into_episode_event_counts(),
+        vec![("E1".to_string(), 2)]
     );
 }

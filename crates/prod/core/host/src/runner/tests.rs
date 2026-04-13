@@ -10,7 +10,7 @@
 
 use super::*;
 use ergo_adapter::host::{EffectApplyError, HandlerCoverageError};
-use ergo_adapter::{compile_event_binder, ContextKeyProvision, RuntimeHandle};
+use ergo_adapter::{ContextKeyProvision, RuntimeHandle};
 use ergo_adapter::{EventBindingError, ExternalEventPayloadError};
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
 use ergo_runtime::cluster::{
@@ -469,12 +469,32 @@ fn adapter_provides_with_effects(extra_effects: &[&str]) -> AdapterProvides {
 }
 
 fn adapter_config(provides: AdapterProvides) -> HostedAdapterConfig {
-    let binder = compile_event_binder(&provides).expect("event binder should compile");
-    HostedAdapterConfig {
-        provides,
-        binder,
-        adapter_provenance: "adapter:test@1.0.0;sha256:test".to_string(),
-    }
+    HostedAdapterConfig::new(provides, "adapter:test@1.0.0;sha256:test")
+        .expect("event binder should compile")
+}
+
+#[test]
+fn hosted_adapter_config_requires_compilable_event_binder() {
+    let mut provides = adapter_provides_with_effects(&[]);
+    provides.event_schemas.insert(
+        "price_bar".to_string(),
+        serde_json::json!({
+            "type": "object",
+            "required": ["armed"],
+            "properties": {
+                "price": { "type": "number" }
+            },
+            "additionalProperties": false
+        }),
+    );
+
+    let err = HostedAdapterConfig::new(provides, "adapter:test@1.0.0;sha256:test")
+        .expect_err("invalid event schema should reject hosted adapter config construction");
+    assert!(matches!(
+        err,
+        EventBindingError::UnsupportedFieldType { ref kind, ref field, .. }
+            if kind == "price_bar" && field == "armed"
+    ));
 }
 
 fn adapter_provides_for_number_effect() -> AdapterProvides {
@@ -624,7 +644,7 @@ fn hosted_step_error_recoverability_contract_is_locked() {
 
     for (err, expected) in cases {
         assert_eq!(
-            is_recoverable_step_error(&err),
+            is_recoverable_hosted_step_error(&err),
             expected,
             "recoverability drifted for error variant: {err:?}"
         );

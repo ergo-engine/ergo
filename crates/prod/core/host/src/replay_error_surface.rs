@@ -24,14 +24,12 @@
 //! - Product renderers, currently CLI, that consume `HostErrorDescriptor`.
 //!
 //! Safety notes:
-//! - The `RUN-CANON-2` string is coupled to the invariant registry/docs and must
-//!   be updated here if that host-owned rule id changes.
-//! - Error codes are raw string literals with no shared constant authority; local
-//!   tests must lock the full code/message table so consumer-side string matches
-//!   fail loudly during host changes rather than drifting silently.
-//! - `HostErrorDescriptor` keeps public fields for downstream consumption, so the
-//!   private builder methods enforce construction conventions rather than hard
-//!   type guarantees.
+//! - `HostErrorCode` and `HostRuleId` are the local typed authorities for the
+//!   public descriptor contract; string renderings should come from those types
+//!   rather than ad hoc literals.
+//! - `HostErrorDescriptor` keeps construction private and exposes read-only
+//!   getters so callers can consume the contract without rebuilding it by
+//!   convention.
 //! - Effect mismatch details serialize best-effort JSON for operator diagnostics
 //!   and fall back to placeholder text instead of panicking on serialization
 //!   failure.
@@ -41,20 +39,92 @@
 
 use crate::{HostReplayError, HostedReplayError};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostErrorCode {
+    ReplayUnsupportedCaptureVersion,
+    ReplayHashMismatch,
+    ReplayInvalidPayload,
+    ReplayAdapterProvenanceMismatch,
+    ReplayRuntimeProvenanceMismatch,
+    ReplayUnexpectedAdapter,
+    ReplayAdapterRequired,
+    ReplayDuplicateEventId,
+    ReplayEffectMismatch,
+    ReplayEventRehydrateFailed,
+    ReplayHostStepFailed,
+    ReplayDecisionMismatch,
+    ReplayGraphIdMismatch,
+    ReplayExternalEffectKindUnrepresentable,
+    ReplayHostSetupFailed,
+    AdapterRequiredForGraph,
+    ProductionRequiresAdapter,
+}
+
+impl HostErrorCode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ReplayUnsupportedCaptureVersion => "replay.unsupported_capture_version",
+            Self::ReplayHashMismatch => "replay.hash_mismatch",
+            Self::ReplayInvalidPayload => "replay.invalid_payload",
+            Self::ReplayAdapterProvenanceMismatch => "replay.adapter_provenance_mismatch",
+            Self::ReplayRuntimeProvenanceMismatch => "replay.runtime_provenance_mismatch",
+            Self::ReplayUnexpectedAdapter => "replay.unexpected_adapter",
+            Self::ReplayAdapterRequired => "replay.adapter_required",
+            Self::ReplayDuplicateEventId => "replay.duplicate_event_id",
+            Self::ReplayEffectMismatch => "replay.effect_mismatch",
+            Self::ReplayEventRehydrateFailed => "replay.event_rehydrate_failed",
+            Self::ReplayHostStepFailed => "replay.host_step_failed",
+            Self::ReplayDecisionMismatch => "replay.decision_mismatch",
+            Self::ReplayGraphIdMismatch => "replay.graph_id_mismatch",
+            Self::ReplayExternalEffectKindUnrepresentable => {
+                "replay.external_effect_kind_unrepresentable"
+            }
+            Self::ReplayHostSetupFailed => "replay.host_setup_failed",
+            Self::AdapterRequiredForGraph => "adapter.required_for_graph",
+            Self::ProductionRequiresAdapter => "adapter.production_requires_adapter",
+        }
+    }
+}
+
+impl std::fmt::Display for HostErrorCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostRuleId {
+    RunCanon2,
+}
+
+impl HostRuleId {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RunCanon2 => "RUN-CANON-2",
+        }
+    }
+}
+
+impl std::fmt::Display for HostRuleId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct HostErrorDescriptor {
-    pub code: String,
-    pub message: String,
-    pub rule_id: Option<String>,
-    pub where_field: Option<String>,
-    pub fix: Option<String>,
-    pub details: Vec<String>,
+    code: HostErrorCode,
+    message: String,
+    rule_id: Option<HostRuleId>,
+    where_field: Option<String>,
+    fix: Option<String>,
+    details: Vec<String>,
 }
 
 impl HostErrorDescriptor {
-    fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+    fn new(code: HostErrorCode, message: impl Into<String>) -> Self {
         Self {
-            code: code.into(),
+            code,
             message: message.into(),
             rule_id: None,
             where_field: None,
@@ -63,8 +133,40 @@ impl HostErrorDescriptor {
         }
     }
 
-    fn with_rule_id(mut self, rule_id: impl Into<String>) -> Self {
-        self.rule_id = Some(rule_id.into());
+    pub fn code_id(&self) -> HostErrorCode {
+        self.code
+    }
+
+    pub fn code(&self) -> &str {
+        self.code.as_str()
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    pub fn rule_id_id(&self) -> Option<HostRuleId> {
+        self.rule_id
+    }
+
+    pub fn rule_id(&self) -> Option<&str> {
+        self.rule_id.map(HostRuleId::as_str)
+    }
+
+    pub fn where_field(&self) -> Option<&str> {
+        self.where_field.as_deref()
+    }
+
+    pub fn fix(&self) -> Option<&str> {
+        self.fix.as_deref()
+    }
+
+    pub fn details(&self) -> &[String] {
+        &self.details
+    }
+
+    fn with_rule_id(mut self, rule_id: HostRuleId) -> Self {
+        self.rule_id = Some(rule_id);
         self
     }
 
@@ -88,7 +190,7 @@ pub fn describe_replay_error(err: &ergo_supervisor::replay::ReplayError) -> Host
     match err {
         ergo_supervisor::replay::ReplayError::UnsupportedVersion { capture_version } => {
             HostErrorDescriptor::new(
-                "replay.unsupported_capture_version",
+                HostErrorCode::ReplayUnsupportedCaptureVersion,
                 format!("unsupported capture version '{capture_version}'"),
             )
             .with_where("capture_version")
@@ -96,7 +198,7 @@ pub fn describe_replay_error(err: &ergo_supervisor::replay::ReplayError) -> Host
         }
         ergo_supervisor::replay::ReplayError::HashMismatch { event_id } => {
             HostErrorDescriptor::new(
-                "replay.hash_mismatch",
+                HostErrorCode::ReplayHashMismatch,
                 format!("payload hash mismatch for event '{}'", event_id.as_str()),
             )
             .with_where(format!("event '{}'", event_id.as_str()))
@@ -104,7 +206,7 @@ pub fn describe_replay_error(err: &ergo_supervisor::replay::ReplayError) -> Host
         }
         ergo_supervisor::replay::ReplayError::InvalidPayload { event_id, source } => {
             HostErrorDescriptor::new(
-                "replay.invalid_payload",
+                HostErrorCode::ReplayInvalidPayload,
                 format!("invalid payload for event '{}'", event_id.as_str()),
             )
             .with_where(format!("event '{}'", event_id.as_str()))
@@ -113,7 +215,7 @@ pub fn describe_replay_error(err: &ergo_supervisor::replay::ReplayError) -> Host
         }
         ergo_supervisor::replay::ReplayError::AdapterProvenanceMismatch { expected, got } => {
             HostErrorDescriptor::new(
-                "replay.adapter_provenance_mismatch",
+                HostErrorCode::ReplayAdapterProvenanceMismatch,
                 "adapter provenance mismatch",
             )
             .with_where("capture provenance vs replay adapter")
@@ -123,7 +225,7 @@ pub fn describe_replay_error(err: &ergo_supervisor::replay::ReplayError) -> Host
         }
         ergo_supervisor::replay::ReplayError::RuntimeProvenanceMismatch { expected, got } => {
             HostErrorDescriptor::new(
-                "replay.runtime_provenance_mismatch",
+                HostErrorCode::ReplayRuntimeProvenanceMismatch,
                 "runtime provenance mismatch",
             )
             .with_where("capture provenance vs replay runtime surface")
@@ -133,7 +235,7 @@ pub fn describe_replay_error(err: &ergo_supervisor::replay::ReplayError) -> Host
         }
         ergo_supervisor::replay::ReplayError::UnexpectedAdapterProvidedForNoAdapterCapture => {
             HostErrorDescriptor::new(
-                "replay.unexpected_adapter",
+                HostErrorCode::ReplayUnexpectedAdapter,
                 "bundle provenance is 'none'; adapter must not be provided",
             )
             .with_where("replay option '--adapter'")
@@ -141,7 +243,7 @@ pub fn describe_replay_error(err: &ergo_supervisor::replay::ReplayError) -> Host
         }
         ergo_supervisor::replay::ReplayError::AdapterRequiredForProvenancedCapture => {
             HostErrorDescriptor::new(
-                "replay.adapter_required",
+                HostErrorCode::ReplayAdapterRequired,
                 "bundle is adapter-provenanced; adapter is required",
             )
             .with_where("replay option '--adapter'")
@@ -149,7 +251,7 @@ pub fn describe_replay_error(err: &ergo_supervisor::replay::ReplayError) -> Host
         }
         ergo_supervisor::replay::ReplayError::DuplicateEventId { event_id } => {
             HostErrorDescriptor::new(
-                "replay.duplicate_event_id",
+                HostErrorCode::ReplayDuplicateEventId,
                 format!(
                     "duplicate event_id '{}' in strict replay capture input",
                     event_id.as_str()
@@ -166,7 +268,7 @@ pub fn describe_replay_error(err: &ergo_supervisor::replay::ReplayError) -> Host
             detail,
         } => {
             let mut info = HostErrorDescriptor::new(
-                "replay.effect_mismatch",
+                HostErrorCode::ReplayEffectMismatch,
                 format!(
                     "effect mismatch at index {} for event '{}': {}",
                     effect_index,
@@ -207,20 +309,21 @@ fn describe_hosted_replay_error(err: &HostedReplayError) -> HostErrorDescriptor 
             describe_replay_error(replay_err)
         }
         HostedReplayError::EventRehydrate { event_id, source } => HostErrorDescriptor::new(
-            "replay.event_rehydrate_failed",
+            HostErrorCode::ReplayEventRehydrateFailed,
             format!("event '{}' failed rehydration during replay", event_id),
         )
         .with_where(format!("event '{}'", event_id))
         .with_fix("inspect capture payload/hash integrity and recapture if needed")
         .with_detail(source.to_string()),
-        HostedReplayError::Step(step_err) => {
-            HostErrorDescriptor::new("replay.host_step_failed", "host replay step failed")
-                .with_where("ergo-host replay lifecycle")
-                .with_fix("inspect host lifecycle/effect handler failures and retry")
-                .with_detail(step_err.to_string())
-        }
+        HostedReplayError::Step(step_err) => HostErrorDescriptor::new(
+            HostErrorCode::ReplayHostStepFailed,
+            "host replay step failed",
+        )
+        .with_where("ergo-host replay lifecycle")
+        .with_fix("inspect host lifecycle/effect handler failures and retry")
+        .with_detail(step_err.to_string()),
         HostedReplayError::DecisionMismatch => HostErrorDescriptor::new(
-            "replay.decision_mismatch",
+            HostErrorCode::ReplayDecisionMismatch,
             "replay decisions do not match capture decisions",
         )
         .with_where("decision stream comparison")
@@ -232,7 +335,7 @@ pub fn describe_host_replay_error(err: &HostReplayError) -> HostErrorDescriptor 
     match err {
         HostReplayError::Hosted(hosted) => describe_hosted_replay_error(hosted),
         HostReplayError::GraphIdMismatch { expected, got } => {
-            HostErrorDescriptor::new("replay.graph_id_mismatch", "graph_id mismatch")
+            HostErrorDescriptor::new(HostErrorCode::ReplayGraphIdMismatch, "graph_id mismatch")
                 .with_where(format!(
                     "capture graph_id '{}' vs replay graph '{}'",
                     got, expected
@@ -242,18 +345,19 @@ pub fn describe_host_replay_error(err: &HostReplayError) -> HostErrorDescriptor 
                 .with_detail(format!("got: '{}'", got))
         }
         HostReplayError::ExternalKindsNotRepresentable { missing } => HostErrorDescriptor::new(
-            "replay.external_effect_kind_unrepresentable",
+            HostErrorCode::ReplayExternalEffectKindUnrepresentable,
             "capture contains external effect kinds not representable by replay graph ownership",
         )
         .with_where("replay ownership preflight")
         .with_fix("replay with the matching graph/adapter pair used during capture")
         .with_detail(format!("missing kinds: {}", missing.join(", "))),
-        HostReplayError::Setup(detail) => {
-            HostErrorDescriptor::new("replay.host_setup_failed", "host replay setup failed")
-                .with_where("ergo-host replay setup")
-                .with_fix("verify capture/graph/adapter paths and retry")
-                .with_detail(detail.to_string())
-        }
+        HostReplayError::Setup(detail) => HostErrorDescriptor::new(
+            HostErrorCode::ReplayHostSetupFailed,
+            "host replay setup failed",
+        )
+        .with_where("ergo-host replay setup")
+        .with_fix("verify capture/graph/adapter paths and retry")
+        .with_detail(detail.to_string()),
     }
 }
 
@@ -269,10 +373,10 @@ pub fn describe_adapter_required(summary: &crate::AdapterDependencySummary) -> H
     };
 
     let mut info = HostErrorDescriptor::new(
-        "adapter.required_for_graph",
+        HostErrorCode::AdapterRequiredForGraph,
         "graph requires adapter capabilities but no --adapter was provided",
     )
-    .with_rule_id("RUN-CANON-2")
+    .with_rule_id(HostRuleId::RunCanon2)
     .with_where(where_field)
     .with_fix("provide --adapter <adapter.yaml> for canonical run");
 
@@ -291,6 +395,19 @@ pub fn describe_adapter_required(summary: &crate::AdapterDependencySummary) -> H
     }
 
     info
+}
+
+pub fn describe_production_requires_adapter() -> HostErrorDescriptor {
+    HostErrorDescriptor::new(
+        HostErrorCode::ProductionRequiresAdapter,
+        "production session requires an adapter contract but no --adapter was provided",
+    )
+    .with_rule_id(HostRuleId::RunCanon2)
+    .with_where("session intent")
+    .with_fix(
+        "provide --adapter <adapter.yaml> for production execution, \
+         or use a fixture driver/fixture-items ingress for adapter-exempt testing",
+    )
 }
 
 #[cfg(test)]

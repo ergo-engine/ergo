@@ -16,11 +16,35 @@
 //!   parent `usecases::tests` module.
 //!
 //! Safety notes:
-//! - These tests intentionally pin the host-owned `ergo-driver.v0` lifecycle
-//!   boundary because CLI and SDK rely on the resulting run/error behavior.
+//! - These tests intentionally pin the host-owned process-driver protocol token
+//!   and lifecycle boundary because CLI and SDK rely on the resulting run/error
+//!   behavior.
 
-use super::super::process_driver::PROCESS_DRIVER_PROTOCOL_VERSION;
 use super::*;
+use crate::PROCESS_DRIVER_PROTOCOL_VERSION;
+
+fn wait_for_nonempty_file(
+    path: &Path,
+    timeout: Duration,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if path.exists() {
+            let contents = fs::read_to_string(path)?;
+            if !contents.trim().is_empty() {
+                return Ok(contents);
+            }
+        }
+
+        if Instant::now() >= deadline {
+            return Err(
+                format!("timed out waiting for non-empty file '{}'", path.display()).into(),
+            );
+        }
+
+        thread::sleep(Duration::from_millis(10));
+    }
+}
 
 #[test]
 fn process_driver_executes_via_canonical_host_path() -> Result<(), Box<dyn std::error::Error>> {
@@ -44,10 +68,11 @@ fn process_driver_executes_via_canonical_host_path() -> Result<(), Box<dyn std::
             serde_json::to_string(
                 &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
             )?,
-            serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?,
+            serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?,
             serde_json::to_string(&json!({"type":"end"}))?,
         ],
     )?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
     let capture = temp_dir.join("capture.json");
 
     let result = run_graph_from_paths(RunGraphFromPathsRequest {
@@ -56,7 +81,7 @@ fn process_driver_executes_via_canonical_host_path() -> Result<(), Box<dyn std::
         driver: DriverConfig::Process {
             command: vec!["/bin/sh".to_string(), driver.display().to_string()],
         },
-        adapter_path: None,
+        adapter_path: Some(adapter),
         egress_config: None,
         capture_output: Some(capture.clone()),
         pretty_capture: false,
@@ -105,10 +130,11 @@ fn process_driver_assets_lane_matches_path_lane_summary_and_capture_shape(
             serde_json::to_string(
                 &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
             )?,
-            serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?,
+            serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?,
             serde_json::to_string(&json!({"type":"end"}))?,
         ],
     )?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
     let path_capture = temp_dir.join("capture-path.json");
     let assets_capture = temp_dir.join("capture-assets.json");
 
@@ -119,7 +145,7 @@ fn process_driver_assets_lane_matches_path_lane_summary_and_capture_shape(
             driver: DriverConfig::Process {
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
-            adapter_path: None,
+            adapter_path: Some(adapter.clone()),
             egress_config: None,
             capture_output: Some(path_capture.clone()),
             pretty_capture: false,
@@ -129,7 +155,14 @@ fn process_driver_assets_lane_matches_path_lane_summary_and_capture_shape(
     let assets_summary = expect_assets_completed(run_graph_from_assets_with_process_policy(
         RunGraphFromAssetsRequest {
             assets,
-            prep: LivePrepOptions::default(),
+            prep: LivePrepOptions {
+                adapter: Some(AdapterInput::Text {
+                    content: minimal_adapter_manifest_text().to_string(),
+                    source_label: "inline-minimal-adapter".to_string(),
+                }),
+                egress_config: None,
+                session_intent: SessionIntent::Production,
+            },
             driver: DriverConfig::Process {
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
@@ -193,6 +226,7 @@ fn process_driver_host_stop_before_first_committed_event_returns_host_run_error_
         "driver.sh",
         &format!("#!/bin/sh\nprintf '%s\\n' '{hello}'\nexec sleep 5\n"),
     )?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
     let capture = temp_dir.join("capture.json");
     let stop = HostStopHandle::new();
     let stop_clone = stop.clone();
@@ -208,7 +242,7 @@ fn process_driver_host_stop_before_first_committed_event_returns_host_run_error_
             driver: DriverConfig::Process {
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
-            adapter_path: None,
+            adapter_path: Some(adapter.clone()),
             egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,
@@ -256,12 +290,13 @@ fn process_driver_max_events_returns_host_stop_interruption_and_replayable_captu
     for index in 1..=64 {
         body.push_str(&serde_json::to_string(&json!({
             "type":"event",
-            "event": hosted_event(&format!("evt{index}"))
+            "event": hosted_event_with_semantic_kind(&format!("evt{index}"))
         }))?);
         body.push('\n');
     }
     body.push_str("__ERGO_DRIVER__\nexec sleep 5\n");
     let driver = write_process_driver_program(&temp_dir, "driver.sh", &body)?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
     let capture = temp_dir.join("capture.json");
 
     let outcome = run_graph_from_paths_with_process_policy_and_control(
@@ -271,7 +306,7 @@ fn process_driver_max_events_returns_host_stop_interruption_and_replayable_captu
             driver: DriverConfig::Process {
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
-            adapter_path: None,
+            adapter_path: Some(adapter.clone()),
             egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,
@@ -294,7 +329,7 @@ fn process_driver_max_events_returns_host_stop_interruption_and_replayable_captu
         capture_path: capture,
         graph_path: graph,
         cluster_paths: Vec::new(),
-        adapter_path: None,
+        adapter_path: Some(adapter.clone()),
     })?;
     assert_eq!(replay.graph_id.as_str(), "host_process_max_events");
     assert_eq!(replay.events, 3);
@@ -329,7 +364,7 @@ fn process_driver_hot_stream_host_stop_does_not_wait_for_recv_timeout(
     for index in 1..=256 {
         let event_line = serde_json::to_string(&json!({
             "type":"event",
-            "event": hosted_event(&format!("hot_evt{index}"))
+            "event": hosted_event_with_semantic_kind(&format!("hot_evt{index}"))
         }))?;
         body.push_str(&format!(
             "printf '%s\\n' '{index}' >> \"$marker\"\nprintf '%s\\n' '{event_line}'\nsleep 0.001\n"
@@ -337,6 +372,7 @@ fn process_driver_hot_stream_host_stop_does_not_wait_for_recv_timeout(
     }
     body.push_str("exec sleep 5\n");
     let driver = write_process_driver_program(&temp_dir, "driver.sh", &body)?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
     let capture = temp_dir.join("capture.json");
     let stop = HostStopHandle::new();
     let stop_clone = stop.clone();
@@ -366,7 +402,7 @@ fn process_driver_hot_stream_host_stop_does_not_wait_for_recv_timeout(
             driver: DriverConfig::Process {
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
-            adapter_path: None,
+            adapter_path: Some(adapter.clone()),
             egress_config: None,
             capture_output: Some(capture),
             pretty_capture: false,
@@ -417,12 +453,13 @@ fn process_driver_runs_in_separate_process_group() -> Result<(), Box<dyn std::er
             pgid_path.display()
         ),
     )?;
+    let _adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
 
     let mut child = spawn_process_driver(&["/bin/sh".to_string(), driver.display().to_string()])?;
-    wait_for_path(&pgid_path, Duration::from_secs(1))?;
+    let child_pgid_text = wait_for_nonempty_file(&pgid_path, Duration::from_secs(1))?;
 
     let parent_pgid = current_process_group_id()?;
-    let child_pgid = fs::read_to_string(&pgid_path)?.trim().parse::<u32>()?;
+    let child_pgid = child_pgid_text.trim().parse::<u32>()?;
     assert_ne!(
         child_pgid, parent_pgid,
         "process driver should not share the test process group"
@@ -456,7 +493,7 @@ fn process_driver_signal_race_after_stop_still_returns_host_stop_requested(
     let emitted_path = temp_dir.join("driver.emitted");
     let hello =
         serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
-    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?;
+    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?;
     let driver = write_process_driver_program(
         &temp_dir,
         "driver.sh",
@@ -468,19 +505,20 @@ fn process_driver_signal_race_after_stop_still_returns_host_stop_requested(
             emitted = emitted_path.display()
         ),
     )?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
 
     let stop = HostStopHandle::new();
     let stop_clone = stop.clone();
     let pid_path_clone = pid_path.clone();
     let emitted_path_clone = emitted_path.clone();
     let stopper = thread::spawn(move || -> Result<(), String> {
-        wait_for_path(&pid_path_clone, Duration::from_secs(1)).map_err(|err| err.to_string())?;
+        let pid_text = wait_for_nonempty_file(&pid_path_clone, Duration::from_secs(1))
+            .map_err(|err| err.to_string())?;
         wait_for_path(&emitted_path_clone, Duration::from_secs(1))
             .map_err(|err| err.to_string())?;
         thread::sleep(Duration::from_millis(50));
         stop_clone.request_stop();
-        let pgid = fs::read_to_string(&pid_path_clone)
-            .map_err(|err| format!("read driver pid '{}': {err}", pid_path_clone.display()))?
+        let pgid = pid_text
             .trim()
             .parse::<u32>()
             .map_err(|err| format!("parse driver pid '{}': {err}", pid_path_clone.display()))?;
@@ -496,7 +534,7 @@ fn process_driver_signal_race_after_stop_still_returns_host_stop_requested(
             driver: DriverConfig::Process {
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
-            adapter_path: None,
+            adapter_path: Some(adapter.clone()),
             egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,
@@ -524,7 +562,7 @@ fn process_driver_signal_race_after_stop_still_returns_host_stop_requested(
         capture_path: capture,
         graph_path: graph,
         cluster_paths: Vec::new(),
-        adapter_path: None,
+        adapter_path: Some(adapter.clone()),
     })?;
     assert_eq!(replay.graph_id.as_str(), "host_process_stop_signal_race");
     assert_eq!(replay.events, 1);
@@ -552,9 +590,10 @@ fn process_driver_invalid_hello_fails_before_start() -> Result<(), Box<dyn std::
         &temp_dir,
         "driver.sh",
         &[serde_json::to_string(
-            &json!({"type":"event","event":hosted_event("evt1")}),
+            &json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}),
         )?],
     )?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
 
     let err = run_graph_from_paths(RunGraphFromPathsRequest {
         graph_path: graph,
@@ -562,7 +601,7 @@ fn process_driver_invalid_hello_fails_before_start() -> Result<(), Box<dyn std::
         driver: DriverConfig::Process {
             command: vec!["/bin/sh".to_string(), driver.display().to_string()],
         },
-        adapter_path: None,
+        adapter_path: Some(adapter.clone()),
         egress_config: None,
         capture_output: Some(temp_dir.join("capture.json")),
         pretty_capture: false,
@@ -595,6 +634,7 @@ fn process_driver_silent_before_hello_is_bounded_by_startup_grace(
         &number_source_graph_yaml("host_process_startup_timeout", 2.5),
     )?;
     let driver = write_process_driver_program(&temp_dir, "driver.sh", "#!/bin/sh\nexec sleep 5\n")?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
 
     let started = Instant::now();
     let err = run_graph_from_paths_with_process_policy(
@@ -604,7 +644,7 @@ fn process_driver_silent_before_hello_is_bounded_by_startup_grace(
             driver: DriverConfig::Process {
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
-            adapter_path: None,
+            adapter_path: Some(adapter.clone()),
             egress_config: None,
             capture_output: Some(temp_dir.join("capture.json")),
             pretty_capture: false,
@@ -649,6 +689,7 @@ fn process_driver_malformed_bytes_before_first_committed_step_return_driver_prot
         "driver.sh",
         &format!("#!/bin/sh\nprintf '%s\\n' '{hello}'\nprintf '\\377\\n'\n"),
     )?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
 
     let err = run_graph_from_paths(RunGraphFromPathsRequest {
         graph_path: graph,
@@ -656,7 +697,7 @@ fn process_driver_malformed_bytes_before_first_committed_step_return_driver_prot
         driver: DriverConfig::Process {
             command: vec!["/bin/sh".to_string(), driver.display().to_string()],
         },
-        adapter_path: None,
+        adapter_path: Some(adapter.clone()),
         egress_config: None,
         capture_output: Some(temp_dir.join("capture.json")),
         pretty_capture: false,
@@ -695,10 +736,11 @@ fn process_driver_protocol_violation_after_start_returns_interrupted_and_replaya
             serde_json::to_string(
                 &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
             )?,
-            serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?,
+            serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?,
             "{not-json".to_string(),
         ],
     )?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
     let capture = temp_dir.join("capture.json");
 
     let outcome = run_graph_from_paths(RunGraphFromPathsRequest {
@@ -707,7 +749,7 @@ fn process_driver_protocol_violation_after_start_returns_interrupted_and_replaya
         driver: DriverConfig::Process {
             command: vec!["/bin/sh".to_string(), driver.display().to_string()],
         },
-        adapter_path: None,
+        adapter_path: Some(adapter.clone()),
         egress_config: None,
         capture_output: Some(capture.clone()),
         pretty_capture: false,
@@ -735,7 +777,7 @@ fn process_driver_protocol_violation_after_start_returns_interrupted_and_replaya
         capture_path: capture,
         graph_path: graph,
         cluster_paths: Vec::new(),
-        adapter_path: None,
+        adapter_path: Some(adapter.clone()),
     })?;
     assert_eq!(replay.graph_id.as_str(), "host_process_interrupted");
     assert_eq!(replay.events, 1);
@@ -762,7 +804,7 @@ fn process_driver_malformed_bytes_after_start_return_interrupted_and_replayable_
     )?;
     let hello =
         serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
-    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?;
+    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?;
     let driver = write_process_driver_program(
         &temp_dir,
         "driver.sh",
@@ -770,6 +812,7 @@ fn process_driver_malformed_bytes_after_start_return_interrupted_and_replayable_
             "#!/bin/sh\nprintf '%s\\n' '{hello}'\nprintf '%s\\n' '{event}'\nprintf '\\377\\n'\n"
         ),
     )?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
     let capture = temp_dir.join("capture.json");
 
     let outcome = run_graph_from_paths(RunGraphFromPathsRequest {
@@ -778,7 +821,7 @@ fn process_driver_malformed_bytes_after_start_return_interrupted_and_replayable_
         driver: DriverConfig::Process {
             command: vec!["/bin/sh".to_string(), driver.display().to_string()],
         },
-        adapter_path: None,
+        adapter_path: Some(adapter.clone()),
         egress_config: None,
         capture_output: Some(capture.clone()),
         pretty_capture: false,
@@ -798,7 +841,7 @@ fn process_driver_malformed_bytes_after_start_return_interrupted_and_replayable_
         capture_path: capture,
         graph_path: graph,
         cluster_paths: Vec::new(),
-        adapter_path: None,
+        adapter_path: Some(adapter.clone()),
     })?;
     assert_eq!(
         replay.graph_id.as_str(),
@@ -828,7 +871,7 @@ fn process_driver_non_zero_exit_after_end_returns_interrupted(
     )?;
     let hello =
         serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
-    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?;
+    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?;
     let end = serde_json::to_string(&json!({"type":"end"}))?;
     let driver = write_process_driver_program(
         &temp_dir,
@@ -837,6 +880,7 @@ fn process_driver_non_zero_exit_after_end_returns_interrupted(
             "#!/bin/sh\nprintf '%s\\n' '{hello}'\nprintf '%s\\n' '{event}'\nprintf '%s\\n' '{end}'\nexit 1\n"
         ),
     )?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
     let capture = temp_dir.join("capture.json");
 
     let outcome = run_graph_from_paths_with_process_policy(
@@ -846,7 +890,7 @@ fn process_driver_non_zero_exit_after_end_returns_interrupted(
             driver: DriverConfig::Process {
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
-            adapter_path: None,
+            adapter_path: Some(adapter.clone()),
             egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,
@@ -885,7 +929,7 @@ fn process_driver_delayed_clean_exit_within_grace_returns_completed(
     )?;
     let hello =
         serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
-    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?;
+    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?;
     let end = serde_json::to_string(&json!({"type":"end"}))?;
     let driver = write_process_driver_program(
         &temp_dir,
@@ -894,6 +938,7 @@ fn process_driver_delayed_clean_exit_within_grace_returns_completed(
             "#!/bin/sh\nprintf '%s\\n' '{hello}'\nprintf '%s\\n' '{event}'\nprintf '%s\\n' '{end}'\nsleep 0.01\nexit 0\n"
         ),
     )?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
     let capture = temp_dir.join("capture.json");
 
     let summary = expect_completed(run_graph_from_paths_with_process_policy(
@@ -903,7 +948,7 @@ fn process_driver_delayed_clean_exit_within_grace_returns_completed(
             driver: DriverConfig::Process {
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
-            adapter_path: None,
+            adapter_path: Some(adapter.clone()),
             egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,
@@ -940,7 +985,7 @@ fn process_driver_extra_output_after_end_returns_protocol_violation(
     )?;
     let hello =
         serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
-    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?;
+    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?;
     let end = serde_json::to_string(&json!({"type":"end"}))?;
     let driver = write_process_driver_program(
         &temp_dir,
@@ -949,6 +994,7 @@ fn process_driver_extra_output_after_end_returns_protocol_violation(
             "#!/bin/sh\nprintf '%s\\n' '{hello}'\nprintf '%s\\n' '{event}'\nprintf '%s\\n' '{end}'\nprintf '%s\\n' 'trailing-garbage'\n"
         ),
     )?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
     let capture = temp_dir.join("capture.json");
 
     let outcome = run_graph_from_paths_with_process_policy(
@@ -958,7 +1004,7 @@ fn process_driver_extra_output_after_end_returns_protocol_violation(
             driver: DriverConfig::Process {
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
-            adapter_path: None,
+            adapter_path: Some(adapter.clone()),
             egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,
@@ -997,7 +1043,7 @@ fn process_driver_hang_after_end_is_bounded_and_interrupted(
     )?;
     let hello =
         serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
-    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?;
+    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?;
     let end = serde_json::to_string(&json!({"type":"end"}))?;
     let driver = write_process_driver_program(
         &temp_dir,
@@ -1006,6 +1052,7 @@ fn process_driver_hang_after_end_is_bounded_and_interrupted(
             "#!/bin/sh\nprintf '%s\\n' '{hello}'\nprintf '%s\\n' '{event}'\nprintf '%s\\n' '{end}'\nexec sleep 5\n"
         ),
     )?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
     let capture = temp_dir.join("capture.json");
 
     let started = Instant::now();
@@ -1016,7 +1063,7 @@ fn process_driver_hang_after_end_is_bounded_and_interrupted(
             driver: DriverConfig::Process {
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
-            adapter_path: None,
+            adapter_path: Some(adapter.clone()),
             egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,
@@ -1057,7 +1104,7 @@ fn process_driver_stdout_eof_before_exit_is_bounded_and_interrupted(
     )?;
     let hello =
         serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
-    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event("evt1")}))?;
+    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?;
     let driver = write_process_driver_program(
         &temp_dir,
         "driver.sh",
@@ -1065,6 +1112,7 @@ fn process_driver_stdout_eof_before_exit_is_bounded_and_interrupted(
             "#!/bin/sh\nprintf '%s\\n' '{hello}'\nprintf '%s\\n' '{event}'\nexec 1>&-\nexec sleep 5\n"
         ),
     )?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
     let capture = temp_dir.join("capture.json");
 
     let started = Instant::now();
@@ -1075,7 +1123,7 @@ fn process_driver_stdout_eof_before_exit_is_bounded_and_interrupted(
             driver: DriverConfig::Process {
                 command: vec!["/bin/sh".to_string(), driver.display().to_string()],
             },
-            adapter_path: None,
+            adapter_path: Some(adapter.clone()),
             egress_config: None,
             capture_output: Some(capture.clone()),
             pretty_capture: false,

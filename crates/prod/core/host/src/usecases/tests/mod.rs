@@ -12,8 +12,8 @@
 //! - Production host semantics, which remain owned by `usecases.rs` and its child modules.
 //!
 //! Safety notes:
-//! - `normalize_cluster_graph_yaml(...)` is a fragile heuristic YAML rewriter kept only for the
-//!   current shared test fixtures; broader cleanup is tracked in issue #74.
+//! - Shared graph/manfiest helpers below now emit explicit already-valid YAML;
+//!   `write_temp_file(...)` no longer rewrites fixture text heuristically.
 
 use super::live_prep::{prepare_adapter_setup, prepare_graph_runtime, replay_owned_external_kinds};
 use super::live_run::{run_graph_from_assets_internal, run_graph_from_paths_internal};
@@ -202,91 +202,8 @@ fn write_temp_file(
     contents: &str,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let path = base.join(name);
-    let contents = normalize_cluster_graph_yaml(contents);
     fs::write(&path, contents)?;
     Ok(path)
-}
-
-fn normalize_cluster_graph_yaml(contents: &str) -> String {
-    if !(contents.contains("kind: cluster") && contents.contains("nodes:")) {
-        return contents.to_string();
-    }
-
-    let lines: Vec<&str> = contents.lines().collect();
-    let mut out = String::with_capacity(contents.len() + 32);
-    let mut i = 0;
-
-    while i < lines.len() {
-        let line = lines[i];
-        if line == "nodes:" {
-            out.push_str(line);
-            out.push('\n');
-            i += 1;
-
-            while i < lines.len() {
-                let current = lines[i];
-                if current.starts_with("edges:") || current.starts_with("outputs:") {
-                    break;
-                }
-
-                if current.starts_with("  ")
-                    && current.ends_with(':')
-                    && !current.starts_with("    ")
-                {
-                    out.push_str(current);
-                    out.push('\n');
-                    i += 1;
-
-                    let mut normalize_block = false;
-                    let mut peek = i;
-                    while peek < lines.len() {
-                        let next = lines[peek];
-                        if next.trim().is_empty() {
-                            peek += 1;
-                            continue;
-                        }
-                        if next.starts_with("edges:") || next.starts_with("outputs:") {
-                            break;
-                        }
-                        normalize_block = !next.starts_with("    ");
-                        break;
-                    }
-
-                    while i < lines.len() {
-                        let child = lines[i];
-                        if child.starts_with("edges:") || child.starts_with("outputs:") {
-                            break;
-                        }
-                        if child.starts_with("  ")
-                            && child.ends_with(':')
-                            && !child.starts_with("    ")
-                        {
-                            break;
-                        }
-
-                        if normalize_block && !child.trim().is_empty() {
-                            out.push_str("    ");
-                        }
-                        out.push_str(child);
-                        out.push('\n');
-                        i += 1;
-                    }
-                    continue;
-                }
-
-                out.push_str(current);
-                out.push('\n');
-                i += 1;
-            }
-            continue;
-        }
-
-        out.push_str(line);
-        out.push('\n');
-        i += 1;
-    }
-
-    out
 }
 
 fn write_intent_graph(
@@ -487,6 +404,39 @@ fn write_intent_adapter_manifest(
     name: &str,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     write_temp_file(base, name, intent_adapter_manifest_text())
+}
+
+/// Minimal adapter manifest with one event kind (required by ADP-4) and no
+/// declared context keys or accepted effects.  Provides a valid adapter
+/// contract for process driver tests that exercise host/driver protocol rather
+/// than adapter semantics.
+fn minimal_adapter_manifest_text() -> &'static str {
+    r#"
+kind: adapter
+id: minimal_test_adapter
+version: 1.0.0
+runtime_compatibility: 0.1.0
+context_keys: []
+event_kinds:
+  - name: tick
+    payload_schema:
+      type: object
+      additionalProperties: false
+capture:
+  format_version: "1"
+  fields:
+    - event.tick
+    - meta.adapter_id
+    - meta.adapter_version
+    - meta.timestamp
+"#
+}
+
+fn write_minimal_adapter_manifest(
+    base: &Path,
+    name: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    write_temp_file(base, name, minimal_adapter_manifest_text())
 }
 
 fn core_graph_yaml(graph_id: &str) -> String {
@@ -732,6 +682,19 @@ fn hosted_event(event_id: &str) -> HostedEvent {
         kind: ExternalEventKind::Command,
         at: EventTime::default(),
         semantic_kind: None,
+        payload: Some(json!({})),
+    }
+}
+
+/// Hosted event with a semantic kind matching the minimal adapter's declared
+/// event kind (`"tick"`).  Used by process driver tests that are now
+/// adapter-bound.
+fn hosted_event_with_semantic_kind(event_id: &str) -> HostedEvent {
+    HostedEvent {
+        event_id: event_id.to_string(),
+        kind: ExternalEventKind::Command,
+        at: EventTime::default(),
+        semantic_kind: Some("tick".to_string()),
         payload: Some(json!({})),
     }
 }

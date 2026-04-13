@@ -56,12 +56,12 @@ fn captured_effect(key: &str, value: f64) -> CapturedActionEffect {
 }
 
 fn assert_descriptor(descriptor: HostErrorDescriptor, expected: ExpectedDescriptor<'_>) {
-    assert_eq!(descriptor.code, expected.code);
-    assert_eq!(descriptor.message, expected.message);
-    assert_eq!(descriptor.rule_id.as_deref(), expected.rule_id);
-    assert_eq!(descriptor.where_field, expected.where_field);
-    assert_eq!(descriptor.fix.as_deref(), expected.fix);
-    assert_eq!(descriptor.details, expected.details);
+    assert_eq!(descriptor.code(), expected.code);
+    assert_eq!(descriptor.message(), expected.message);
+    assert_eq!(descriptor.rule_id(), expected.rule_id);
+    assert_eq!(descriptor.where_field(), expected.where_field.as_deref());
+    assert_eq!(descriptor.fix(), expected.fix);
+    assert_eq!(descriptor.details(), expected.details.as_slice());
 }
 
 #[test]
@@ -333,7 +333,7 @@ fn descriptor_contract_table_is_stable() {
     ]);
     let actual_codes = cases
         .iter()
-        .map(|(_, descriptor)| descriptor.code.clone())
+        .map(|(_, descriptor)| descriptor.code().to_string())
         .collect::<BTreeSet<_>>();
 
     assert_eq!(cases.len(), 16);
@@ -354,21 +354,18 @@ fn effect_mismatch_descriptor_includes_serialized_expected_and_actual_effects() 
         detail: "content mismatch".to_string(),
     });
 
-    assert_eq!(descriptor.code, "replay.effect_mismatch");
+    assert_eq!(descriptor.code(), "replay.effect_mismatch");
+    assert_eq!(descriptor.where_field(), Some("event 'evt-1' effect[0]"));
     assert_eq!(
-        descriptor.where_field.as_deref(),
-        Some("event 'evt-1' effect[0]")
-    );
-    assert_eq!(
-        descriptor.fix.as_deref(),
+        descriptor.fix(),
         Some("inspect action effect drift and regenerate capture if needed")
     );
     assert!(descriptor
-        .details
+        .details()
         .iter()
         .any(|detail| detail.contains("expected:") && detail.contains("\"price\"")));
     assert!(descriptor
-        .details
+        .details()
         .iter()
         .any(|detail| detail.contains("actual:") && detail.contains("\"volume\"")));
 }
@@ -381,18 +378,15 @@ fn hosted_replay_helper_maps_step_failures_to_host_descriptor() {
         },
     ));
 
-    assert_eq!(descriptor.code, "replay.host_step_failed");
+    assert_eq!(descriptor.code(), "replay.host_step_failed");
+    assert_eq!(descriptor.where_field(), Some("ergo-host replay lifecycle"));
     assert_eq!(
-        descriptor.where_field.as_deref(),
-        Some("ergo-host replay lifecycle")
-    );
-    assert_eq!(
-        descriptor.fix.as_deref(),
+        descriptor.fix(),
         Some("inspect host lifecycle/effect handler failures and retry")
     );
     assert_eq!(
-        descriptor.details,
-        vec!["host lifecycle violation: runner already finalized".to_string()]
+        descriptor.details(),
+        &["host lifecycle violation: runner already finalized".to_string()]
     );
 }
 
@@ -402,13 +396,10 @@ fn host_replay_error_delegates_hosted_variants_through_private_helper() {
         HostedReplayError::DecisionMismatch,
     ));
 
-    assert_eq!(descriptor.code, "replay.decision_mismatch");
+    assert_eq!(descriptor.code(), "replay.decision_mismatch");
+    assert_eq!(descriptor.where_field(), Some("decision stream comparison"));
     assert_eq!(
-        descriptor.where_field.as_deref(),
-        Some("decision stream comparison")
-    );
-    assert_eq!(
-        descriptor.fix.as_deref(),
+        descriptor.fix(),
         Some("inspect runtime/adapter drift and regenerate capture if needed")
     );
 }
@@ -426,11 +417,11 @@ fn hosted_preflight_and_compare_currently_collapse_to_the_same_descriptor() {
         },
     )));
 
-    assert_eq!(preflight.code, compare.code);
-    assert_eq!(preflight.message, compare.message);
-    assert_eq!(preflight.where_field, compare.where_field);
-    assert_eq!(preflight.fix, compare.fix);
-    assert_eq!(preflight.details, compare.details);
+    assert_eq!(preflight.code_id(), compare.code_id());
+    assert_eq!(preflight.message(), compare.message());
+    assert_eq!(preflight.where_field(), compare.where_field());
+    assert_eq!(preflight.fix(), compare.fix());
+    assert_eq!(preflight.details(), compare.details());
 }
 
 #[test]
@@ -441,17 +432,15 @@ fn adapter_required_descriptor_carries_run_canon_2_rule_and_node_details() {
         write_nodes: vec!["action.write".to_string()],
     });
 
-    assert_eq!(descriptor.code, "adapter.required_for_graph");
-    assert_eq!(descriptor.rule_id.as_deref(), Some("RUN-CANON-2"));
-    assert_eq!(
-        descriptor.where_field.as_deref(),
-        Some("node 'src.required'")
-    );
-    assert!(descriptor.details.iter().any(
+    assert_eq!(descriptor.code(), "adapter.required_for_graph");
+    assert_eq!(descriptor.rule_id_id(), Some(HostRuleId::RunCanon2));
+    assert_eq!(descriptor.rule_id(), Some("RUN-CANON-2"));
+    assert_eq!(descriptor.where_field(), Some("node 'src.required'"));
+    assert!(descriptor.details().iter().any(
         |detail| detail.contains("required source context") && detail.contains("src.required")
     ));
     assert!(descriptor
-        .details
+        .details()
         .iter()
         .any(|detail| detail.contains("action writes") && detail.contains("action.write")));
 }
@@ -460,10 +449,8 @@ fn adapter_required_descriptor_carries_run_canon_2_rule_and_node_details() {
 fn adapter_required_descriptor_falls_back_to_dependency_scan_when_summary_is_empty() {
     let descriptor = describe_adapter_required(&crate::AdapterDependencySummary::default());
 
-    assert_eq!(descriptor.rule_id.as_deref(), Some("RUN-CANON-2"));
-    assert_eq!(
-        descriptor.where_field.as_deref(),
-        Some("graph dependency scan")
-    );
-    assert!(descriptor.details.is_empty());
+    assert_eq!(descriptor.rule_id_id(), Some(HostRuleId::RunCanon2));
+    assert_eq!(descriptor.rule_id(), Some("RUN-CANON-2"));
+    assert_eq!(descriptor.where_field(), Some("graph dependency scan"));
+    assert!(descriptor.details().is_empty());
 }

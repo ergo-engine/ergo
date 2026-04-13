@@ -40,9 +40,11 @@ use ergo_loader::{LoaderError, PreparedGraphAssets};
 use ergo_runtime::catalog::{build_core_catalog, CorePrimitiveCatalog};
 use ergo_runtime::cluster::{
     expand, ClusterDefinition, ClusterLoader, ClusterVersionIndex, ExpandError, ExpandedEndpoint,
-    ExpandedGraph, PrimitiveCatalog, PrimitiveKind, Version, VersionTargetKind,
+    ExpandedGraph, PrimitiveCatalog, PrimitiveKind, Version,
 };
 use ergo_runtime::common::ErrorInfo;
+
+use crate::expand_diagnostics::{available_clusters_from_files, available_clusters_from_labels};
 
 pub struct GraphToDotFromPathsRequest {
     pub graph_path: PathBuf,
@@ -207,7 +209,14 @@ fn graph_to_dot_expansion_error_from_files(
     GraphToDotError::Expansion(GraphToDotExpansionError {
         source: err.clone(),
         context: GraphToDotExpansionContext::Filesystem,
-        available_clusters: available_clusters_from_files(err, cluster_sources),
+        available_clusters: available_clusters_from_files(err, cluster_sources)
+            .into_iter()
+            .map(|cluster| GraphToDotAvailableCluster {
+                id: cluster.id,
+                version: cluster.version,
+                location: cluster.location,
+            })
+            .collect(),
     })
 }
 
@@ -218,7 +227,14 @@ fn graph_to_dot_expansion_error_from_labels(
     GraphToDotError::Expansion(GraphToDotExpansionError {
         source: err.clone(),
         context: GraphToDotExpansionContext::Assets,
-        available_clusters: available_clusters_from_labels(err, cluster_diagnostic_labels),
+        available_clusters: available_clusters_from_labels(err, cluster_diagnostic_labels)
+            .into_iter()
+            .map(|cluster| GraphToDotAvailableCluster {
+                id: cluster.id,
+                version: cluster.version,
+                location: cluster.location,
+            })
+            .collect(),
     })
 }
 
@@ -256,57 +272,6 @@ impl ClusterVersionIndex for PreloadedClusterLoader {
             .collect::<Vec<_>>();
         versions.sort();
         versions
-    }
-}
-
-fn available_clusters_from_files(
-    err: &ExpandError,
-    cluster_sources: &HashMap<(String, Version), PathBuf>,
-) -> Vec<GraphToDotAvailableCluster> {
-    match err {
-        ExpandError::UnsatisfiedVersionConstraint {
-            target_kind: VersionTargetKind::Cluster,
-            id,
-            available_versions,
-            ..
-        } => available_versions
-            .iter()
-            .filter_map(|version| {
-                cluster_sources
-                    .get(&(id.clone(), version.clone()))
-                    .map(|path| GraphToDotAvailableCluster {
-                        id: id.clone(),
-                        version: version.to_string(),
-                        location: path.display().to_string(),
-                    })
-            })
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn available_clusters_from_labels(
-    err: &ExpandError,
-    cluster_diagnostic_labels: &HashMap<(String, Version), String>,
-) -> Vec<GraphToDotAvailableCluster> {
-    match err {
-        ExpandError::UnsatisfiedVersionConstraint {
-            target_kind: VersionTargetKind::Cluster,
-            id,
-            available_versions,
-            ..
-        } => available_versions
-            .iter()
-            .map(|version| GraphToDotAvailableCluster {
-                id: id.clone(),
-                version: version.to_string(),
-                location: cluster_diagnostic_labels
-                    .get(&(id.clone(), version.clone()))
-                    .cloned()
-                    .unwrap_or_else(|| format!("{id}@{version}")),
-            })
-            .collect(),
-        _ => Vec::new(),
     }
 }
 

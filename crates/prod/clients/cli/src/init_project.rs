@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error_format::{render_cli_error, CliErrorInfo};
+use ergo_host::PROCESS_DRIVER_PROTOCOL_VERSION;
 
 #[derive(Debug, Clone)]
 struct InitOptions {
@@ -871,7 +872,7 @@ import json
 import sys
 
 frames = [
-    {"type": "hello", "protocol": "ergo-driver.v0"},
+    {"type": "hello", "protocol": "__PROCESS_DRIVER_PROTOCOL_VERSION__"},
     {
         "type": "event",
         "event": {
@@ -889,7 +890,10 @@ for frame in frames:
     sys.stdout.write(json.dumps(frame) + "\n")
     sys.stdout.flush()
 "#
-    .to_string()
+    .replace(
+        "__PROCESS_DRIVER_PROTOCOL_VERSION__",
+        PROCESS_DRIVER_PROTOCOL_VERSION,
+    )
 }
 
 fn egress_channel_contents() -> String {

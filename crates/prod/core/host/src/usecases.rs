@@ -28,54 +28,15 @@
 //!   sources; only host-authored operational detail remains string-shaped.
 //! - `interruption_from_egress_dispatch_failure(...)` intentionally drops protocol/I/O detail and
 //!   maps into status-oriented interruption reasons.
-//! - The broad `pub(super)` prelude and helper duplication in this facade, plus the shared
-//!   `usecases/tests` infrastructure cleanup, are tracked in issue #74.
+//! - Private helper/import authority now lives in `usecases/shared.rs` and
+//!   `usecases/node_analysis.rs` so this public facade does not also have to be
+//!   the child-module support hub.
 
-pub(super) use ergo_adapter::{
-    adapter_fingerprint, compile_event_binder,
-    fixture::{self, FixtureParseError},
-    validate_action_adapter_composition, validate_capture_format,
-    validate_source_adapter_composition, AdapterManifest, AdapterProvides, CompositionError,
-    DemoSourceContextError, EventBindingError, EventTime, GraphId, InvalidAdapter, RuntimeHandle,
+use self::node_analysis::{
+    resolve_source_and_action_nodes, ResolveHostNodeError, ResolvedHostNode,
 };
-pub(super) use ergo_loader::LoaderError;
-pub(super) use ergo_runtime::catalog::{
-    build_core_catalog, core_registries, CorePrimitiveCatalog, CoreRegistrationError,
-    CoreRegistries,
-};
-pub(super) use ergo_runtime::cluster::{
-    expand, ClusterDefinition, ClusterLoader, ClusterVersionIndex, ExpandError, ExpandedGraph,
-    PrimitiveCatalog, PrimitiveKind, Version, VersionTargetKind,
-};
-pub(super) use ergo_runtime::common::ErrorInfo;
-pub(super) use ergo_runtime::provenance::{
-    compute_runtime_provenance, RuntimeProvenanceError, RuntimeProvenanceScheme,
-};
-pub(super) use ergo_supervisor::replay::StrictReplayExpectations;
-#[cfg(test)]
-pub(super) use ergo_supervisor::Decision;
-pub(super) use ergo_supervisor::{
-    write_capture_bundle, CaptureBundle, CaptureJsonStyle, CaptureWriteError, Constraints,
-    NO_ADAPTER_PROVENANCE,
-};
-pub(super) use serde::{Deserialize, Serialize};
-pub(super) use std::collections::{BTreeSet, HashMap, HashSet};
-pub(super) use std::fs;
-pub(super) use std::io::{BufRead, BufReader, Read};
-pub(super) use std::path::{Path, PathBuf};
-pub(super) use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
-pub(super) use std::sync::atomic::{AtomicBool, Ordering};
-pub(super) use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-pub(super) use std::sync::Arc;
-pub(super) use std::thread::{self, JoinHandle};
-pub(super) use std::time::{Duration, Instant};
-
-pub(super) use crate::egress::compute_egress_provenance;
-pub(super) use crate::{
-    decision_counts, replay_bundle_strict, runner::validate_hosted_runner_configuration,
-    EgressConfig, EgressDispatchFailure, HostedAdapterConfig, HostedEvent, HostedReplayError,
-    HostedRunner, HostedStepError,
-};
+use self::shared::*;
+use crate::expand_diagnostics::available_clusters_from_labels;
 
 #[derive(Debug, Clone, Default)]
 pub struct AdapterDependencySummary {
@@ -91,22 +52,13 @@ pub fn scan_adapter_dependencies(
 ) -> Result<AdapterDependencySummary, HostDependencyScanError> {
     let mut summary = AdapterDependencySummary::default();
 
-    for (runtime_id, node) in &expanded.nodes {
-        let meta = catalog
-            .get(&node.implementation.impl_id, &node.implementation.version)
-            .ok_or_else(|| HostDependencyScanError::MissingCatalogMetadata {
-                primitive_id: node.implementation.impl_id.clone(),
-                version: node.implementation.version.clone(),
-            })?;
-
-        match meta.kind {
-            PrimitiveKind::Source => {
-                let source = registries
-                    .sources
-                    .get(&node.implementation.impl_id)
-                    .ok_or_else(|| HostDependencyScanError::MissingSourcePrimitive {
-                        primitive_id: node.implementation.impl_id.clone(),
-                    })?;
+    for node in resolve_source_and_action_nodes(expanded, catalog, registries)
+        .map_err(map_host_dependency_scan_node_error)?
+    {
+        match node {
+            ResolvedHostNode::Source {
+                runtime_id, source, ..
+            } => {
                 if source
                     .manifest()
                     .requires
@@ -114,23 +66,18 @@ pub fn scan_adapter_dependencies(
                     .iter()
                     .any(|req| req.required)
                 {
-                    summary.required_context_nodes.push(runtime_id.clone());
+                    summary.required_context_nodes.push(runtime_id.to_string());
                 }
             }
-            PrimitiveKind::Action => {
-                let action = registries
-                    .actions
-                    .get(&node.implementation.impl_id)
-                    .ok_or_else(|| HostDependencyScanError::MissingActionPrimitive {
-                        primitive_id: node.implementation.impl_id.clone(),
-                    })?;
+            ResolvedHostNode::Action {
+                runtime_id, action, ..
+            } => {
                 if !action.manifest().effects.writes.is_empty()
                     || !action.manifest().effects.intents.is_empty()
                 {
-                    summary.write_nodes.push(runtime_id.clone());
+                    summary.write_nodes.push(runtime_id.to_string());
                 }
             }
-            _ => {}
         }
     }
 
@@ -148,55 +95,92 @@ pub fn validate_adapter_composition(
     validate_capture_format(&provides.capture_format_version)
         .map_err(HostAdapterCompositionError::CaptureFormat)?;
 
-    for (runtime_id, node) in &expanded.nodes {
-        let meta = catalog
-            .get(&node.implementation.impl_id, &node.implementation.version)
-            .ok_or_else(|| HostAdapterCompositionError::MissingCatalogMetadata {
-                runtime_id: runtime_id.clone(),
-                primitive_id: node.implementation.impl_id.clone(),
-                version: node.implementation.version.clone(),
-            })?;
-        match meta.kind {
-            PrimitiveKind::Source => {
-                let source = registries
-                    .sources
-                    .get(&node.implementation.impl_id)
-                    .ok_or_else(|| HostAdapterCompositionError::MissingSourcePrimitive {
-                        runtime_id: runtime_id.clone(),
-                        primitive_id: node.implementation.impl_id.clone(),
-                    })?;
+    for node in resolve_source_and_action_nodes(expanded, catalog, registries)
+        .map_err(map_host_adapter_composition_node_error)?
+    {
+        match node {
+            ResolvedHostNode::Source {
+                runtime_id,
+                node,
+                source,
+            } => {
                 validate_source_adapter_composition(
                     &source.manifest().requires,
                     provides,
                     &node.parameters,
                 )
                 .map_err(|source| HostAdapterCompositionError::Source {
-                    runtime_id: runtime_id.clone(),
+                    runtime_id: runtime_id.to_string(),
                     source,
                 })?;
             }
-            PrimitiveKind::Action => {
-                let action = registries
-                    .actions
-                    .get(&node.implementation.impl_id)
-                    .ok_or_else(|| HostAdapterCompositionError::MissingActionPrimitive {
-                        runtime_id: runtime_id.clone(),
-                        primitive_id: node.implementation.impl_id.clone(),
-                    })?;
+            ResolvedHostNode::Action {
+                runtime_id,
+                node,
+                action,
+            } => {
                 validate_action_adapter_composition(
                     &action.manifest().effects,
                     provides,
                     &node.parameters,
                 )
                 .map_err(|source| HostAdapterCompositionError::Action {
-                    runtime_id: runtime_id.clone(),
+                    runtime_id: runtime_id.to_string(),
                     source,
                 })?;
             }
-            _ => {}
         }
     }
     Ok(())
+}
+
+fn map_host_dependency_scan_node_error(err: ResolveHostNodeError) -> HostDependencyScanError {
+    match err {
+        ResolveHostNodeError::MissingCatalogMetadata {
+            primitive_id,
+            version,
+            ..
+        } => HostDependencyScanError::MissingCatalogMetadata {
+            primitive_id,
+            version,
+        },
+        ResolveHostNodeError::MissingSourcePrimitive { primitive_id, .. } => {
+            HostDependencyScanError::MissingSourcePrimitive { primitive_id }
+        }
+        ResolveHostNodeError::MissingActionPrimitive { primitive_id, .. } => {
+            HostDependencyScanError::MissingActionPrimitive { primitive_id }
+        }
+    }
+}
+
+fn map_host_adapter_composition_node_error(
+    err: ResolveHostNodeError,
+) -> HostAdapterCompositionError {
+    match err {
+        ResolveHostNodeError::MissingCatalogMetadata {
+            runtime_id,
+            primitive_id,
+            version,
+        } => HostAdapterCompositionError::MissingCatalogMetadata {
+            runtime_id,
+            primitive_id,
+            version,
+        },
+        ResolveHostNodeError::MissingSourcePrimitive {
+            runtime_id,
+            primitive_id,
+        } => HostAdapterCompositionError::MissingSourcePrimitive {
+            runtime_id,
+            primitive_id,
+        },
+        ResolveHostNodeError::MissingActionPrimitive {
+            runtime_id,
+            primitive_id,
+        } => HostAdapterCompositionError::MissingActionPrimitive {
+            runtime_id,
+            primitive_id,
+        },
+    }
 }
 
 fn summarize_error_info(err: &impl ErrorInfo) -> String {
@@ -207,30 +191,17 @@ fn summarize_expand_error(
     err: &ExpandError,
     diagnostic_labels: &HashMap<(String, Version), String>,
 ) -> HostExpandError {
-    let available_clusters = match err {
-        ExpandError::UnsatisfiedVersionConstraint {
-            target_kind: VersionTargetKind::Cluster,
-            id,
-            available_versions,
-            ..
-        } => available_versions
-            .iter()
-            .map(|version| HostAvailableCluster {
-                id: id.clone(),
-                version: version.to_string(),
-                location: diagnostic_labels
-                    .get(&(id.clone(), version.clone()))
-                    .cloned()
-                    .unwrap_or_else(|| format!("{id}@{version}")),
-            })
-            .collect(),
-        _ => Vec::new(),
-    };
-
     HostExpandError {
         source: err.clone(),
         context: HostExpandContext::Assets,
-        available_clusters,
+        available_clusters: available_clusters_from_labels(err, diagnostic_labels)
+            .into_iter()
+            .map(|cluster| HostAvailableCluster {
+                id: cluster.id,
+                version: cluster.version,
+                location: cluster.location,
+            })
+            .collect(),
     }
 }
 
@@ -764,7 +735,7 @@ impl std::error::Error for HostDriverStartError {
 #[derive(Debug)]
 pub struct HostDriverProtocolError {
     detail: String,
-    source: Option<serde_json::Error>,
+    source: Option<HostDriverProtocolSource>,
 }
 
 impl HostDriverProtocolError {
@@ -778,7 +749,14 @@ impl HostDriverProtocolError {
     fn with_json_source(detail: impl Into<String>, source: serde_json::Error) -> Self {
         Self {
             detail: detail.into(),
-            source: Some(source),
+            source: Some(HostDriverProtocolSource::Json(source)),
+        }
+    }
+
+    fn with_io_source(detail: impl Into<String>, source: std::io::Error) -> Self {
+        Self {
+            detail: detail.into(),
+            source: Some(HostDriverProtocolSource::Io(source)),
         }
     }
 }
@@ -792,6 +770,30 @@ impl std::fmt::Display for HostDriverProtocolError {
 impl std::error::Error for HostDriverProtocolError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.source.as_ref().map(|source| source as _)
+    }
+}
+
+#[derive(Debug)]
+enum HostDriverProtocolSource {
+    Json(serde_json::Error),
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for HostDriverProtocolSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Json(err) => write!(f, "{err}"),
+            Self::Io(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for HostDriverProtocolSource {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Json(err) => Some(err),
+            Self::Io(err) => Some(err),
+        }
     }
 }
 
@@ -865,6 +867,7 @@ impl std::error::Error for HostDriverError {
 #[derive(Debug)]
 pub enum HostRunError {
     AdapterRequired(AdapterDependencySummary),
+    ProductionRequiresAdapter,
     Setup(HostSetupError),
     Driver(HostDriverError),
     Step(HostedStepError),
@@ -880,6 +883,10 @@ impl std::fmt::Display for HostRunError {
                 summary.required_context_nodes.join(", "),
                 summary.write_nodes.join(", ")
             ),
+            Self::ProductionRequiresAdapter => write!(
+                f,
+                "production session requires an adapter contract but no adapter was provided"
+            ),
             Self::Setup(err) => write!(f, "{err}"),
             Self::Driver(err) => write!(f, "{err}"),
             Self::Step(err) => write!(f, "{err}"),
@@ -892,6 +899,7 @@ impl std::error::Error for HostRunError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::AdapterRequired(_) => None,
+            Self::ProductionRequiresAdapter => None,
             Self::Setup(err) => Some(err),
             Self::Driver(err) => Some(err),
             Self::Step(err) => Some(err),
@@ -1130,17 +1138,149 @@ pub struct ReplayGraphFromPathsRequest {
     pub adapter_path: Option<PathBuf>,
 }
 
+/// Distinguishes production execution (requiring an adapter contract) from
+/// fixture/test execution (where the adapter is optional).
+///
+/// The default is `Production` — safe by default.  Any caller that does not
+/// explicitly declare fixture intent is subject to the production adapter gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionIntent {
+    /// Live external data will enter the graph. Adapter contract is mandatory.
+    Production,
+    /// Pre-authored fixture data will enter the graph. Adapter contract is optional.
+    Fixture,
+}
+
+impl Default for SessionIntent {
+    fn default() -> Self {
+        Self::Production
+    }
+}
+
 pub struct PrepareHostedRunnerFromPathsRequest {
     pub graph_path: PathBuf,
     pub cluster_paths: Vec<PathBuf>,
     pub adapter_path: Option<PathBuf>,
     pub egress_config: Option<EgressConfig>,
+    /// Derived from the caller's ingress configuration.  `pub(crate)` to
+    /// prevent external callers from bypassing the production adapter gate
+    /// by manually setting `Fixture` intent on a production-bound session.
+    /// External callers must use [`Self::for_production`] or
+    /// [`Self::for_fixture`].
+    pub(crate) session_intent: SessionIntent,
 }
 
-#[derive(Debug, Clone, Default)]
+impl PrepareHostedRunnerFromPathsRequest {
+    /// Construct a preparation request for a **production** session.
+    ///
+    /// Production sessions require an adapter contract — the adapter path
+    /// is non-optional.  This is structurally enforced: callers cannot
+    /// construct a production request without providing an adapter.
+    pub fn for_production(
+        graph_path: PathBuf,
+        cluster_paths: Vec<PathBuf>,
+        adapter_path: PathBuf,
+        egress_config: Option<EgressConfig>,
+    ) -> Self {
+        Self {
+            graph_path,
+            cluster_paths,
+            adapter_path: Some(adapter_path),
+            egress_config,
+            session_intent: SessionIntent::Production,
+        }
+    }
+
+    /// Construct a preparation request for a **fixture** session.
+    ///
+    /// Fixture sessions are adapter-optional — the adapter path may be
+    /// `None`.  This is the only public path that allows omitting the
+    /// adapter.
+    ///
+    /// # Trust boundary
+    ///
+    /// This constructor sets `SessionIntent::Fixture`, which exempts
+    /// the session from the production adapter gate.  Do not use this
+    /// constructor for sessions that will receive live external data —
+    /// use [`Self::for_production`] instead.  Misuse allows unvalidated
+    /// payloads to enter the graph without adapter schema governance.
+    pub fn for_fixture(
+        graph_path: PathBuf,
+        cluster_paths: Vec<PathBuf>,
+        adapter_path: Option<PathBuf>,
+        egress_config: Option<EgressConfig>,
+    ) -> Self {
+        Self {
+            graph_path,
+            cluster_paths,
+            adapter_path,
+            egress_config,
+            session_intent: SessionIntent::Fixture,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct LivePrepOptions {
     pub adapter: Option<AdapterInput>,
     pub egress_config: Option<EgressConfig>,
+    /// Derived from the caller's ingress or driver configuration.
+    /// `pub(crate)` to prevent external callers from bypassing the
+    /// production adapter gate.  External callers must use
+    /// [`Self::for_production`], [`Self::for_fixture`], or
+    /// [`Self::default`] (which defaults to `Production`).
+    pub(crate) session_intent: SessionIntent,
+}
+
+impl LivePrepOptions {
+    /// Construct prep options for a **production** session.
+    ///
+    /// Production sessions require an adapter contract — the adapter
+    /// is non-optional.  This is structurally enforced: callers cannot
+    /// construct production prep options without providing an adapter.
+    pub fn for_production(
+        adapter: AdapterInput,
+        egress_config: Option<EgressConfig>,
+    ) -> Self {
+        Self {
+            adapter: Some(adapter),
+            egress_config,
+            session_intent: SessionIntent::Production,
+        }
+    }
+
+    /// Construct prep options for a **fixture** session.
+    ///
+    /// Fixture sessions are adapter-optional — the adapter may be `None`.
+    /// This is the only public path that allows omitting the adapter.
+    ///
+    /// # Trust boundary
+    ///
+    /// This constructor sets `SessionIntent::Fixture`, which exempts
+    /// the session from the production adapter gate.  Do not use this
+    /// constructor for sessions that will receive live external data —
+    /// use [`Self::for_production`] instead.  Misuse allows unvalidated
+    /// payloads to enter the graph without adapter schema governance.
+    pub fn for_fixture(
+        adapter: Option<AdapterInput>,
+        egress_config: Option<EgressConfig>,
+    ) -> Self {
+        Self {
+            adapter,
+            egress_config,
+            session_intent: SessionIntent::Fixture,
+        }
+    }
+}
+
+impl Default for LivePrepOptions {
+    fn default() -> Self {
+        Self {
+            adapter: None,
+            egress_config: None,
+            session_intent: SessionIntent::Production,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1218,7 +1358,9 @@ impl RuntimeSurfaces {
 
 mod live_prep;
 mod live_run;
+mod node_analysis;
 mod process_driver;
+mod shared;
 
 pub use self::live_prep::{
     finalize_hosted_runner_capture, load_graph_assets_from_memory, load_graph_assets_from_paths,
@@ -1239,13 +1381,11 @@ pub use self::live_run::{
 };
 
 use self::live_prep::{
-    ensure_adapter_requirement_satisfied, finalize_hosted_runner_capture_with_stage,
-    prepare_live_runner_setup_from_assets, start_live_runner_egress, HostedRunnerFinalizeFailure,
+    ensure_adapter_requirement_satisfied, ensure_production_adapter_bound,
+    finalize_hosted_runner_capture_with_stage, prepare_live_runner_setup_from_assets,
+    session_intent_from_driver, start_live_runner_egress, HostedRunnerFinalizeFailure,
 };
-use self::live_run::{
-    host_stop_driver_execution, validate_driver_input, DriverExecution, DriverTerminal,
-    RunLifecycleState,
-};
+use self::live_run::{validate_driver_input, DriverExecution, DriverTerminal, RunLifecycleState};
 use self::process_driver::{
     run_process_driver, validate_process_driver_command, ProcessDriverPolicy,
     DEFAULT_PROCESS_DRIVER_POLICY,

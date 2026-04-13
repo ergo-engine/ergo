@@ -21,9 +21,9 @@
 //!   host errors are fully typed.
 
 use ergo_host::{
-    describe_adapter_required, describe_host_replay_error, AdapterDependencySummary,
-    HostDriverError, HostDriverInputError, HostDriverOutputError, HostErrorDescriptor,
-    HostReplayError, HostRunError, HostSetupError,
+    describe_adapter_required, describe_host_replay_error, describe_production_requires_adapter,
+    AdapterDependencySummary, HostDriverError, HostDriverInputError, HostDriverOutputError,
+    HostErrorDescriptor, HostReplayError, HostRunError, HostSetupError,
 };
 
 use crate::error_format::{render_cli_error, CliErrorInfo};
@@ -82,18 +82,18 @@ pub fn unknown_command(command: &str) -> String {
 }
 
 pub(crate) fn render_host_error_descriptor(descriptor: HostErrorDescriptor) -> String {
-    let mut info = CliErrorInfo::new(descriptor.code, descriptor.message);
-    if let Some(rule_id) = descriptor.rule_id {
+    let mut info = CliErrorInfo::new(descriptor.code().to_string(), descriptor.message());
+    if let Some(rule_id) = descriptor.rule_id() {
         info = info.with_rule_id(rule_id);
     }
-    if let Some(where_field) = descriptor.where_field {
+    if let Some(where_field) = descriptor.where_field() {
         info = info.with_where(where_field);
     }
-    if let Some(fix) = descriptor.fix {
+    if let Some(fix) = descriptor.fix() {
         info = info.with_fix(fix);
     }
-    for detail in descriptor.details {
-        info = info.with_detail(detail);
+    for detail in descriptor.details() {
+        info = info.with_detail(detail.clone());
     }
     render_cli_error(&info)
 }
@@ -105,6 +105,9 @@ pub fn render_adapter_required(summary: &AdapterDependencySummary) -> String {
 pub fn render_host_run_error(err: HostRunError) -> String {
     match err {
         HostRunError::AdapterRequired(summary) => render_adapter_required(&summary),
+        HostRunError::ProductionRequiresAdapter => {
+            render_host_error_descriptor(describe_production_requires_adapter())
+        }
         HostRunError::Setup(err) => {
             let (code, message, where_field, fix) = match &err {
                 HostSetupError::LoadGraphAssets(_) => (

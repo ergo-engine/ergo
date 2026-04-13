@@ -188,7 +188,9 @@ cross-episode state propagation.
 1. On the next external event, the host merges eligible context-store values into the incoming payload (eligible means adapter-declared context keys that are also allowed by the event schema). Incoming payload values take precedence over stored values.
 2. The merged payload becomes `ExecutionContext` for the new episode. Sources read from this context via `ctx.value(key)`.
 
-For adapter-independent paths, there is no context-store merge step.
+For fixture-driven paths (the sole adapter-exempt execution mode),
+there is no context-store merge step.  All production execution paths
+(process ingress, SDK manual stepping) require an adapter contract.
 
 This lifecycle is the intended cross-episode causality path referenced
 in ontology.md §2.4: Action intent -> host dispatch ->
@@ -278,8 +280,9 @@ The current prod runtime executes Compute primitives without persisted compute s
 determinism is grounded in the input snapshot plus resolved parameters.
 
 External nondeterminism enters through declared ingress payloads
-(adapter-shaped or adapter-independent external event payloads) and
-leaves through post-episode host dispatch to prod boundary channels.
+(adapter-shaped external event payloads for production paths, or
+adapter-exempt fixture payloads for fixture-driven testing) and leaves
+through post-episode host dispatch to prod boundary channels.
 
 For Triggers: determinism means identical behavior given identical inputs (triggers are stateless).
 For Actions: determinism means identical outcomes and derived effects given identical input
@@ -314,3 +317,4 @@ direct cyclic wiring.
 | v0.1 | 2026-03-04 | Claude (Structural Auditor) | §6 rewritten to document dual non-causal Action outputs (outcome + effects), runtime-to-host effect lifecycle, adapter-bound cross-episode context flow, and per-port wiring constraints for Action gating vs scalar payload. Aligned with ontology.md §2.4. Sebastian override authorization. |
 | v0.2 | 2026-03-16 | Codex (Docs) | §6 widened from write-only effect wording to write + intent declarations, and §8 sharpened the external nondeterminism boundary to distinguish adapter vocabulary from host dispatch and prod boundary channel realization. Sebastian freeze-authority authorization. |
 | v0.3 | 2026-03-26 | Codex (Docs) | Corrected current-prod behavior for independent Action ordering, pass-abort semantics, scalar Action payload types, and determinism wording around compute state and adapter-independent ingress. |
+| v0.4 | 2026-04-12 | Claude (Structural Auditor) | §5 and §8 updated to reflect production closure: replaced "adapter-independent" with "fixture-driven (adapter-exempt)" to match enforcement of mandatory adapter contracts for all production execution paths. |

@@ -18,8 +18,10 @@
 //! - These tests intentionally lock host-owned preparation and replay-preflight
 //!   behavior without redefining kernel semantics.
 
-use super::super::process_driver::PROCESS_DRIVER_PROTOCOL_VERSION;
 use super::*;
+use crate::runner::{host_internal_handler_kinds, HOST_INTERNAL_SET_CONTEXT_KIND};
+use crate::PROCESS_DRIVER_PROTOCOL_VERSION;
+use ergo_runtime::cluster::VersionTargetKind;
 
 #[test]
 fn summarize_expand_error_falls_back_to_cluster_key_when_label_missing() {
@@ -167,6 +169,7 @@ fn prepare_hosted_runner_from_paths_with_surfaces_uses_injected_runtime_surfaces
             cluster_paths: Vec::new(),
             adapter_path: None,
             egress_config: None,
+            session_intent: SessionIntent::Fixture,
         },
         build_injected_runtime_surfaces(7.5),
     )?;
@@ -207,6 +210,7 @@ fn prepare_hosted_runner_from_paths_smoke_test() -> Result<(), Box<dyn std::erro
         cluster_paths: Vec::new(),
         adapter_path: None,
         egress_config: None,
+        session_intent: SessionIntent::Fixture,
     })?;
 
     let outcome = runner.step(hosted_event("evt1"))?;
@@ -249,6 +253,7 @@ fn finalize_hosted_runner_capture_rejects_zero_step_runners(
             cluster_paths: Vec::new(),
             adapter_path: None,
             egress_config: None,
+            session_intent: SessionIntent::Fixture,
         },
         build_injected_runtime_surfaces(7.5),
     )?;
@@ -286,6 +291,7 @@ fn validate_graph_from_paths_accepts_simple_adapterless_graph(
         cluster_paths: Vec::new(),
         adapter_path: None,
         egress_config: None,
+        session_intent: SessionIntent::Fixture,
     })?;
 
     let _ = fs::remove_dir_all(&temp_dir);
@@ -311,7 +317,10 @@ fn validate_graph_accepts_simple_adapterless_assets() -> Result<(), Box<dyn std:
     let assets = load_graph_assets_from_paths(&graph, &[])?;
     validate_graph_with_surfaces(
         &assets,
-        &LivePrepOptions::default(),
+        &LivePrepOptions {
+            session_intent: SessionIntent::Fixture,
+            ..LivePrepOptions::default()
+        },
         build_injected_runtime_surfaces(7.5),
     )?;
 
@@ -333,7 +342,10 @@ fn validate_graph_accepts_simple_in_memory_assets() -> Result<(), Box<dyn std::e
 
     validate_graph_with_surfaces(
         &assets,
-        &LivePrepOptions::default(),
+        &LivePrepOptions {
+            session_intent: SessionIntent::Fixture,
+            ..LivePrepOptions::default()
+        },
         build_injected_runtime_surfaces(7.5),
     )?;
 
@@ -367,7 +379,10 @@ fn validate_graph_in_memory_assets_use_label_first_cluster_version_details(
 
     let err = validate_graph_with_surfaces(
         &assets,
-        &LivePrepOptions::default(),
+        &LivePrepOptions {
+            session_intent: SessionIntent::Fixture,
+            ..LivePrepOptions::default()
+        },
         build_injected_runtime_surfaces(42.0),
     )
     .expect_err("in-memory version-miss must fail before runner construction");
@@ -412,6 +427,7 @@ fn validate_graph_from_paths_reports_adapter_required_before_runner_validation(
             cluster_paths: Vec::new(),
             adapter_path: None,
             egress_config: None,
+            session_intent: SessionIntent::Fixture,
         },
         build_injected_runtime_surfaces(42.0),
     )
@@ -442,7 +458,10 @@ fn validate_graph_reports_adapter_required_before_runner_construction(
 
     let err = validate_graph_with_surfaces(
         &assets,
-        &LivePrepOptions::default(),
+        &LivePrepOptions {
+            session_intent: SessionIntent::Fixture,
+            ..LivePrepOptions::default()
+        },
         build_injected_runtime_surfaces(42.0),
     )
     .expect_err("adapter-required validation should fail before runner construction");
@@ -531,6 +550,7 @@ fn validate_run_graph_from_assets_rejects_adapter_bound_fixture_items_missing_se
             prep: LivePrepOptions {
                 adapter: Some(AdapterInput::Manifest(manifest)),
                 egress_config: Some(make_intent_egress_config(&egress_script)),
+                session_intent: SessionIntent::Fixture,
             },
             driver: DriverConfig::FixtureItems {
                 items: vec![
@@ -583,6 +603,7 @@ fn validate_graph_from_paths_enforces_handler_coverage_without_egress(
             cluster_paths: Vec::new(),
             adapter_path: Some(adapter),
             egress_config: None,
+            session_intent: SessionIntent::Fixture,
         },
         build_injected_runtime_surfaces(42.0),
     )
@@ -622,6 +643,7 @@ fn validate_graph_from_paths_accepts_adapter_and_egress_without_starting_channel
             cluster_paths: Vec::new(),
             adapter_path: Some(adapter),
             egress_config: Some(make_intent_egress_config(&egress_script)),
+            session_intent: SessionIntent::Fixture,
         },
         build_injected_runtime_surfaces(42.0),
     )?;
@@ -664,6 +686,7 @@ fn validate_graph_from_paths_does_not_start_egress_processes(
             cluster_paths: Vec::new(),
             adapter_path: Some(adapter),
             egress_config: Some(config),
+            session_intent: SessionIntent::Fixture,
         },
         build_injected_runtime_surfaces(42.0),
     )?;
@@ -706,6 +729,7 @@ fn prepare_hosted_runner_from_paths_surfaces_egress_startup_failure_before_first
             cluster_paths: Vec::new(),
             adapter_path: Some(adapter),
             egress_config: Some(config),
+            session_intent: SessionIntent::Fixture,
         },
         build_injected_runtime_surfaces(42.0),
     ) {
@@ -754,6 +778,7 @@ fn prepare_hosted_runner_surfaces_egress_startup_failure_after_runner_constructi
     let options = LivePrepOptions {
         adapter: Some(AdapterInput::Path(adapter)),
         egress_config: Some(config),
+        session_intent: SessionIntent::Fixture,
     };
 
     let err = match prepare_hosted_runner_with_surfaces(
@@ -789,7 +814,10 @@ fn prepare_hosted_runner_accepts_simple_in_memory_assets() -> Result<(), Box<dyn
 
     let _runner = prepare_hosted_runner_with_surfaces(
         assets,
-        &LivePrepOptions::default(),
+        &LivePrepOptions {
+            session_intent: SessionIntent::Fixture,
+            ..LivePrepOptions::default()
+        },
         build_injected_runtime_surfaces(7.5),
     )?;
 
@@ -818,6 +846,7 @@ fn prepare_hosted_runner_from_paths_surfaces_dispatches_egress_and_finalizes_cle
             cluster_paths: Vec::new(),
             adapter_path: Some(adapter),
             egress_config: Some(make_intent_egress_config(&egress_script)),
+            session_intent: SessionIntent::Fixture,
         },
         build_injected_runtime_surfaces(42.0),
     )?;
@@ -870,6 +899,7 @@ fn prepare_hosted_runner_from_paths_can_finalize_after_egress_dispatch_failure(
             cluster_paths: Vec::new(),
             adapter_path: Some(adapter),
             egress_config: Some(make_intent_egress_config(&egress_script)),
+            session_intent: SessionIntent::Fixture,
         },
         build_injected_runtime_surfaces(42.0),
     )?;
@@ -932,6 +962,7 @@ fn prepare_hosted_runner_from_paths_surfaces_reports_adapter_required_before_egr
                 &temp_dir.join("unused-egress.sh"),
                 Duration::from_millis(50),
             )),
+            session_intent: SessionIntent::Fixture,
         },
         build_injected_runtime_surfaces(42.0),
     ) {
@@ -969,6 +1000,7 @@ fn prepare_hosted_runner_surfaces_reports_adapter_required_before_runner_constru
             &temp_dir.join("unused-egress.sh"),
             Duration::from_millis(50),
         )),
+        session_intent: SessionIntent::Fixture,
     };
 
     let err = match prepare_hosted_runner_with_surfaces(
@@ -1064,7 +1096,7 @@ fn replay_from_paths_handles_external_effect_capture_without_live_egress(
     let external_effect = decision
         .effects
         .iter()
-        .find(|effect| effect.effect.kind != "set_context")
+        .find(|effect| effect.effect.kind != HOST_INTERNAL_SET_CONTEXT_KIND)
         .expect("capture should contain external effect");
     assert!(
         external_effect.effect.writes.is_empty(),
@@ -1108,7 +1140,7 @@ fn replay_from_paths_handles_external_effect_capture_without_live_egress(
         prepared.registries,
         adapter_setup.adapter_provides.clone(),
     );
-    let handler_kinds = BTreeSet::from(["set_context".to_string()]);
+    let handler_kinds = host_internal_handler_kinds();
     let replay_external_kinds =
         replay_owned_external_kinds(&runtime, &adapter_setup.adapter_provides, &handler_kinds);
     let replay_runner = HostedRunner::new(
@@ -1135,7 +1167,7 @@ fn replay_from_paths_handles_external_effect_capture_without_live_egress(
         .decisions
         .iter()
         .flat_map(|decision| decision.effects.iter())
-        .find(|effect| effect.effect.kind != "set_context")
+        .find(|effect| effect.effect.kind != HOST_INTERNAL_SET_CONTEXT_KIND)
         .and_then(|effect| effect.effect.intents.first())
         .map(|intent| intent.intent_id.clone())
         .expect("captured external intent_id");
@@ -1143,7 +1175,7 @@ fn replay_from_paths_handles_external_effect_capture_without_live_egress(
         .decisions
         .iter()
         .flat_map(|decision| decision.effects.iter())
-        .find(|effect| effect.effect.kind != "set_context")
+        .find(|effect| effect.effect.kind != HOST_INTERNAL_SET_CONTEXT_KIND)
         .and_then(|effect| effect.effect.intents.first())
         .map(|intent| intent.intent_id.clone())
         .expect("replayed external intent_id");
@@ -1265,6 +1297,7 @@ fn validate_graph_accepts_in_memory_assets_with_adapter_text(
             source_label: "inline-adapter".to_string(),
         }),
         egress_config: Some(make_intent_egress_config(&egress_script)),
+        session_intent: SessionIntent::Fixture,
     };
 
     validate_graph_with_surfaces(&assets, &options, build_injected_runtime_surfaces(42.0))?;
@@ -1295,6 +1328,7 @@ fn prepare_hosted_runner_accepts_in_memory_assets_with_adapter_manifest_object(
     let options = LivePrepOptions {
         adapter: Some(AdapterInput::Manifest(manifest)),
         egress_config: Some(make_intent_egress_config(&egress_script)),
+        session_intent: SessionIntent::Fixture,
     };
 
     let _runner = prepare_hosted_runner_with_surfaces(
@@ -1319,6 +1353,7 @@ fn validate_graph_adapter_text_parse_error_mentions_source_label(
                 source_label: "inline-adapter-bad".to_string(),
             }),
             egress_config: None,
+            session_intent: SessionIntent::Fixture,
         },
         build_injected_runtime_surfaces(42.0),
     )
@@ -1331,5 +1366,170 @@ fn validate_graph_adapter_text_parse_error_mentions_source_label(
         other => panic!("unexpected inline adapter parse error: {other:?}"),
     }
 
+    Ok(())
+}
+
+
+// --- Production closure gate tests ---
+
+#[test]
+fn prepare_hosted_runner_rejects_production_intent_without_adapter(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let temp_dir = std::env::temp_dir().join(format!(
+        "ergo-host-production-gate-{}-{}",
+        std::process::id(),
+        index
+    ));
+    fs::create_dir_all(&temp_dir)?;
+
+    let graph = write_temp_file(
+        &temp_dir,
+        "graph.yaml",
+        &const_number_graph_yaml("host_production_gate", 7.5),
+    )?;
+
+    // Production intent with no adapter must be rejected even though the graph
+    // has only optional context keys.
+    match prepare_hosted_runner_from_paths(PrepareHostedRunnerFromPathsRequest {
+        graph_path: graph,
+        cluster_paths: Vec::new(),
+        adapter_path: None,
+        egress_config: None,
+        session_intent: SessionIntent::Production,
+    }) {
+        Err(HostRunError::ProductionRequiresAdapter) => {}
+        Err(other) => panic!("expected ProductionRequiresAdapter, got {other:?}"),
+        Ok(_) => panic!("production session without adapter must be rejected"),
+    }
+
+    let _ = fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+
+#[test]
+fn prepare_hosted_runner_accepts_fixture_intent_without_adapter(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let temp_dir = std::env::temp_dir().join(format!(
+        "ergo-host-fixture-exempt-{}-{}",
+        std::process::id(),
+        index
+    ));
+    fs::create_dir_all(&temp_dir)?;
+
+    let graph = write_temp_file(
+        &temp_dir,
+        "graph.yaml",
+        &const_number_graph_yaml("host_fixture_exempt", 7.5),
+    )?;
+
+    // Fixture intent with no adapter must be accepted — fixture is the legacy exception.
+    let _runner = prepare_hosted_runner_from_paths(PrepareHostedRunnerFromPathsRequest {
+        graph_path: graph,
+        cluster_paths: Vec::new(),
+        adapter_path: None,
+        egress_config: None,
+        session_intent: SessionIntent::Fixture,
+    })?;
+
+    let _ = fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+
+#[test]
+fn prepare_hosted_runner_accepts_production_intent_with_adapter(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let temp_dir = std::env::temp_dir().join(format!(
+        "ergo-host-production-with-adapter-{}-{}",
+        std::process::id(),
+        index
+    ));
+    fs::create_dir_all(&temp_dir)?;
+
+    let graph = write_temp_file(
+        &temp_dir,
+        "graph.yaml",
+        &const_number_graph_yaml("host_production_with_adapter", 7.5),
+    )?;
+    let adapter = write_minimal_adapter_manifest(&temp_dir, "adapter.yaml")?;
+
+    // Production intent with adapter must succeed.
+    let _runner = prepare_hosted_runner_from_paths(PrepareHostedRunnerFromPathsRequest {
+        graph_path: graph,
+        cluster_paths: Vec::new(),
+        adapter_path: Some(adapter),
+        egress_config: None,
+        session_intent: SessionIntent::Production,
+    })?;
+
+    let _ = fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+
+#[test]
+fn validate_graph_rejects_production_intent_without_adapter(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let assets = load_graph_assets_from_memory(
+        "graphs/root.yaml",
+        &[ergo_loader::InMemorySourceInput {
+            source_id: "graphs/root.yaml".to_string(),
+            source_label: "root-memory".to_string(),
+            content: const_number_graph_yaml("host_validate_production_gate", 7.5),
+        }],
+        &[],
+    )?;
+
+    let err = validate_graph_with_surfaces(
+        &assets,
+        &LivePrepOptions {
+            adapter: None,
+            egress_config: None,
+            session_intent: SessionIntent::Production,
+        },
+        build_injected_runtime_surfaces(7.5),
+    )
+    .expect_err("production session without adapter must be rejected by validate_graph");
+
+    match err {
+        HostRunError::ProductionRequiresAdapter => {}
+        other => panic!("expected ProductionRequiresAdapter, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn graph_dependency_gate_fires_before_production_gate_for_required_context(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let temp_dir = std::env::temp_dir().join(format!(
+        "ergo-host-gate-order-{}-{}",
+        std::process::id(),
+        index
+    ));
+    fs::create_dir_all(&temp_dir)?;
+
+    // An intent graph has action writes → triggers AdapterRequired via the
+    // graph-dependency gate, which is more specific than ProductionRequiresAdapter.
+    let graph = write_intent_graph(&temp_dir, "graph.yaml", "host_gate_order")?;
+
+    match prepare_hosted_runner_from_paths_with_surfaces(
+        PrepareHostedRunnerFromPathsRequest {
+            graph_path: graph,
+            cluster_paths: Vec::new(),
+            adapter_path: None,
+            egress_config: None,
+            session_intent: SessionIntent::Production,
+        },
+        build_injected_runtime_surfaces(42.0),
+    ) {
+        Err(HostRunError::AdapterRequired(summary)) => assert!(summary.requires_adapter),
+        Err(other) => panic!("expected AdapterRequired (graph-dependency gate), got {other:?}"),
+        Ok(_) => panic!("graph-dependency gate should fire first"),
+    }
+
+    let _ = fs::remove_dir_all(&temp_dir);
     Ok(())
 }

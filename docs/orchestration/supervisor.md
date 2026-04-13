@@ -1,7 +1,7 @@
 ---
 Authority: FROZEN
 Version: v0
-Last Amended: 2026-03-26
+Last Amended: 2026-04-12
 Scope: Orchestration layer, episode semantics, replay
 Verified Against Tag: v1.0.0-alpha.1
 Change Rule: v1 only
@@ -198,17 +198,23 @@ variant is authoritative; `termination` is only valid for `Decision::Invoke`.
 
 ## 3. Invariants
 
-### CXT-1: ExecutionContext is externally supplied only
+### CXT-1: ExecutionContext is externally supplied and adapter-governed
 
 ExecutionContext contains only externally supplied values for the
 current attempt.
 Supervisor-derived state in ExecutionContext is forbidden.
+For all production execution paths (process ingress, SDK manual
+stepping, and future live ingress shapes), an adapter contract must be
+present and must govern which context keys may be populated, what types
+they carry, and what event kinds may trigger evaluation.
+Fixture execution is the sole legacy exception where adapter validation
+is not enforced.
 
 | Aspect | Specification |
 |--------|---------------|
-| **Invariant** | ExecutionContext cannot contain Supervisor-derived or episode-derived data |
-| **Enforcement** | Supervisor has no API to inject prior outcomes; host builds context from incoming values and boundary-state merge |
-| **Violation** | Ontology breach: causality bypasses Source |
+| **Invariant** | ExecutionContext cannot contain Supervisor-derived or episode-derived data; production execution paths must have an adapter contract governing context population |
+| **Enforcement** | Supervisor has no API to inject prior outcomes; host builds context from incoming values and boundary-state merge; host preparation gate rejects `SessionIntent::Production` without adapter binding (`ensure_production_adapter_bound`); adapter composition validates context key/type compatibility; fixture paths are exempt |
+| **Violation** | Ontology breach: causality bypasses Source; or trust-boundary breach: unvalidated external data enters graph without contract |
 
 ### SUP-1: Supervisor is graph-identity fixed
 
@@ -352,7 +358,7 @@ If Supervisor uses wall-clock time, randomness, or undocumented state, replay di
 
 "Pass running P&L to next episode" smuggles state into context.
 
-**Prevention**: CXT-1 (externally supplied only) + type enforcement.
+**Prevention**: CXT-1 (externally supplied and adapter-governed) + type enforcement + production closure gate.
 
 ### 4.6 Intra-Episode Granularity Pressure
 
@@ -489,6 +495,7 @@ Changes require joint escalation per repository collaboration protocol (`.agents
 | v0.5 | 2026-01-11 | Claude (Structural Auditor) | Added provenance rule clarification (§2.2) — pins interpretation that "results of prior episodes" refers to Supervisor-injected outcomes, not adapter-provided environment state modified by prior Actions. Sebastian override authorization. |
 | v0.6 | 2026-03-04 | Claude (Structural Auditor) | §2.1 corrected: replaced "Trigger state is episode-scoped" with TRG-STATE-1-aligned language (triggers are stateless). Prior wording conflated ExecutionContext freshness with trigger state. Sebastian override authorization. |
 | v0.7 | 2026-03-26 | Codex (Docs) | Corrected current-prod retry/attempt semantics, context-store continuity path, DecisionLog/capture enrichment boundary, synchronous concurrency posture, and the host-vs-adapter boundary description. |
+| v0.8 | 2026-04-12 | Claude (Structural Auditor) | Production Closure doctrine: CXT-1 title changed from "externally supplied only" to "externally supplied and adapter-governed"; production execution paths now require adapter contracts; fixture execution remains the sole adapter-exempt path. Host preparation APIs hardened with `pub(crate)` session_intent fields and specialized `for_production`/`for_fixture` constructors that structurally enforce the adapter invariant. |
 
 ---
 

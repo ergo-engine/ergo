@@ -28,15 +28,15 @@ use ergo_loader::{
 use ergo_runtime::catalog::{CatalogBuilder, CoreRegistrationError};
 
 pub use ergo_host::{
-    parse_egress_config_toml, write_capture_bundle, AdapterInput, CaptureBundle, CaptureJsonStyle,
-    CaptureWriteError, EgressChannelConfig, EgressConfig, EgressConfigBuilder, EgressConfigError,
-    EgressConfigParseError, EgressDispatchFailure, EgressRoute, HostAdapterCompositionError,
-    HostAdapterSetupError, HostAvailableCluster, HostDependencyScanError, HostDriverError,
-    HostDriverInputError, HostDriverIoError, HostDriverOutputError, HostDriverProtocolError,
-    HostDriverStartError, HostExpandContext, HostExpandError, HostGraphPreparationError,
-    HostReplayError, HostReplaySetupError, HostRunError, HostSetupError,
-    HostedEgressValidationError, HostedEvent, HostedEventBuildError, HostedStepError,
-    HostedStepOutcome, InterruptedRun, InterruptionReason, RunSummary,
+    is_recoverable_hosted_step_error, parse_egress_config_toml, write_capture_bundle, AdapterInput,
+    CaptureBundle, CaptureJsonStyle, CaptureWriteError, EgressChannelConfig, EgressConfig,
+    EgressConfigBuilder, EgressConfigError, EgressConfigParseError, EgressDispatchFailure,
+    EgressRoute, HostAdapterCompositionError, HostAdapterSetupError, HostAvailableCluster,
+    HostDependencyScanError, HostDriverError, HostDriverInputError, HostDriverIoError,
+    HostDriverOutputError, HostDriverProtocolError, HostDriverStartError, HostExpandContext,
+    HostExpandError, HostGraphPreparationError, HostReplayError, HostReplaySetupError,
+    HostRunError, HostSetupError, HostedEgressValidationError, HostedEvent, HostedEventBuildError,
+    HostedStepError, HostedStepOutcome, InterruptedRun, InterruptionReason, RunSummary,
 };
 pub use ergo_runtime::catalog::{build_core, build_core_catalog, core_registries};
 pub use ergo_runtime::runtime::ExecutionContext;
@@ -995,10 +995,10 @@ impl Ergo {
             ReplayGraphFromAssetsRequest {
                 bundle: config.bundle,
                 assets,
-                prep: LivePrepOptions {
-                    adapter: config.adapter,
-                    egress_config: None,
-                },
+                prep: LivePrepOptions::for_fixture(
+                    config.adapter,
+                    None,
+                ),
             },
             self.runtime_surfaces.clone(),
         )
@@ -1255,10 +1255,10 @@ impl Ergo {
                     ReplayGraphFromAssetsRequest {
                         bundle,
                         assets,
-                        prep: LivePrepOptions {
-                            adapter: request.adapter_path.map(AdapterInput::Path),
-                            egress_config: None,
-                        },
+                        prep: LivePrepOptions::for_fixture(
+                            request.adapter_path.map(AdapterInput::Path),
+                            None,
+                        ),
                     },
                     self.runtime_surfaces.clone(),
                 )
@@ -1268,10 +1268,10 @@ impl Ergo {
                 ReplayGraphFromAssetsRequest {
                     bundle,
                     assets,
-                    prep: LivePrepOptions {
-                        adapter: prep.adapter,
-                        egress_config: None,
-                    },
+                    prep: LivePrepOptions::for_fixture(
+                        prep.adapter,
+                        None,
+                    ),
                 },
                 self.runtime_surfaces.clone(),
             )
@@ -1360,7 +1360,7 @@ impl ProfileRunner {
                 Err(HostedStepError::EgressDispatchFailure(failure))
             }
             Err(err) => {
-                if !is_recoverable_step_error(&err) {
+                if !is_recoverable_hosted_step_error(&err) {
                     self.state = ProfileRunnerState::Failed;
                 }
                 Err(err)
@@ -1481,10 +1481,23 @@ fn validate_in_memory_profile_config(
     Ok(())
 }
 
-fn live_prep_options_from_in_memory_profile(profile: &InMemoryProfileConfig) -> LivePrepOptions {
-    LivePrepOptions {
-        adapter: profile.adapter.clone(),
-        egress_config: profile.egress_config.clone(),
+fn live_prep_options_from_in_memory_profile(
+    profile: &InMemoryProfileConfig,
+) -> Result<LivePrepOptions, ProjectError> {
+    match &profile.ingress {
+        InMemoryIngress::FixtureItems { .. } => Ok(LivePrepOptions::for_fixture(
+            profile.adapter.clone(),
+            profile.egress_config.clone(),
+        )),
+        InMemoryIngress::Process { .. } => match profile.adapter.clone() {
+            Some(adapter) => Ok(LivePrepOptions::for_production(
+                adapter,
+                profile.egress_config.clone(),
+            )),
+            None => Err(ProjectError::Host(
+                ergo_host::HostRunError::ProductionRequiresAdapter,
+            )),
+        },
     }
 }
 
@@ -1534,12 +1547,27 @@ fn prepare_host_request_from_profile(
         .map(load_egress_config)
         .transpose()
         .map_err(ProjectError::Config)?;
-    Ok(PrepareHostedRunnerFromPathsRequest {
-        graph_path: profile.graph_path.clone(),
-        cluster_paths: profile.cluster_paths.clone(),
-        adapter_path: profile.adapter_path.clone(),
-        egress_config,
-    })
+    match &profile.ingress {
+        ResolvedProjectIngress::Fixture { .. } => {
+            Ok(PrepareHostedRunnerFromPathsRequest::for_fixture(
+                profile.graph_path.clone(),
+                profile.cluster_paths.clone(),
+                profile.adapter_path.clone(),
+                egress_config,
+            ))
+        }
+        ResolvedProjectIngress::Process { .. } => match &profile.adapter_path {
+            Some(adapter_path) => Ok(PrepareHostedRunnerFromPathsRequest::for_production(
+                profile.graph_path.clone(),
+                profile.cluster_paths.clone(),
+                adapter_path.clone(),
+                egress_config,
+            )),
+            None => Err(ProjectError::Host(
+                ergo_host::HostRunError::ProductionRequiresAdapter,
+            )),
+        },
+    }
 }
 
 fn resolve_profile_plan_from_resolved_profile(
@@ -1571,7 +1599,7 @@ fn resolve_profile_plan_from_in_memory_profile(
         profile_name: profile_name.to_string(),
         runner_source: RunnerSource::Assets {
             assets: profile.graph_assets.clone(),
-            prep: live_prep_options_from_in_memory_profile(profile),
+            prep: live_prep_options_from_in_memory_profile(profile)?,
         },
         driver: driver_from_in_memory_ingress(&profile.ingress)?,
         capture: capture_plan_from_in_memory_profile(profile),
@@ -1599,21 +1627,6 @@ fn lifecycle_violation(detail: impl Into<String>) -> HostedStepError {
     HostedStepError::LifecycleViolation {
         detail: detail.into(),
     }
-}
-
-// Caller-input validation failures happen before the host runner commits a step,
-// so the manual-stepping wrapper should let callers correct and continue.
-fn is_recoverable_step_error(err: &HostedStepError) -> bool {
-    matches!(
-        err,
-        HostedStepError::DuplicateEventId { .. }
-            | HostedStepError::MissingSemanticKind
-            | HostedStepError::MissingPayload
-            | HostedStepError::PayloadMustBeObject
-            | HostedStepError::UnknownSemanticKind { .. }
-            | HostedStepError::Binding(_)
-            | HostedStepError::EventBuild(_)
-    )
 }
 
 fn run_request_from_config(config: &RunConfig) -> Result<RunGraphFromPathsRequest, ProjectError> {

@@ -104,7 +104,7 @@ These tests are permanent. Failure indicates invariant regression.
 | ID | Invariant | Enforcement Locus | Status |
 |----|-----------|-------------------|--------|
 | RUN-CANON-1 | Canonical graph run requires explicit event source | See [07-orchestration.md](07-orchestration.md): host canonical path requires explicit `DriverConfig` and validates driver configuration before execution | Enforced |
-| RUN-CANON-2 | Adapter binding is mandatory only for adapter-dependent graphs | See [07-orchestration.md](07-orchestration.md): host canonical path scans dependency summary and rejects adapter-dependent runs without adapter binding | Enforced |
+| RUN-CANON-2 | Adapter binding is mandatory for all production execution paths and for adapter-dependent graphs | See [07-orchestration.md](07-orchestration.md): host canonical path enforces dual gate — graph-dependency gate for adapter-dependent graphs plus production closure gate for all `SessionIntent::Production` sessions | Enforced |
 | REP-7 | Strict replay requires adapter/runtime provenance contract match | See [08-replay.md](08-replay.md): strict replay preflight enforces adapter provenance sentinel/match rules and exact runtime provenance match | Enforced |
 | REP-8 | Strict replay rejects duplicate `events[].event_id` values | See [08-replay.md](08-replay.md): strict replay preflight validates unique capture event identities before replay | Enforced |
 
@@ -113,7 +113,7 @@ Notes:
 - `RUN-CANON-1` and `RUN-CANON-2` are canonically owned by the Orchestration phase file; this strictness section is the run/replay policy summary layer.
 - `REP-7` and `REP-8` are canonically owned by the Replay phase file; this strictness section is the run/replay policy summary layer.
 - Adapter-dependent graph detection is based on required source context keys and action effects (writes and declared intents).
-- Adapter-independent canonical captures use explicit provenance sentinel `none`.
+- Fixture-driven (adapter-exempt) canonical captures use explicit provenance sentinel `none`. All production execution paths require an adapter contract and produce adapter-provenanced captures.
 - Capture bundles are strict v3 (`capture_version: "v3"`): top-level
   `adapter_provenance`, `runtime_provenance`, and `decisions[].effects`
   are required; top-level unknown fields are rejected; and legacy

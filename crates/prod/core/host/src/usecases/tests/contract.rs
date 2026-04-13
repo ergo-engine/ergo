@@ -24,6 +24,10 @@ fn host_run_error_display_contract_is_locked() {
             "graph requires adapter capabilities but no adapter was provided (required context nodes: [src_ctx], write nodes: [act_write])",
         ),
         (
+            HostRunError::ProductionRequiresAdapter,
+            "production session requires an adapter contract but no adapter was provided",
+        ),
+        (
             HostRunError::Setup(HostSetupError::DependencyScan(
                 HostDependencyScanError::MissingActionPrimitive {
                     primitive_id: "bad_action".to_string(),

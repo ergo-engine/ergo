@@ -27,17 +27,13 @@
 //!   process-ingress protocol and its host-owned lifecycle policy.
 //!
 //! Safety notes:
-//! - `PROCESS_DRIVER_PROTOCOL_VERSION` is the host-local authority for the v0
-//!   protocol token; broader repo-wide constant extraction is tracked in issue
-//!   #70.
+//! - `PROCESS_DRIVER_PROTOCOL_VERSION` is the host-owned public authority for
+//!   the v0 protocol token used by Rust consumers.
 //! - Before the first committed step, protocol/process failures are surfaced as
-//!   start/protocol/IO errors; after that boundary they become interrupted runs.
-//!   That lifecycle split is currently encoded through `committed_event_count`
-//!   rather than a typed phase object; broader structural cleanup is tracked in
-//!   issue #69.
-//! - Process ingress currently synthesizes a single episode count under `"E1"`
-//!   because v0 has no episode boundary frame. That is correct for v0 but
-//!   remains a latent correctness seam tracked in issue #69.
+//!   start/protocol/IO errors; after that boundary they become interrupted runs,
+//!   and `ProcessDriverLoopState` carries that split explicitly.
+//! - Process ingress intentionally materializes one synthetic `"E1"` episode in
+//!   the host summary because `ergo-driver.v0` has no episode-boundary frame.
 //! - Driver start/protocol/I/O failures remain host-authored operational
 //!   diagnostics, but they now feed the typed `HostDriverError` surface
 //!   instead of collapsing back into the old `HostRunError` string variants.
@@ -46,6 +42,7 @@
 
 use super::*;
 
+use std::ops::ControlFlow;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
@@ -57,8 +54,6 @@ enum ProcessDriverMessage {
     End,
 }
 
-pub(super) const PROCESS_DRIVER_PROTOCOL_VERSION: &str = "ergo-driver.v0";
-
 #[derive(Debug)]
 enum ProcessDriverStreamObservation {
     Line(String),
@@ -68,8 +63,8 @@ enum ProcessDriverStreamObservation {
 
 #[derive(Debug)]
 enum ProcessDriverReadFailure {
-    InvalidEncoding(String),
-    Io(String),
+    InvalidEncoding(std::io::Error),
+    Io(std::io::Error),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -106,27 +101,193 @@ pub(super) fn validate_process_driver_command(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessDriverWirePhase {
+    AwaitingHello,
+    StreamingEvents,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessDriverCommitPhase {
+    BeforeFirstCommittedStep,
+    AfterFirstCommittedStep,
+}
+
 #[derive(Debug)]
-enum ProcessDriverReceiveFailure {
-    Timeout,
-    Disconnected,
+enum ProcessDriverEpisodeLedger {
+    V0SingleEpisode { event_count: usize },
+}
+
+impl ProcessDriverEpisodeLedger {
+    fn new_v0() -> Self {
+        Self::V0SingleEpisode { event_count: 0 }
+    }
+
+    fn record_event(&mut self) {
+        match self {
+            Self::V0SingleEpisode { event_count } => *event_count += 1,
+        }
+    }
+
+    fn into_episode_event_counts(self) -> Vec<(String, usize)> {
+        match self {
+            Self::V0SingleEpisode { event_count: 0 } => Vec::new(),
+            Self::V0SingleEpisode { event_count } => vec![("E1".to_string(), event_count)],
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ProcessDriverProgress {
+    event_count: usize,
+    committed_event_count: usize,
+    commit_phase: ProcessDriverCommitPhase,
+    episodes: ProcessDriverEpisodeLedger,
+}
+
+impl ProcessDriverProgress {
+    fn new_v0() -> Self {
+        Self {
+            event_count: 0,
+            committed_event_count: 0,
+            commit_phase: ProcessDriverCommitPhase::BeforeFirstCommittedStep,
+            episodes: ProcessDriverEpisodeLedger::new_v0(),
+        }
+    }
+
+    fn commit_phase(&self) -> ProcessDriverCommitPhase {
+        self.commit_phase
+    }
+
+    fn committed_event_count(&self) -> usize {
+        self.committed_event_count
+    }
+
+    fn record_committed_event(&mut self) {
+        self.event_count += 1;
+        self.committed_event_count += 1;
+        self.commit_phase = ProcessDriverCommitPhase::AfterFirstCommittedStep;
+        self.episodes.record_event();
+    }
+
+    fn record_interrupted_event(&mut self) {
+        self.event_count += 1;
+        self.episodes.record_event();
+    }
+
+    fn into_parts(self) -> (usize, usize, Vec<(String, usize)>) {
+        (
+            self.event_count,
+            self.committed_event_count,
+            self.episodes.into_episode_event_counts(),
+        )
+    }
+}
+
+struct ProcessDriverLoopState {
+    runner: HostedRunner,
+    progress: ProcessDriverProgress,
+    wire_phase: ProcessDriverWirePhase,
+    startup_deadline: Instant,
+}
+
+impl ProcessDriverLoopState {
+    fn new(runner: HostedRunner, process_policy: ProcessDriverPolicy) -> Self {
+        Self {
+            runner,
+            progress: ProcessDriverProgress::new_v0(),
+            wire_phase: ProcessDriverWirePhase::AwaitingHello,
+            startup_deadline: Instant::now() + process_policy.startup_grace,
+        }
+    }
+
+    fn committed_event_count(&self) -> usize {
+        self.progress.committed_event_count()
+    }
+
+    fn commit_phase(&self) -> ProcessDriverCommitPhase {
+        self.progress.commit_phase()
+    }
+
+    fn recv_timeout(&self, process_policy: ProcessDriverPolicy) -> Duration {
+        match self.wire_phase {
+            ProcessDriverWirePhase::AwaitingHello => self
+                .startup_deadline
+                .saturating_duration_since(Instant::now())
+                .min(process_policy.event_recv_timeout),
+            ProcessDriverWirePhase::StreamingEvents => process_policy.event_recv_timeout,
+        }
+    }
+
+    fn startup_timed_out(&self) -> bool {
+        matches!(self.wire_phase, ProcessDriverWirePhase::AwaitingHello)
+            && Instant::now() >= self.startup_deadline
+    }
+
+    fn mark_hello_received(&mut self) {
+        self.wire_phase = ProcessDriverWirePhase::StreamingEvents;
+    }
+
+    fn record_committed_event(&mut self) {
+        self.progress.record_committed_event();
+    }
+
+    fn record_interrupted_event(&mut self) {
+        self.progress.record_interrupted_event();
+    }
+
+    fn into_execution(self, terminal: DriverTerminal) -> DriverExecution {
+        let (event_count, _, episode_event_counts) = self.progress.into_parts();
+        DriverExecution {
+            runner: self.runner,
+            event_count,
+            episode_event_counts,
+            terminal,
+        }
+    }
+
+    fn into_host_stop_execution(
+        self,
+        child: &mut Child,
+        stderr_handle: &mut Option<JoinHandle<String>>,
+    ) -> Result<DriverExecution, HostRunError> {
+        let commit_phase = self.commit_phase();
+        let (event_count, _, episode_event_counts) = self.progress.into_parts();
+        let _detail = abort_process_child(child, stderr_handle.take());
+        if commit_phase == ProcessDriverCommitPhase::BeforeFirstCommittedStep {
+            return Err(HostRunError::Driver(HostDriverError::Output(
+                HostDriverOutputError::StopBeforeFirstCommittedEvent,
+            )));
+        }
+
+        Ok(DriverExecution {
+            runner: self.runner,
+            event_count,
+            episode_event_counts,
+            terminal: DriverTerminal::Interrupted(InterruptionReason::HostStopRequested),
+        })
+    }
 }
 
 fn process_driver_host_stop_execution(
+    state: ProcessDriverLoopState,
     child: &mut Child,
     stderr_handle: &mut Option<JoinHandle<String>>,
-    runner: HostedRunner,
-    event_count: usize,
-    committed_event_count: usize,
-    episode_event_counts: Vec<(String, usize)>,
 ) -> Result<DriverExecution, HostRunError> {
-    let _detail = abort_process_child(child, stderr_handle.take());
-    host_stop_driver_execution(
-        runner,
-        event_count,
-        committed_event_count,
-        episode_event_counts,
-    )
+    state.into_host_stop_execution(child, stderr_handle)
+}
+
+fn maybe_process_driver_host_stop(
+    state: ProcessDriverLoopState,
+    child: &mut Child,
+    stderr_handle: &mut Option<JoinHandle<String>>,
+    lifecycle: &RunLifecycleState,
+) -> Result<ControlFlow<DriverExecution, ProcessDriverLoopState>, HostRunError> {
+    if lifecycle.should_stop(state.committed_event_count()) {
+        process_driver_host_stop_execution(state, child, stderr_handle).map(ControlFlow::Break)
+    } else {
+        Ok(ControlFlow::Continue(state))
+    }
 }
 
 fn driver_start_error(detail: impl Into<String>) -> HostRunError {
@@ -151,6 +312,12 @@ fn driver_protocol_json_error(
 ) -> HostRunError {
     HostRunError::Driver(HostDriverError::Protocol(
         HostDriverProtocolError::with_json_source(detail, source),
+    ))
+}
+
+fn driver_protocol_io_error(detail: impl Into<String>, source: std::io::Error) -> HostRunError {
+    HostRunError::Driver(HostDriverError::Protocol(
+        HostDriverProtocolError::with_io_source(detail, source),
     ))
 }
 
@@ -181,26 +348,17 @@ pub(super) fn run_process_driver(
         ))
     })?;
     let stdout_rx = spawn_process_stdout_reader(stdout);
-    let mut hello_received = false;
-    let mut event_counter = 0usize;
-    let mut committed_event_count = 0usize;
-    let mut episodes = Vec::new();
-    let mut runner = runner;
-    let startup_deadline = Instant::now() + process_policy.startup_grace;
+    let mut state = ProcessDriverLoopState::new(runner, process_policy);
 
     loop {
-        if lifecycle.should_stop(committed_event_count) {
-            return process_driver_host_stop_execution(
-                &mut child,
-                &mut stderr_handle,
-                runner,
-                event_counter,
-                committed_event_count,
-                episodes,
-            );
-        }
+        state =
+            match maybe_process_driver_host_stop(state, &mut child, &mut stderr_handle, lifecycle)?
+            {
+                ControlFlow::Break(execution) => return Ok(execution),
+                ControlFlow::Continue(state) => state,
+            };
 
-        if !hello_received && Instant::now() >= startup_deadline {
+        if state.startup_timed_out() {
             let detail = abort_process_child(&mut child, stderr_handle.take());
             let suffix = if detail.is_empty() {
                 String::new()
@@ -214,50 +372,49 @@ pub(super) fn run_process_driver(
             )));
         }
 
-        let recv_timeout = if hello_received {
-            process_policy.event_recv_timeout
-        } else {
-            startup_deadline
-                .saturating_duration_since(Instant::now())
-                .min(process_policy.event_recv_timeout)
-        };
+        let recv_timeout = state.recv_timeout(process_policy);
 
         let observation = match recv_process_stream_observation(&stdout_rx, Some(recv_timeout)) {
             Ok(observation) => observation,
-            Err(ProcessDriverReceiveFailure::Timeout) => {
-                if lifecycle.should_stop(committed_event_count) {
-                    return process_driver_host_stop_execution(
-                        &mut child,
-                        &mut stderr_handle,
-                        runner,
-                        event_counter,
-                        committed_event_count,
-                        episodes,
-                    );
-                }
+            Err(RecvTimeoutError::Timeout) => {
+                state = match maybe_process_driver_host_stop(
+                    state,
+                    &mut child,
+                    &mut stderr_handle,
+                    lifecycle,
+                )? {
+                    ControlFlow::Break(execution) => return Ok(execution),
+                    ControlFlow::Continue(state) => state,
+                };
                 continue;
             }
-            Err(ProcessDriverReceiveFailure::Disconnected) => {
-                if lifecycle.should_stop(committed_event_count) {
-                    return process_driver_host_stop_execution(
-                        &mut child,
-                        &mut stderr_handle,
-                        runner,
-                        event_counter,
-                        committed_event_count,
-                        episodes,
-                    );
-                }
+            Err(RecvTimeoutError::Disconnected) => {
+                state = match maybe_process_driver_host_stop(
+                    state,
+                    &mut child,
+                    &mut stderr_handle,
+                    lifecycle,
+                )? {
+                    ControlFlow::Break(execution) => return Ok(execution),
+                    ControlFlow::Continue(state) => state,
+                };
                 let detail = abort_process_child(&mut child, stderr_handle.take());
-                return Err(if detail.is_empty() {
-                    driver_io_error(format!(
+                let message = if detail.is_empty() {
+                    format!(
                         "receive process driver stdout for {command_display}: stdout reader disconnected unexpectedly"
-                    ))
+                    )
                 } else {
-                    driver_io_error(format!(
+                    format!(
                         "receive process driver stdout for {command_display}: stdout reader disconnected unexpectedly ({detail})"
-                    ))
-                });
+                    )
+                };
+                return match state.commit_phase() {
+                    ProcessDriverCommitPhase::BeforeFirstCommittedStep => {
+                        Err(driver_io_error(message))
+                    }
+                    ProcessDriverCommitPhase::AfterFirstCommittedStep => Ok(state
+                        .into_execution(DriverTerminal::Interrupted(InterruptionReason::DriverIo))),
+                };
             }
         };
 
@@ -268,36 +425,34 @@ pub(super) fn run_process_driver(
                     Ok(message) => message,
                     Err(err) => {
                         let _detail = abort_process_child(&mut child, stderr_handle.take());
-                        if committed_event_count == 0 {
-                            return Err(driver_protocol_json_error(
-                                format!(
-                                    "process driver {command_display} emitted invalid JSONL protocol before first committed step: {err}"
-                                ),
-                                err,
-                            ));
-                        }
-                        return Ok(DriverExecution {
-                            runner,
-                            event_count: event_counter,
-                            episode_event_counts: episodes,
-                            terminal: DriverTerminal::Interrupted(
-                                InterruptionReason::ProtocolViolation,
-                            ),
-                        });
+                        return match state.commit_phase() {
+                            ProcessDriverCommitPhase::BeforeFirstCommittedStep => {
+                                Err(driver_protocol_json_error(
+                                    format!(
+                                        "process driver {command_display} emitted invalid JSONL protocol before first committed step: {err}"
+                                    ),
+                                    err,
+                                ))
+                            }
+                            ProcessDriverCommitPhase::AfterFirstCommittedStep => {
+                                Ok(state.into_execution(DriverTerminal::Interrupted(
+                                    InterruptionReason::ProtocolViolation,
+                                )))
+                            }
+                        };
                     }
                 }
             }
             ProcessDriverStreamObservation::Eof => {
-                if lifecycle.should_stop(committed_event_count) {
-                    return process_driver_host_stop_execution(
-                        &mut child,
-                        &mut stderr_handle,
-                        runner,
-                        event_counter,
-                        committed_event_count,
-                        episodes,
-                    );
-                }
+                state = match maybe_process_driver_host_stop(
+                    state,
+                    &mut child,
+                    &mut stderr_handle,
+                    lifecycle,
+                )? {
+                    ControlFlow::Break(execution) => return Ok(execution),
+                    ControlFlow::Continue(state) => state,
+                };
                 let exit_status =
                     wait_for_child_exit(&mut child, process_policy).map_err(|err| {
                         let detail = abort_process_child(&mut child, stderr_handle.take());
@@ -323,7 +478,7 @@ pub(super) fn run_process_driver(
                     None => abort_process_child(&mut child, stderr_handle.take()),
                 };
 
-                if committed_event_count == 0 {
+                if state.commit_phase() == ProcessDriverCommitPhase::BeforeFirstCommittedStep {
                     let suffix = if detail.is_empty() {
                         String::new()
                     } else {
@@ -332,7 +487,7 @@ pub(super) fn run_process_driver(
                     let message = match exit_status {
                         Some(status) => format!(
                             "process driver {command_display} ended before first committed step ({}){}",
-                            format_exit_status(status),
+                            status,
                             suffix
                         ),
                         None => format!(
@@ -344,27 +499,24 @@ pub(super) fn run_process_driver(
                     return Err(driver_start_error(message));
                 }
 
-                return Ok(DriverExecution {
-                    runner,
-                    event_count: event_counter,
-                    episode_event_counts: episodes,
-                    terminal: DriverTerminal::Interrupted(InterruptionReason::DriverTerminated),
-                });
+                return Ok(state.into_execution(DriverTerminal::Interrupted(
+                    InterruptionReason::DriverTerminated,
+                )));
             }
             ProcessDriverStreamObservation::ReadError(failure) => {
-                if lifecycle.should_stop(committed_event_count) {
-                    return process_driver_host_stop_execution(
-                        &mut child,
-                        &mut stderr_handle,
-                        runner,
-                        event_counter,
-                        committed_event_count,
-                        episodes,
-                    );
-                }
+                state = match maybe_process_driver_host_stop(
+                    state,
+                    &mut child,
+                    &mut stderr_handle,
+                    lifecycle,
+                )? {
+                    ControlFlow::Break(execution) => return Ok(execution),
+                    ControlFlow::Continue(state) => state,
+                };
                 let extra = abort_process_child(&mut child, stderr_handle.take());
                 match failure {
-                    ProcessDriverReadFailure::InvalidEncoding(detail) => {
+                    ProcessDriverReadFailure::InvalidEncoding(source) => {
+                        let detail = source.to_string();
                         let message = if extra.is_empty() {
                             format!(
                                 "process driver {command_display} emitted malformed protocol bytes: {detail}"
@@ -374,19 +526,18 @@ pub(super) fn run_process_driver(
                                 "process driver {command_display} emitted malformed protocol bytes: {detail} ({extra})"
                             )
                         };
-                        if committed_event_count == 0 {
-                            return Err(driver_protocol_error(message));
-                        }
-                        return Ok(DriverExecution {
-                            runner,
-                            event_count: event_counter,
-                            episode_event_counts: episodes,
-                            terminal: DriverTerminal::Interrupted(
-                                InterruptionReason::ProtocolViolation,
-                            ),
-                        });
+                        return match state.commit_phase() {
+                            ProcessDriverCommitPhase::BeforeFirstCommittedStep => {
+                                Err(driver_protocol_io_error(message, source))
+                            }
+                            ProcessDriverCommitPhase::AfterFirstCommittedStep => Ok(state
+                                .into_execution(DriverTerminal::Interrupted(
+                                    InterruptionReason::ProtocolViolation,
+                                ))),
+                        };
                     }
-                    ProcessDriverReadFailure::Io(detail) => {
+                    ProcessDriverReadFailure::Io(source) => {
+                        let detail = source.to_string();
                         let message = if extra.is_empty() {
                             format!("read process driver stdout for {command_display}: {detail}")
                         } else {
@@ -394,26 +545,26 @@ pub(super) fn run_process_driver(
                                 "read process driver stdout for {command_display}: {detail} ({extra})"
                             )
                         };
-                        if committed_event_count == 0 {
-                            return Err(driver_io_error(message));
-                        }
-                        return Ok(DriverExecution {
-                            runner,
-                            event_count: event_counter,
-                            episode_event_counts: episodes,
-                            terminal: DriverTerminal::Interrupted(InterruptionReason::DriverIo),
-                        });
+                        return match state.commit_phase() {
+                            ProcessDriverCommitPhase::BeforeFirstCommittedStep => {
+                                Err(driver_io_source_error(message, source))
+                            }
+                            ProcessDriverCommitPhase::AfterFirstCommittedStep => Ok(state
+                                .into_execution(DriverTerminal::Interrupted(
+                                    InterruptionReason::DriverIo,
+                                ))),
+                        };
                     }
                 }
             }
         };
 
-        if !hello_received {
+        if state.wire_phase == ProcessDriverWirePhase::AwaitingHello {
             match message {
                 ProcessDriverMessage::Hello { protocol }
                     if protocol == PROCESS_DRIVER_PROTOCOL_VERSION =>
                 {
-                    hello_received = true;
+                    state.mark_hello_received();
                     continue;
                 }
                 ProcessDriverMessage::Hello { protocol } => {
@@ -435,52 +586,34 @@ pub(super) fn run_process_driver(
         match message {
             ProcessDriverMessage::Hello { .. } => {
                 let _detail = abort_process_child(&mut child, stderr_handle.take());
-                if committed_event_count == 0 {
+                if state.commit_phase() == ProcessDriverCommitPhase::BeforeFirstCommittedStep {
                     return Err(driver_protocol_error(format!(
                         "process driver {command_display} sent duplicate hello before first committed step"
                     )));
                 }
-                return Ok(DriverExecution {
-                    runner,
-                    event_count: event_counter,
-                    episode_event_counts: episodes,
-                    terminal: DriverTerminal::Interrupted(InterruptionReason::ProtocolViolation),
-                });
+                return Ok(state.into_execution(DriverTerminal::Interrupted(
+                    InterruptionReason::ProtocolViolation,
+                )));
             }
-            ProcessDriverMessage::Event { event } => match runner.step(event) {
+            ProcessDriverMessage::Event { event } => match state.runner.step(event) {
                 Ok(_) => {
-                    event_counter += 1;
-                    committed_event_count += 1;
-                    if episodes.is_empty() {
-                        episodes.push(("E1".to_string(), 0));
-                    }
-                    episodes[0].1 += 1;
-                    if lifecycle.should_stop(committed_event_count) {
-                        return process_driver_host_stop_execution(
-                            &mut child,
-                            &mut stderr_handle,
-                            runner,
-                            event_counter,
-                            committed_event_count,
-                            episodes,
-                        );
-                    }
+                    state.record_committed_event();
+                    state = match maybe_process_driver_host_stop(
+                        state,
+                        &mut child,
+                        &mut stderr_handle,
+                        lifecycle,
+                    )? {
+                        ControlFlow::Break(execution) => return Ok(execution),
+                        ControlFlow::Continue(state) => state,
+                    };
                 }
                 Err(crate::HostedStepError::EgressDispatchFailure(failure)) => {
-                    event_counter += 1;
-                    if episodes.is_empty() {
-                        episodes.push(("E1".to_string(), 0));
-                    }
-                    episodes[0].1 += 1;
+                    state.record_interrupted_event();
                     let _detail = abort_process_child(&mut child, stderr_handle.take());
-                    return Ok(DriverExecution {
-                        runner,
-                        event_count: event_counter,
-                        episode_event_counts: episodes,
-                        terminal: DriverTerminal::Interrupted(
-                            interruption_from_egress_dispatch_failure(failure),
-                        ),
-                    });
+                    return Ok(state.into_execution(DriverTerminal::Interrupted(
+                        interruption_from_egress_dispatch_failure(failure),
+                    )));
                 }
                 Err(err) => {
                     let _detail = abort_process_child(&mut child, stderr_handle.take());
@@ -488,7 +621,7 @@ pub(super) fn run_process_driver(
                 }
             },
             ProcessDriverMessage::End => {
-                if committed_event_count == 0 {
+                if state.commit_phase() == ProcessDriverCommitPhase::BeforeFirstCommittedStep {
                     let _detail = abort_process_child(&mut child, stderr_handle.take());
                     return Err(driver_protocol_error(format!(
                         "process driver {command_display} ended before first committed step"
@@ -504,12 +637,7 @@ pub(super) fn run_process_driver(
                 )
                 .map_err(|err| HostRunError::Driver(HostDriverError::Io(err)))?;
 
-                return Ok(DriverExecution {
-                    runner,
-                    event_count: event_counter,
-                    episode_event_counts: episodes,
-                    terminal,
-                });
+                return Ok(state.into_execution(terminal));
             }
         }
     }
@@ -584,9 +712,9 @@ fn spawn_process_stdout_reader(stdout: ChildStdout) -> Receiver<ProcessDriverStr
                 }
                 Err(err) => {
                     let failure = if err.kind() == std::io::ErrorKind::InvalidData {
-                        ProcessDriverReadFailure::InvalidEncoding(err.to_string())
+                        ProcessDriverReadFailure::InvalidEncoding(err)
                     } else {
-                        ProcessDriverReadFailure::Io(err.to_string())
+                        ProcessDriverReadFailure::Io(err)
                     };
                     let _ = tx.send(ProcessDriverStreamObservation::ReadError(failure));
                     break;
@@ -609,15 +737,10 @@ fn drain_process_stderr(stderr: impl Read + Send + 'static) -> JoinHandle<String
 fn recv_process_stream_observation(
     stdout_rx: &Receiver<ProcessDriverStreamObservation>,
     timeout: Option<Duration>,
-) -> Result<ProcessDriverStreamObservation, ProcessDriverReceiveFailure> {
+) -> Result<ProcessDriverStreamObservation, RecvTimeoutError> {
     match timeout {
-        Some(timeout) => stdout_rx.recv_timeout(timeout).map_err(|err| match err {
-            RecvTimeoutError::Timeout => ProcessDriverReceiveFailure::Timeout,
-            RecvTimeoutError::Disconnected => ProcessDriverReceiveFailure::Disconnected,
-        }),
-        None => stdout_rx
-            .recv()
-            .map_err(|_| ProcessDriverReceiveFailure::Disconnected),
+        Some(timeout) => stdout_rx.recv_timeout(timeout),
+        None => stdout_rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
     }
 }
 
@@ -784,10 +907,6 @@ fn drain_process_after_end(
             }
         }
     }
-}
-
-fn format_exit_status(status: ExitStatus) -> String {
-    status.to_string()
 }
 
 fn process_message_name(message: &ProcessDriverMessage) -> &'static str {

@@ -152,7 +152,8 @@ Behaviors requiring memory (once, count, latch, debounce, edge detection) are
 
 - Given identical inputs and identical declared node state, node outputs must be identical.
 - External nondeterminism is confined to declared ingress payload boundaries
-  (adapter-shaped or adapter-independent external event payloads). Host
+  (adapter-shaped external event payloads for production paths, or
+  adapter-exempt fixture payloads for fixture-driven testing). Host
   dispatch and prod boundary channel realization operate after the
   episode within the deterministic capture/replay contract.
 

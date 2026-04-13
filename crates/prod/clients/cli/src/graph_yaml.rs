@@ -301,7 +301,7 @@ fn load_egress_config(path: Option<&Path>) -> Result<Option<EgressConfig>, Strin
 mod tests {
     use super::*;
     use ergo_adapter::{EventTime, ExternalEventKind};
-    use ergo_host::HostedEvent;
+    use ergo_host::{HostedEvent, PROCESS_DRIVER_PROTOCOL_VERSION};
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -334,9 +334,34 @@ mod tests {
             event_id: event_id.to_string(),
             kind: ExternalEventKind::Command,
             at: EventTime::default(),
-            semantic_kind: None,
+            semantic_kind: Some("tick".to_string()),
             payload: Some(json!({})),
         }
+    }
+
+    fn write_minimal_adapter(base: &std::path::Path) -> Result<std::path::PathBuf, String> {
+        write_temp_file(
+            base,
+            "adapter.yaml",
+            r#"kind: adapter
+id: minimal_test_adapter
+version: 1.0.0
+runtime_compatibility: 0.1.0
+context_keys: []
+event_kinds:
+  - name: tick
+    payload_schema:
+      type: object
+      additionalProperties: false
+capture:
+  format_version: "1"
+  fields:
+    - event.tick
+    - meta.adapter_id
+    - meta.adapter_version
+    - meta.timestamp
+"#,
+        )
     }
 
     #[test]
@@ -554,12 +579,15 @@ outputs:
   value_out: src.value
 "#,
         )?;
+        let adapter = write_minimal_adapter(&temp_dir)?;
         let driver = write_process_driver_script(
             &temp_dir,
             "driver.sh",
             &[
-                serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))
-                    .map_err(|err| format!("serialize hello: {err}"))?,
+                serde_json::to_string(
+                    &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
+                )
+                .map_err(|err| format!("serialize hello: {err}"))?,
                 serde_json::to_string(&json!({"type":"event","event":host_event("evt1")}))
                     .map_err(|err| format!("serialize event: {err}"))?,
                 serde_json::to_string(&json!({"type":"end"}))
@@ -569,6 +597,8 @@ outputs:
         let capture = temp_dir.join("capture.json");
 
         let args = vec![
+            "--adapter".to_string(),
+            adapter.to_string_lossy().to_string(),
             "--driver-cmd".to_string(),
             "/bin/sh".to_string(),
             "--driver-arg".to_string(),
@@ -615,12 +645,15 @@ outputs:
   value_out: src.value
 "#,
         )?;
+        let adapter = write_minimal_adapter(&temp_dir)?;
         let driver = write_process_driver_script(
             &temp_dir,
             "driver.sh",
             &[
-                serde_json::to_string(&json!({"type":"hello","protocol":"ergo-driver.v0"}))
-                    .map_err(|err| format!("serialize hello: {err}"))?,
+                serde_json::to_string(
+                    &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
+                )
+                .map_err(|err| format!("serialize hello: {err}"))?,
                 serde_json::to_string(&json!({"type":"event","event":host_event("evt1")}))
                     .map_err(|err| format!("serialize event: {err}"))?,
             ],
@@ -628,6 +661,8 @@ outputs:
         let capture = temp_dir.join("capture.json");
 
         let args = vec![
+            "--adapter".to_string(),
+            adapter.to_string_lossy().to_string(),
             "--driver-cmd".to_string(),
             "/bin/sh".to_string(),
             "--driver-arg".to_string(),

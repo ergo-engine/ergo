@@ -47,15 +47,15 @@
 //! - Replay representability failures still remain host-owned setup checks
 //!   because they depend on host handler ownership doctrine, not just kernel
 //!   replay semantics.
-//! - Shared replay-setup orchestration and host-internal handler-kind
-//!   authority still create refactor pressure here and are tracked in issue
-//!   #71.
+//! - Replay prep now routes both path-backed and asset-backed callers through
+//!   one shared replay-request preparation pipeline and consumes the runner's
+//!   host-internal handler-kind authority instead of repeating `set_context`
+//!   knowledge locally.
 
 #![allow(clippy::arc_with_non_send_sync)]
 
 use super::*;
-
-const HOST_INTERNAL_SET_CONTEXT_KIND: &str = "set_context";
+use crate::runner::host_internal_handler_kinds;
 
 fn map_live_prep_loader_result(
     result: Result<ergo_loader::PreparedGraphAssets, ergo_loader::LoaderError>,
@@ -264,16 +264,13 @@ pub(super) fn prepare_adapter_setup(
     )
     .map_err(HostAdapterSetupError::Composition)?;
     let adapter_provenance = adapter_fingerprint(&manifest);
-    let binder = compile_event_binder(&provides).map_err(HostAdapterSetupError::BinderCompile)?;
+    let adapter_config = HostedAdapterConfig::new(provides.clone(), adapter_provenance.clone())
+        .map_err(HostAdapterSetupError::BinderCompile)?;
 
     Ok(CanonicalAdapterSetup {
         adapter_bound: true,
         adapter_provides: provides.clone(),
-        adapter_config: Some(HostedAdapterConfig {
-            provides,
-            binder,
-            adapter_provenance: adapter_provenance.clone(),
-        }),
+        adapter_config: Some(adapter_config),
         expected_adapter_provenance: adapter_provenance,
     })
 }
@@ -286,6 +283,31 @@ pub(super) fn ensure_adapter_requirement_satisfied(
         return Err(HostRunError::AdapterRequired(dependency_summary.clone()));
     }
 
+    Ok(())
+}
+
+/// Derives `SessionIntent` from a `DriverConfig` variant.
+pub(super) fn session_intent_from_driver(driver: &DriverConfig) -> SessionIntent {
+    match driver {
+        DriverConfig::Process { .. } => SessionIntent::Production,
+        DriverConfig::Fixture { .. } | DriverConfig::FixtureItems { .. } => SessionIntent::Fixture,
+    }
+}
+
+/// Production closure gate: rejects sessions with `SessionIntent::Production`
+/// when no adapter contract is bound.
+///
+/// This gate is independent of the graph-dependency gate (`ensure_adapter_requirement_satisfied`).
+/// The graph-dependency gate checks whether the graph structurally needs an adapter
+/// (e.g. `required: true` context keys, action writes/intents).  This gate checks
+/// whether the *execution path* demands a contract regardless of graph structure.
+pub(super) fn ensure_production_adapter_bound(
+    adapter_bound: bool,
+    session_intent: SessionIntent,
+) -> Result<(), HostRunError> {
+    if !adapter_bound && session_intent == SessionIntent::Production {
+        return Err(HostRunError::ProductionRequiresAdapter);
+    }
     Ok(())
 }
 
@@ -438,13 +460,14 @@ pub fn finalize_hosted_runner_capture(
 }
 
 fn captured_external_effect_kinds(bundle: &CaptureBundle) -> HashSet<String> {
+    let handler_kinds = host_internal_handler_kinds();
     bundle
         .decisions
         .iter()
         .flat_map(|decision| decision.effects.iter())
         .filter_map(|effect| {
             let kind = effect.effect.kind.as_str();
-            (kind != HOST_INTERNAL_SET_CONTEXT_KIND).then(|| kind.to_string())
+            (!handler_kinds.contains(kind)).then(|| kind.to_string())
         })
         .collect()
 }
@@ -536,7 +559,8 @@ fn validate_graph_internal(
     options: &LivePrepOptions,
     runtime_surfaces: Option<RuntimeSurfaces>,
 ) -> Result<(), HostRunError> {
-    let _ = validate_live_runner_setup_from_assets(assets, options, runtime_surfaces)?;
+    let validated = validate_live_runner_setup_from_assets(assets, options, runtime_surfaces)?;
+    ensure_production_adapter_bound(validated.adapter_bound, options.session_intent)?;
     Ok(())
 }
 
@@ -549,11 +573,13 @@ fn validate_graph_from_paths_internal(
         cluster_paths,
         adapter_path,
         egress_config,
+        session_intent,
     } = request;
     let assets = load_graph_assets_from_paths(&graph_path, &cluster_paths)?;
     let options = LivePrepOptions {
         adapter: adapter_path.map(AdapterInput::Path),
         egress_config,
+        session_intent,
     };
     validate_graph_internal(&assets, &options, runtime_surfaces)
 }
@@ -574,6 +600,7 @@ fn validate_run_graph_from_paths_internal(
     let options = LivePrepOptions {
         adapter: adapter_path.map(AdapterInput::Path),
         egress_config,
+        session_intent: session_intent_from_driver(&driver),
     };
     validate_run_graph_internal(&assets, &options, &driver, runtime_surfaces)
 }
@@ -598,8 +625,106 @@ fn validate_run_graph_internal(
     runtime_surfaces: Option<RuntimeSurfaces>,
 ) -> Result<(), HostRunError> {
     let validated = validate_live_runner_setup_from_assets(assets, options, runtime_surfaces)?;
+    ensure_production_adapter_bound(
+        validated.adapter_bound,
+        session_intent_from_driver(driver),
+    )?;
     validate_driver_input(driver, validated.adapter_bound)?;
     Ok(())
+}
+
+fn load_capture_bundle_from_path(capture_path: &Path) -> Result<CaptureBundle, HostReplayError> {
+    let data = fs::read_to_string(capture_path).map_err(|source| {
+        host_replay_setup_error(HostReplaySetupError::CaptureRead {
+            path: capture_path.to_path_buf(),
+            source,
+        })
+    })?;
+    serde_json::from_str::<CaptureBundle>(&data).map_err(|source| {
+        host_replay_setup_error(HostReplaySetupError::CaptureParse {
+            path: capture_path.to_path_buf(),
+            source,
+        })
+    })
+}
+
+fn prepare_replay_request_from_assets(
+    bundle: CaptureBundle,
+    assets: &ergo_loader::PreparedGraphAssets,
+    prep: &LivePrepOptions,
+    runtime_surfaces: Option<RuntimeSurfaces>,
+) -> Result<ReplayGraphRequest, HostReplayError> {
+    if prep.egress_config.is_some() {
+        return Err(host_replay_setup_error(
+            HostReplaySetupError::LiveEgressConfigurationNotAllowed,
+        ));
+    }
+
+    let prepared = prepare_graph_runtime_from_assets(assets, runtime_surfaces).map_err(|err| {
+        host_replay_setup_error(HostReplaySetupError::Setup(
+            HostSetupError::GraphPreparation(err),
+        ))
+    })?;
+    if bundle.graph_id.as_str() != prepared.graph_id {
+        return Err(HostReplayError::GraphIdMismatch {
+            expected: prepared.graph_id,
+            got: bundle.graph_id.as_str().to_string(),
+        });
+    }
+
+    let adapter_setup = prepare_adapter_setup(prep.adapter.as_ref(), &prepared).map_err(|err| {
+        host_replay_setup_error(HostReplaySetupError::Setup(HostSetupError::AdapterSetup(
+            err,
+        )))
+    })?;
+    let PreparedGraphRuntime {
+        runtime_provenance,
+        expanded,
+        catalog,
+        registries,
+        ..
+    } = prepared;
+
+    let runtime = RuntimeHandle::new(
+        Arc::new(expanded),
+        catalog,
+        registries,
+        adapter_setup.adapter_provides.clone(),
+    );
+    let handler_kinds = host_internal_handler_kinds();
+    let replay_external_kinds =
+        replay_owned_external_kinds(&runtime, &adapter_setup.adapter_provides, &handler_kinds);
+    let captured_external_kinds = captured_external_effect_kinds(&bundle);
+    let mut missing: Vec<String> = captured_external_kinds
+        .difference(&replay_external_kinds)
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        missing.sort();
+        return Err(HostReplayError::ExternalKindsNotRepresentable { missing });
+    }
+    let runner = HostedRunner::new(
+        GraphId::new(bundle.graph_id.as_str().to_string()),
+        bundle.config.clone(),
+        runtime,
+        runtime_provenance.clone(),
+        adapter_setup.adapter_config,
+        None,
+        None,
+        Some(replay_external_kinds),
+    )
+    .map_err(|err| {
+        host_replay_setup_error(HostReplaySetupError::Setup(
+            HostSetupError::HostedRunnerInitialization(err),
+        ))
+    })?;
+
+    Ok(ReplayGraphRequest {
+        bundle,
+        runner,
+        expected_adapter_provenance: adapter_setup.expected_adapter_provenance,
+        expected_runtime_provenance: runtime_provenance,
+    })
 }
 
 /// Canonical replay API for clients. Host owns capture load, graph loading, adapter composition, and runner setup.
@@ -673,8 +798,12 @@ fn prepare_hosted_runner_internal(
     options: &LivePrepOptions,
     runtime_surfaces: Option<RuntimeSurfaces>,
 ) -> Result<HostedRunner, HostRunError> {
-    let PreparedLiveRunnerSetup { mut runner, .. } =
-        prepare_live_runner_setup_from_assets(&assets, options, runtime_surfaces)?;
+    let PreparedLiveRunnerSetup {
+        adapter_bound,
+        mut runner,
+        ..
+    } = prepare_live_runner_setup_from_assets(&assets, options, runtime_surfaces)?;
+    ensure_production_adapter_bound(adapter_bound, options.session_intent)?;
     start_live_runner_egress(&mut runner)?;
     Ok(runner)
 }
@@ -689,92 +818,24 @@ fn replay_graph_from_paths_internal(
         cluster_paths,
         adapter_path,
     } = request;
-
-    let data = fs::read_to_string(&capture_path).map_err(|source| {
-        host_replay_setup_error(HostReplaySetupError::CaptureRead {
-            path: capture_path.clone(),
-            source,
-        })
-    })?;
-    let bundle = serde_json::from_str::<CaptureBundle>(&data).map_err(|source| {
-        host_replay_setup_error(HostReplaySetupError::CaptureParse {
-            path: capture_path.clone(),
-            source,
-        })
-    })?;
-
+    let bundle = load_capture_bundle_from_path(&capture_path)?;
     let assets =
         ergo_loader::load_graph_assets_from_paths(&graph_path, &cluster_paths).map_err(|err| {
             host_replay_setup_error(HostReplaySetupError::Setup(
                 HostSetupError::LoadGraphAssets(err),
             ))
         })?;
-    let prepared = prepare_graph_runtime_from_assets(&assets, runtime_surfaces).map_err(|err| {
-        host_replay_setup_error(HostReplaySetupError::Setup(
-            HostSetupError::GraphPreparation(err),
-        ))
-    })?;
-    if bundle.graph_id.as_str() != prepared.graph_id {
-        return Err(HostReplayError::GraphIdMismatch {
-            expected: prepared.graph_id,
-            got: bundle.graph_id.as_str().to_string(),
-        });
-    }
-
-    let adapter = adapter_path.map(AdapterInput::Path);
-    let adapter_setup = prepare_adapter_setup(adapter.as_ref(), &prepared).map_err(|err| {
-        host_replay_setup_error(HostReplaySetupError::Setup(HostSetupError::AdapterSetup(
-            err,
-        )))
-    })?;
-    let PreparedGraphRuntime {
-        runtime_provenance,
-        expanded,
-        catalog,
-        registries,
-        ..
-    } = prepared;
-
-    let runtime = RuntimeHandle::new(
-        Arc::new(expanded),
-        catalog,
-        registries,
-        adapter_setup.adapter_provides.clone(),
-    );
-    let handler_kinds = BTreeSet::from([HOST_INTERNAL_SET_CONTEXT_KIND.to_string()]);
-    let replay_external_kinds =
-        replay_owned_external_kinds(&runtime, &adapter_setup.adapter_provides, &handler_kinds);
-    let captured_external_kinds = captured_external_effect_kinds(&bundle);
-    let mut missing: Vec<String> = captured_external_kinds
-        .difference(&replay_external_kinds)
-        .cloned()
-        .collect();
-    if !missing.is_empty() {
-        missing.sort();
-        return Err(HostReplayError::ExternalKindsNotRepresentable { missing });
-    }
-    let runner = HostedRunner::new(
-        GraphId::new(bundle.graph_id.as_str().to_string()),
-        bundle.config.clone(),
-        runtime,
-        runtime_provenance.clone(),
-        adapter_setup.adapter_config,
-        None,
-        None,
-        Some(replay_external_kinds),
-    )
-    .map_err(|err| {
-        host_replay_setup_error(HostReplaySetupError::Setup(
-            HostSetupError::HostedRunnerInitialization(err),
-        ))
-    })?;
-
-    replay_graph(ReplayGraphRequest {
+    let replay_request = prepare_replay_request_from_assets(
         bundle,
-        runner,
-        expected_adapter_provenance: adapter_setup.expected_adapter_provenance,
-        expected_runtime_provenance: runtime_provenance,
-    })
+        &assets,
+        &LivePrepOptions {
+            adapter: adapter_path.map(AdapterInput::Path),
+            egress_config: None,
+            session_intent: SessionIntent::Fixture,
+        },
+        runtime_surfaces,
+    )?;
+    replay_graph(replay_request)
 }
 
 fn replay_graph_from_assets_internal(
@@ -786,77 +847,9 @@ fn replay_graph_from_assets_internal(
         assets,
         prep,
     } = request;
-    if prep.egress_config.is_some() {
-        return Err(host_replay_setup_error(
-            HostReplaySetupError::LiveEgressConfigurationNotAllowed,
-        ));
-    }
-
-    let prepared = prepare_graph_runtime_from_assets(&assets, runtime_surfaces).map_err(|err| {
-        host_replay_setup_error(HostReplaySetupError::Setup(
-            HostSetupError::GraphPreparation(err),
-        ))
-    })?;
-    if bundle.graph_id.as_str() != prepared.graph_id {
-        return Err(HostReplayError::GraphIdMismatch {
-            expected: prepared.graph_id,
-            got: bundle.graph_id.as_str().to_string(),
-        });
-    }
-
-    let adapter_setup = prepare_adapter_setup(prep.adapter.as_ref(), &prepared).map_err(|err| {
-        host_replay_setup_error(HostReplaySetupError::Setup(HostSetupError::AdapterSetup(
-            err,
-        )))
-    })?;
-    let PreparedGraphRuntime {
-        runtime_provenance,
-        expanded,
-        catalog,
-        registries,
-        ..
-    } = prepared;
-
-    let runtime = RuntimeHandle::new(
-        Arc::new(expanded),
-        catalog,
-        registries,
-        adapter_setup.adapter_provides.clone(),
-    );
-    let handler_kinds = BTreeSet::from([HOST_INTERNAL_SET_CONTEXT_KIND.to_string()]);
-    let replay_external_kinds =
-        replay_owned_external_kinds(&runtime, &adapter_setup.adapter_provides, &handler_kinds);
-    let captured_external_kinds = captured_external_effect_kinds(&bundle);
-    let mut missing: Vec<String> = captured_external_kinds
-        .difference(&replay_external_kinds)
-        .cloned()
-        .collect();
-    if !missing.is_empty() {
-        missing.sort();
-        return Err(HostReplayError::ExternalKindsNotRepresentable { missing });
-    }
-    let runner = HostedRunner::new(
-        GraphId::new(bundle.graph_id.as_str().to_string()),
-        bundle.config.clone(),
-        runtime,
-        runtime_provenance.clone(),
-        adapter_setup.adapter_config,
-        None,
-        None,
-        Some(replay_external_kinds),
-    )
-    .map_err(|err| {
-        host_replay_setup_error(HostReplaySetupError::Setup(
-            HostSetupError::HostedRunnerInitialization(err),
-        ))
-    })?;
-
-    replay_graph(ReplayGraphRequest {
-        bundle,
-        runner,
-        expected_adapter_provenance: adapter_setup.expected_adapter_provenance,
-        expected_runtime_provenance: runtime_provenance,
-    })
+    let replay_request =
+        prepare_replay_request_from_assets(bundle, &assets, &prep, runtime_surfaces)?;
+    replay_graph(replay_request)
 }
 
 fn prepare_hosted_runner_from_paths_internal(
@@ -868,11 +861,13 @@ fn prepare_hosted_runner_from_paths_internal(
         cluster_paths,
         adapter_path,
         egress_config,
+        session_intent,
     } = request;
     let assets = load_graph_assets_from_paths(&graph_path, &cluster_paths)?;
     let options = LivePrepOptions {
         adapter: adapter_path.map(AdapterInput::Path),
         egress_config,
+        session_intent,
     };
     prepare_hosted_runner_internal(assets, &options, runtime_surfaces)
 }

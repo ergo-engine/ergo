@@ -227,6 +227,10 @@ The process protocol uses three message types.
 
 Must be first.
 
+For Rust callers and tests, the canonical token authority is
+`ergo_host::PROCESS_DRIVER_PROTOCOL_VERSION`. The literal below is the
+current value of that host-owned constant.
+
 ```json
 {"type":"hello","protocol":"ergo-driver.v0"}
 ```

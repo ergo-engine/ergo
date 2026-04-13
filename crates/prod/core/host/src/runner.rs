@@ -30,10 +30,15 @@
 //!   treated as unrecoverable for the runner lifetime.
 //! - `CaptureFinalizationState` is load-bearing: `FinalizeOnly` permits capture finalization but
 //!   blocks further stepping, while `Fatal` blocks both.
-//! - `HostedEvent` is a public wire DTO, so invalid states are rejected in `build_external_event()`
-//!   and `step(...)`, not at construction time.
-//! - Host-local `set_context` ownership is still hardcoded here and also referenced from
-//!   `live_prep.rs`; broader authority cleanup is tracked in issues #71 and #73.
+//! - `HostedEvent` intentionally stays a public wire DTO; the private
+//!   `ValidatedHostedEvent` phase is the runner-owned validation boundary before
+//!   adapter binding or external-event construction.
+//! - `host_internal_handler_kinds()` is the host-owned authority for effect
+//!   kinds that stay inside the runner/handler path rather than replay-owned
+//!   external effects.
+//! - Non-fatal egress validation warnings currently surface through an explicit
+//!   stderr helper because the host has no structured warning sink at this
+//!   layer.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Arc, Mutex};
@@ -43,13 +48,13 @@ use ergo_adapter::host::{
     SetContextHandler,
 };
 use ergo_adapter::{
-    bind_semantic_event_with_binder, AdapterProvides, EventId, EventTime, ExternalEvent,
-    ExternalEventKind, GraphId, RunTermination, RuntimeHandle,
+    bind_semantic_event_with_binder, compile_event_binder, AdapterProvides, EventId, EventTime,
+    ExternalEvent, ExternalEventKind, GraphId, RunTermination, RuntimeHandle,
 };
 use ergo_runtime::common::ActionEffect;
 use ergo_supervisor::{
-    CaptureBundle, CapturingSession, Constraints, Decision, DecisionLog, DecisionLogEntry,
-    NO_ADAPTER_PROVENANCE,
+    CaptureBundle, CapturedIntentAck, CapturingSession, Constraints, Decision, DecisionLog,
+    DecisionLogEntry, NO_ADAPTER_PROVENANCE,
 };
 use serde::{Deserialize, Serialize};
 
@@ -85,9 +90,31 @@ pub struct HostedStepOutcome {
 
 #[derive(Debug)]
 pub struct HostedAdapterConfig {
-    pub provides: AdapterProvides,
-    pub binder: ergo_adapter::EventBinder,
-    pub adapter_provenance: String,
+    provides: AdapterProvides,
+    binder: ergo_adapter::EventBinder,
+    adapter_provenance: String,
+}
+
+impl HostedAdapterConfig {
+    pub fn new(
+        provides: AdapterProvides,
+        adapter_provenance: impl Into<String>,
+    ) -> Result<Self, ergo_adapter::EventBindingError> {
+        let binder = compile_event_binder(&provides)?;
+        Ok(Self {
+            provides,
+            binder,
+            adapter_provenance: adapter_provenance.into(),
+        })
+    }
+
+    pub fn provides(&self) -> &AdapterProvides {
+        &self.provides
+    }
+
+    pub fn adapter_provenance(&self) -> &str {
+        &self.adapter_provenance
+    }
 }
 
 #[derive(Clone, Default)]
@@ -119,6 +146,78 @@ struct AdapterMode {
     binder: ergo_adapter::EventBinder,
 }
 
+struct ValidatedHostedEvent {
+    event_id: EventId,
+    kind: ExternalEventKind,
+    at: EventTime,
+    semantic_kind: Option<String>,
+    payload: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+impl ValidatedHostedEvent {
+    fn new(event: HostedEvent) -> Result<Self, HostedStepError> {
+        let payload = match event.payload {
+            Some(payload) => Some(
+                payload
+                    .as_object()
+                    .cloned()
+                    .ok_or(HostedStepError::PayloadMustBeObject)?,
+            ),
+            None => None,
+        };
+
+        Ok(Self {
+            event_id: EventId::new(event.event_id),
+            kind: event.kind,
+            at: event.at,
+            semantic_kind: event.semantic_kind,
+            payload,
+        })
+    }
+
+    fn semantic_kind(&self) -> Result<&str, HostedStepError> {
+        self.semantic_kind
+            .as_deref()
+            .ok_or(HostedStepError::MissingSemanticKind)
+    }
+
+    fn payload_object(
+        &self,
+    ) -> Result<&serde_json::Map<String, serde_json::Value>, HostedStepError> {
+        self.payload.as_ref().ok_or(HostedStepError::MissingPayload)
+    }
+
+    fn into_external_event(self) -> Result<ExternalEvent, HostedStepError> {
+        match self.payload {
+            Some(payload) => {
+                let bytes = serde_json::to_vec(&payload).map_err(|err| {
+                    HostedStepError::EventBuild(HostedEventBuildError::SerializePayload(err))
+                })?;
+                ExternalEvent::with_payload(
+                    self.event_id,
+                    self.kind,
+                    self.at,
+                    ergo_adapter::EventPayload { data: bytes },
+                )
+                .map_err(|err| {
+                    HostedStepError::EventBuild(HostedEventBuildError::InvalidPayload(err))
+                })
+            }
+            None => Ok(ExternalEvent::mechanical_at(
+                self.event_id,
+                self.kind,
+                self.at,
+            )),
+        }
+    }
+}
+
+#[derive(Default)]
+struct InvokedEffectDispatch {
+    applied_writes: Vec<AppliedWrite>,
+    intent_acks: Vec<CapturedIntentAck>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StepMode {
     Live,
@@ -133,7 +232,7 @@ enum CaptureFinalizationState {
     Fatal,
 }
 
-const HOST_INTERNAL_SET_CONTEXT_KIND: &str = "set_context";
+pub(crate) const HOST_INTERNAL_SET_CONTEXT_KIND: &str = "set_context";
 
 fn default_handlers() -> BTreeMap<String, Arc<dyn EffectHandler>> {
     let mut handlers: BTreeMap<String, Arc<dyn EffectHandler>> = BTreeMap::new();
@@ -144,7 +243,7 @@ fn default_handlers() -> BTreeMap<String, Arc<dyn EffectHandler>> {
     handlers
 }
 
-fn default_handler_kinds() -> BTreeSet<String> {
+pub(crate) fn host_internal_handler_kinds() -> BTreeSet<String> {
     BTreeSet::from([HOST_INTERNAL_SET_CONTEXT_KIND.to_string()])
 }
 
@@ -155,7 +254,7 @@ pub(crate) fn validate_hosted_runner_configuration(
     replay_external_kinds: &HashSet<String>,
     graph_emittable_effect_kinds: &HashSet<String>,
 ) -> Result<(), HostedStepError> {
-    let handler_kinds = default_handler_kinds();
+    let handler_kinds = host_internal_handler_kinds();
 
     if egress_config.is_some() && !replay_external_kinds.is_empty() {
         return Err(HostedStepError::EgressValidation(
@@ -182,7 +281,7 @@ pub(crate) fn validate_hosted_runner_configuration(
                 graph_emittable_effect_kinds,
                 &handler_kinds,
             )?;
-            log_egress_warnings(&warnings);
+            emit_egress_validation_warnings_to_stderr(&warnings);
         } else {
             ensure_handler_coverage(
                 &config.provides,
@@ -235,6 +334,26 @@ pub struct HostedRunner {
 }
 
 impl HostedRunner {
+    /// Construct a `HostedRunner` from pre-assembled components.
+    ///
+    /// # Trust boundary
+    ///
+    /// This is a **low-level constructor** that does not enforce the
+    /// production adapter closure gate (`ensure_production_adapter_bound`).
+    /// Callers using this constructor directly are responsible for ensuring
+    /// that production sessions always provide an `adapter`.
+    ///
+    /// **Preferred API paths** (which enforce the gate automatically):
+    /// - [`prepare_hosted_runner_from_paths`] / [`prepare_hosted_runner`]
+    ///   (via the host usecases layer)
+    /// - [`LivePrepOptions::for_production`] /
+    ///   [`PrepareHostedRunnerFromPathsRequest::for_production`]
+    ///   (structurally require a non-optional adapter)
+    ///
+    /// Passing `adapter: None` is valid only for fixture/replay sessions
+    /// where external data is pre-authored and trusted.  Using
+    /// `adapter: None` with live production data bypasses schema
+    /// validation on every event payload.
     pub fn new(
         graph_id: GraphId,
         constraints: Constraints,
@@ -404,10 +523,8 @@ impl HostedRunner {
         let run_calls = self.runtime.run_call_count().saturating_sub(pre_run_calls);
 
         let drained_effects = self.runtime.drain_pending_effects();
-        let mut applied_writes = Vec::new();
-        let mut intent_acks = Vec::new();
 
-        if entry.decision == Decision::Invoke {
+        let dispatch = if entry.decision == Decision::Invoke {
             let expected_calls = (entry.retry_count as u64).saturating_add(1);
             if run_calls != expected_calls {
                 return Err(HostedStepError::LifecycleViolation {
@@ -417,127 +534,7 @@ impl HostedRunner {
                 });
             }
 
-            let egress_owned_kinds = self
-                .egress
-                .as_ref()
-                .map(EgressRuntime::route_kind_set)
-                .unwrap_or_else(|| self.replay_external_kinds.clone());
-
-            if let Some(adapter) = &self.adapter {
-                if !drained_effects.is_empty() {
-                    self.applied_effects
-                        .record(decision_index, drained_effects.clone());
-                }
-
-                for effect in &drained_effects {
-                    let handler = self.handlers.get(&effect.kind);
-                    let egress_owned = egress_owned_kinds.contains(&effect.kind);
-
-                    match (handler, egress_owned) {
-                        (Some(_), true) => {
-                            return Err(HostedStepError::LifecycleViolation {
-                                detail: format!(
-                                    "effect kind '{}' is ambiguously owned by both handler and egress",
-                                    effect.kind
-                                ),
-                            });
-                        }
-                        (Some(handler), false) => {
-                            if !effect.intents.is_empty() {
-                                return Err(HostedStepError::LifecycleViolation {
-                                    detail: format!(
-                                        "handler-owned effect '{}' must not carry intents",
-                                        effect.kind
-                                    ),
-                                });
-                            }
-                            // SUP-6 alignment: no rollback on handler failure.
-                            let writes = handler.apply(
-                                effect,
-                                &mut self.context_store,
-                                &adapter.provides,
-                            )?;
-                            applied_writes.extend(writes);
-                        }
-                        (None, true) => {
-                            if !effect.writes.is_empty() {
-                                return Err(HostedStepError::LifecycleViolation {
-                                    detail: format!(
-                                        "egress-owned effect '{}' must not carry writes",
-                                        effect.kind
-                                    ),
-                                });
-                            }
-                            if effect.intents.is_empty() {
-                                return Err(HostedStepError::LifecycleViolation {
-                                    detail: format!(
-                                        "egress-owned effect '{}' must carry at least one intent",
-                                        effect.kind
-                                    ),
-                                });
-                            }
-                            if effect
-                                .intents
-                                .iter()
-                                .any(|intent| intent.kind != effect.kind)
-                            {
-                                return Err(HostedStepError::LifecycleViolation {
-                                    detail: format!(
-                                        "egress-owned effect '{}' contains intent with mismatched kind",
-                                        effect.kind
-                                    ),
-                                });
-                            }
-
-                            if mode == StepMode::Live {
-                                let Some(egress) = self.egress.as_mut() else {
-                                    return Err(HostedStepError::LifecycleViolation {
-                                        detail: "intent dispatch required but no egress runtime configured"
-                                            .to_string(),
-                                    });
-                                };
-
-                                for intent in &effect.intents {
-                                    match egress.dispatch_intent(intent) {
-                                        Ok(ack) => intent_acks.push(ack),
-                                        Err(err) => {
-                                            let dispatch_failure = map_egress_dispatch_error(err)?;
-                                            if !intent_acks.is_empty() {
-                                                self.applied_intent_acks
-                                                    .record(decision_index, intent_acks.clone());
-                                            }
-                                            self.interruptions.record(
-                                                decision_index,
-                                                format!(
-                                                    "egress dispatch failed: {}",
-                                                    dispatch_failure
-                                                ),
-                                            );
-                                            return Err(HostedStepError::EgressDispatchFailure(
-                                                dispatch_failure,
-                                            ));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        (None, false) => {
-                            return Err(HostedStepError::from(
-                                ergo_adapter::host::EffectApplyError::UnhandledEffectKind {
-                                    kind: effect.kind.clone(),
-                                },
-                            ));
-                        }
-                    }
-                }
-            } else if !drained_effects.is_empty() {
-                return Err(HostedStepError::EffectsWithoutAdapter);
-            }
-
-            if !intent_acks.is_empty() {
-                self.applied_intent_acks
-                    .record(decision_index, intent_acks.clone());
-            }
+            self.dispatch_invoked_effects(decision_index, mode, &drained_effects)?
         } else {
             if run_calls != 0 {
                 return Err(HostedStepError::LifecycleViolation {
@@ -553,14 +550,15 @@ impl HostedRunner {
                     detail: "non-invoke decision produced pending effects".to_string(),
                 });
             }
-        }
+            InvokedEffectDispatch::default()
+        };
 
         Ok(HostedStepOutcome {
             decision: entry.decision,
             termination: entry.termination,
             retry_count: entry.retry_count,
             effects: drained_effects,
-            applied_writes,
+            applied_writes: dispatch.applied_writes,
         })
     }
 
@@ -657,7 +655,7 @@ impl HostedRunner {
             HostedStepError::EgressDispatchFailure(_) => {
                 self.capture_finalization_state = CaptureFinalizationState::FinalizeOnly;
             }
-            err if is_recoverable_step_error(err) => {}
+            err if is_recoverable_hosted_step_error(err) => {}
             _ => {
                 self.capture_finalization_state = CaptureFinalizationState::Fatal;
             }
@@ -665,18 +663,11 @@ impl HostedRunner {
     }
 
     fn build_external_event(&self, event: HostedEvent) -> Result<ExternalEvent, HostedStepError> {
+        let event = ValidatedHostedEvent::new(event)?;
         if let Some(adapter) = &self.adapter {
-            let semantic_kind = event
-                .semantic_kind
-                .as_deref()
-                .ok_or(HostedStepError::MissingSemanticKind)?;
-
-            let incoming_payload = event.payload.ok_or(HostedStepError::MissingPayload)?;
-            let incoming_object = incoming_payload
-                .as_object()
-                .ok_or(HostedStepError::PayloadMustBeObject)?;
-
-            let allowed_store_keys = allowed_schema_keys(adapter, semantic_kind)?;
+            let semantic_kind = event.semantic_kind()?.to_string();
+            let incoming_object = event.payload_object()?.clone();
+            let allowed_store_keys = allowed_schema_keys(adapter, &semantic_kind)?;
 
             let mut merged = serde_json::Map::new();
             for (key, value) in self.context_store.snapshot() {
@@ -686,48 +677,154 @@ impl HostedRunner {
             }
 
             for (key, value) in incoming_object {
-                merged.insert(key.clone(), value.clone());
+                merged.insert(key, value);
             }
 
             return bind_semantic_event_with_binder(
                 &adapter.binder,
-                EventId::new(event.event_id),
+                event.event_id,
                 event.kind,
                 event.at,
-                semantic_kind,
+                &semantic_kind,
                 serde_json::Value::Object(merged),
             )
             .map_err(HostedStepError::Binding);
         }
 
-        match event.payload {
-            Some(payload) => {
-                let object = payload
-                    .as_object()
-                    .ok_or(HostedStepError::PayloadMustBeObject)?;
-                let bytes = serde_json::to_vec(object).map_err(|err| {
-                    HostedStepError::EventBuild(HostedEventBuildError::SerializePayload(err))
-                })?;
-                ExternalEvent::with_payload(
-                    EventId::new(event.event_id),
-                    event.kind,
-                    event.at,
-                    ergo_adapter::EventPayload { data: bytes },
-                )
-                .map_err(|err| {
-                    HostedStepError::EventBuild(HostedEventBuildError::InvalidPayload(err))
-                })
+        event.into_external_event()
+    }
+
+    fn dispatch_invoked_effects(
+        &mut self,
+        decision_index: usize,
+        mode: StepMode,
+        drained_effects: &[ActionEffect],
+    ) -> Result<InvokedEffectDispatch, HostedStepError> {
+        let Some(adapter) = &self.adapter else {
+            if !drained_effects.is_empty() {
+                return Err(HostedStepError::EffectsWithoutAdapter);
             }
-            None => Ok(ExternalEvent::mechanical_at(
-                EventId::new(event.event_id),
-                event.kind,
-                event.at,
-            )),
+            return Ok(InvokedEffectDispatch::default());
+        };
+
+        if !drained_effects.is_empty() {
+            self.applied_effects
+                .record(decision_index, drained_effects.to_vec());
         }
+
+        let egress_owned_kinds = self
+            .egress
+            .as_ref()
+            .map(EgressRuntime::route_kind_set)
+            .unwrap_or_else(|| self.replay_external_kinds.clone());
+        let mut dispatch = InvokedEffectDispatch::default();
+
+        for effect in drained_effects {
+            let handler = self.handlers.get(&effect.kind);
+            let egress_owned = egress_owned_kinds.contains(&effect.kind);
+
+            match (handler, egress_owned) {
+                (Some(_), true) => {
+                    return Err(HostedStepError::LifecycleViolation {
+                        detail: format!(
+                            "effect kind '{}' is ambiguously owned by both handler and egress",
+                            effect.kind
+                        ),
+                    });
+                }
+                (Some(handler), false) => {
+                    if !effect.intents.is_empty() {
+                        return Err(HostedStepError::LifecycleViolation {
+                            detail: format!(
+                                "handler-owned effect '{}' must not carry intents",
+                                effect.kind
+                            ),
+                        });
+                    }
+                    // SUP-6 alignment: no rollback on handler failure.
+                    let writes =
+                        handler.apply(effect, &mut self.context_store, &adapter.provides)?;
+                    dispatch.applied_writes.extend(writes);
+                }
+                (None, true) => {
+                    if !effect.writes.is_empty() {
+                        return Err(HostedStepError::LifecycleViolation {
+                            detail: format!(
+                                "egress-owned effect '{}' must not carry writes",
+                                effect.kind
+                            ),
+                        });
+                    }
+                    if effect.intents.is_empty() {
+                        return Err(HostedStepError::LifecycleViolation {
+                            detail: format!(
+                                "egress-owned effect '{}' must carry at least one intent",
+                                effect.kind
+                            ),
+                        });
+                    }
+                    if effect
+                        .intents
+                        .iter()
+                        .any(|intent| intent.kind != effect.kind)
+                    {
+                        return Err(HostedStepError::LifecycleViolation {
+                            detail: format!(
+                                "egress-owned effect '{}' contains intent with mismatched kind",
+                                effect.kind
+                            ),
+                        });
+                    }
+
+                    if mode == StepMode::Live {
+                        let Some(egress) = self.egress.as_mut() else {
+                            return Err(HostedStepError::LifecycleViolation {
+                                detail: "intent dispatch required but no egress runtime configured"
+                                    .to_string(),
+                            });
+                        };
+
+                        for intent in &effect.intents {
+                            match egress.dispatch_intent(intent) {
+                                Ok(ack) => dispatch.intent_acks.push(ack),
+                                Err(err) => {
+                                    let dispatch_failure = map_egress_dispatch_error(err)?;
+                                    if !dispatch.intent_acks.is_empty() {
+                                        self.applied_intent_acks
+                                            .record(decision_index, dispatch.intent_acks.clone());
+                                    }
+                                    self.interruptions.record(
+                                        decision_index,
+                                        format!("egress dispatch failed: {}", dispatch_failure),
+                                    );
+                                    return Err(HostedStepError::EgressDispatchFailure(
+                                        dispatch_failure,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+                (None, false) => {
+                    return Err(HostedStepError::from(
+                        ergo_adapter::host::EffectApplyError::UnhandledEffectKind {
+                            kind: effect.kind.clone(),
+                        },
+                    ));
+                }
+            }
+        }
+
+        if !dispatch.intent_acks.is_empty() {
+            self.applied_intent_acks
+                .record(decision_index, dispatch.intent_acks.clone());
+        }
+
+        Ok(dispatch)
     }
 }
 
-fn is_recoverable_step_error(err: &HostedStepError) -> bool {
+pub fn is_recoverable_hosted_step_error(err: &HostedStepError) -> bool {
     matches!(
         err,
         HostedStepError::DuplicateEventId { .. }
@@ -779,7 +876,7 @@ fn allowed_schema_keys(
     Ok(keys)
 }
 
-fn log_egress_warnings(warnings: &[EgressValidationWarning]) {
+fn emit_egress_validation_warnings_to_stderr(warnings: &[EgressValidationWarning]) {
     for warning in warnings {
         eprintln!("warning: {warning}");
     }

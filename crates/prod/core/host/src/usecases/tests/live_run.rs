@@ -19,8 +19,8 @@
 //! - These tests intentionally lock host orchestration behavior where partial
 //!   capture and interruption semantics are downstream-significant.
 
-use super::super::process_driver::PROCESS_DRIVER_PROTOCOL_VERSION;
 use super::*;
+use crate::PROCESS_DRIVER_PROTOCOL_VERSION;
 
 #[test]
 fn run_graph_from_paths_executes_simple_graph() -> Result<(), Box<dyn std::error::Error>> {
@@ -1199,6 +1199,7 @@ fn run_graph_from_assets_reports_adapter_required_before_egress_validation(
                     &temp_dir.join("unused-egress.sh"),
                     Duration::from_millis(50),
                 )),
+                session_intent: SessionIntent::Fixture,
             },
             driver: DriverConfig::Fixture { path: fixture },
             capture: CapturePolicy::InMemory,
@@ -1237,6 +1238,7 @@ fn run_graph_from_assets_fixture_items_preserve_adapter_required_preflight(
                     &temp_dir.join("unused-egress.sh"),
                     Duration::from_millis(50),
                 )),
+                session_intent: SessionIntent::Fixture,
             },
             driver: DriverConfig::FixtureItems {
                 items: vec![
@@ -1288,6 +1290,7 @@ fn run_graph_from_assets_process_driver_preserves_adapter_required_preflight(
                     &temp_dir.join("unused-egress.sh"),
                     Duration::from_millis(50),
                 )),
+                session_intent: SessionIntent::Production,
             },
             driver: DriverConfig::Process {
                 command: vec![

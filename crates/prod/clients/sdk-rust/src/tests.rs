@@ -17,6 +17,7 @@
 
 use super::*;
 use ergo_adapter::{EventTime, ExternalEventKind, RunTermination};
+use ergo_host::PROCESS_DRIVER_PROTOCOL_VERSION;
 use ergo_loader::{load_graph_assets_from_memory, InMemorySourceInput};
 use ergo_runtime::action::{
     ActionEffects, ActionKind, ActionOutcome, ActionPrimitive, ActionPrimitiveManifest,
@@ -264,23 +265,50 @@ fn write_process_ingress_sentinel(base: &Path, sentinel_path: &Path) -> PathBuf 
         &format!(
             r#"#!/bin/sh
 printf '%s\n' started > "{sentinel}"
-printf '%s\n' '{{"type":"hello","protocol":"ergo-driver.v0"}}'
+printf '%s\n' '{{"type":"hello","protocol":"{protocol}"}}'
 printf '%s\n' '{{"type":"end"}}'
 "#,
-            sentinel = sentinel_path.display()
+            sentinel = sentinel_path.display(),
+            protocol = PROCESS_DRIVER_PROTOCOL_VERSION
         ),
+    )
+}
+
+fn write_minimal_adapter_file(base: &Path) -> PathBuf {
+    write_file(
+        base,
+        "adapters/minimal.yaml",
+        r#"
+kind: adapter
+id: minimal_test_adapter
+version: 1.0.0
+runtime_compatibility: 0.1.0
+context_keys: []
+event_kinds:
+  - name: tick
+    payload_schema:
+      type: object
+      additionalProperties: false
+capture:
+  format_version: "1"
+  fields:
+    - event.tick
+    - meta.adapter_id
+    - meta.adapter_version
+    - meta.timestamp
+"#,
     )
 }
 
 fn write_process_run_script(base: &Path) -> PathBuf {
     let hello = serde_json::to_string(&serde_json::json!({
         "type":"hello",
-        "protocol":"ergo-driver.v0"
+        "protocol":PROCESS_DRIVER_PROTOCOL_VERSION
     }))
     .expect("serialize hello frame");
     let event = serde_json::to_string(&serde_json::json!({
         "type":"event",
-        "event": manual_step_event("evt1"),
+        "event": minimal_adapter_event("evt1"),
     }))
     .expect("serialize event frame");
     let end =
@@ -369,6 +397,17 @@ fn manual_step_event(event_id: &str) -> HostedEvent {
     }
 }
 
+/// Event with semantic kind matching the minimal adapter's `tick` event kind.
+fn minimal_adapter_event(event_id: &str) -> HostedEvent {
+    HostedEvent {
+        event_id: event_id.to_string(),
+        kind: ExternalEventKind::Command,
+        at: EventTime::default(),
+        semantic_kind: Some("tick".to_string()),
+        payload: Some(serde_json::json!({})),
+    }
+}
+
 fn load_memory_graph_assets(graph_id: &str) -> PreparedGraphAssets {
     load_graph_assets_from_memory(
         "graphs/root.yaml",
@@ -444,12 +483,41 @@ fn in_memory_project(
         .expect("in-memory project snapshot should validate")
 }
 
+/// Minimal adapter manifest for process driver tests.
+/// Contains one event kind (`tick`) to satisfy ADP-4.
+fn minimal_adapter_for_process_tests() -> AdapterInput {
+    AdapterInput::Text {
+        content: r#"
+kind: adapter
+id: minimal_test_adapter
+version: 1.0.0
+runtime_compatibility: 0.1.0
+context_keys: []
+event_kinds:
+  - name: tick
+    payload_schema:
+      type: object
+      additionalProperties: false
+capture:
+  format_version: "1"
+  fields:
+    - event.tick
+    - meta.adapter_id
+    - meta.adapter_version
+    - meta.timestamp
+"#
+        .to_string(),
+        source_label: "inline-minimal-adapter".to_string(),
+    }
+}
+
 fn in_memory_process_profile(
     graph_assets: PreparedGraphAssets,
     command: impl IntoIterator<Item = impl Into<String>>,
 ) -> InMemoryProfileConfig {
     InMemoryProfileConfig::process(graph_assets, command)
         .expect("in-memory process profile should validate")
+        .adapter(minimal_adapter_for_process_tests())
 }
 
 fn in_memory_fixture_profile(graph_assets: PreparedGraphAssets) -> InMemoryProfileConfig {
@@ -526,6 +594,7 @@ outputs:
 #[test]
 fn run_with_stop_can_request_zero_event_host_stop() -> Result<(), Box<dyn std::error::Error>> {
     let root = make_temp_dir("explicit_stop");
+    let adapter_path = write_minimal_adapter_file(&root);
     let graph = write_file(
         &root,
         "graph.yaml",
@@ -545,7 +614,7 @@ outputs:
     );
     let hello = serde_json::to_string(&serde_json::json!({
         "type":"hello",
-        "protocol":"ergo-driver.v0"
+        "protocol":PROCESS_DRIVER_PROTOCOL_VERSION
     }))?;
     let driver = write_file(
         &root,
@@ -567,6 +636,7 @@ outputs:
                 graph,
                 IngressConfig::process(["/bin/sh".to_string(), driver.display().to_string()]),
             )
+            .adapter(&adapter_path)
             .capture_output(&capture),
             stop,
         )
@@ -1439,14 +1509,21 @@ fn validate_project_and_run_profile_agree_for_valid_in_memory_profile(
 #[test]
 fn validate_project_in_memory_preserves_adapter_required_preflight(
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // This test intentionally constructs a process profile WITHOUT an adapter
+    // to verify that validation catches missing adapters.  We cannot use
+    // `in_memory_process_profile` because it now provides a minimal adapter
+    // by default (production closure).
+    let profile = InMemoryProfileConfig::process(
+        load_memory_intent_graph_assets("sdk_memory_validate_missing_adapter"),
+        ["/bin/echo", "noop"],
+    )
+    .expect("in-memory process profile should validate");
+    // Note: no `.adapter(...)` call — intentionally omitted.
     let snapshot = in_memory_project(
         "memory-project",
         "0.1.0",
         "live",
-        in_memory_process_profile(
-            load_memory_intent_graph_assets("sdk_memory_validate_missing_adapter"),
-            ["/bin/echo", "noop"],
-        ),
+        profile,
     );
 
     let err = Ergo::builder()
@@ -1457,12 +1534,18 @@ fn validate_project_in_memory_preserves_adapter_required_preflight(
         .validate_project()
         .expect_err("adapter-less in-memory intent profile must fail validation");
 
+    // The SDK now enforces the production closure structurally: the
+    // `for_production` constructor requires a non-optional adapter, so
+    // `live_prep_options_from_in_memory_profile` returns
+    // `ProductionRequiresAdapter` before the host graph-dependency gate
+    // ever runs.  This is the intended layered enforcement: SDK catches
+    // configuration errors before host catches graph-structural errors.
     match err {
         ErgoValidateError::Validation { profile, source } => {
             assert_eq!(profile, "live");
             assert!(matches!(
                 source,
-                ProjectError::Host(HostRunError::AdapterRequired(_))
+                ProjectError::Host(HostRunError::ProductionRequiresAdapter)
             ));
         }
         other => panic!("unexpected error: {other}"),
@@ -1894,6 +1977,7 @@ fn runner_for_profile_supports_multiple_steps_without_launching_ingress_or_auto_
     let root = make_temp_dir("manual_runner_no_ingress");
     let ingress_sentinel = root.join("ingress-started.txt");
     let ingress_script = write_process_ingress_sentinel(&root, &ingress_sentinel);
+    write_minimal_adapter_file(&root);
     write_file(
         &root,
         "ergo.toml",
@@ -1904,6 +1988,7 @@ version = "0.1.0"
 
 [profiles.manual]
 graph = "graphs/strategy.yaml"
+adapter = "adapters/minimal.yaml"
 capture_output = "captures/manual.capture.json"
 max_duration = "1ms"
 max_events = 1
@@ -1941,10 +2026,10 @@ outputs:
         "manual runner must not launch ingress"
     );
 
-    let first = runner.step(manual_step_event("e1"))?;
+    let first = runner.step(minimal_adapter_event("e1"))?;
     assert_eq!(first.termination, Some(RunTermination::Completed));
     thread::sleep(Duration::from_millis(10));
-    let second = runner.step(manual_step_event("e2"))?;
+    let second = runner.step(minimal_adapter_event("e2"))?;
     assert_eq!(second.termination, Some(RunTermination::Completed));
 
     let bundle = runner.finish()?;
@@ -1960,7 +2045,7 @@ outputs:
     );
 
     let err = runner
-        .step(manual_step_event("e3"))
+        .step(minimal_adapter_event("e3"))
         .expect_err("step after finish must fail");
     assert!(
         matches!(err, HostedStepError::LifecycleViolation { .. }),
@@ -2476,7 +2561,7 @@ fn runner_for_profile_returns_working_profile_runner_for_in_memory_project(
 
     let ergo = Ergo::builder().in_memory_project(snapshot).build()?;
     let mut runner = ergo.runner_for_profile("manual")?;
-    let outcome = runner.step(manual_step_event("evt1"))?;
+    let outcome = runner.step(minimal_adapter_event("evt1"))?;
     assert_eq!(outcome.termination, Some(RunTermination::Completed));
 
     let bundle = runner.finish()?;
@@ -2500,7 +2585,7 @@ fn runner_for_profile_in_memory_without_file_capture_path_cannot_auto_write_capt
 
     let ergo = Ergo::builder().in_memory_project(snapshot).build()?;
     let mut runner = ergo.runner_for_profile("manual")?;
-    let _ = runner.step(manual_step_event("evt1"))?;
+    let _ = runner.step(minimal_adapter_event("evt1"))?;
     let err = runner
         .finish_and_write_capture()
         .expect_err("in-memory runner without file capture must not auto-write");

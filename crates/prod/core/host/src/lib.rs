@@ -31,9 +31,11 @@ mod capture_enrichment;
 mod demo_fixture_usecase;
 mod egress;
 mod error;
+mod expand_diagnostics;
 mod gen_docs_usecase;
 mod graph_dot_usecase;
 mod manifest_usecases;
+mod protocol;
 #[allow(clippy::result_large_err)]
 mod replay;
 mod replay_error_surface;
@@ -64,12 +66,16 @@ pub use manifest_usecases::{
     validate_manifest_text, validate_manifest_value, HostManifestError, HostRuleViolation,
     ManifestSummary,
 };
+pub use protocol::PROCESS_DRIVER_PROTOCOL_VERSION;
 pub use replay::{decision_counts, replay_bundle_strict, HostedReplayError};
 pub use replay_error_surface::{
-    describe_adapter_required, describe_host_replay_error, describe_replay_error,
-    HostErrorDescriptor,
+    describe_adapter_required, describe_host_replay_error, describe_production_requires_adapter,
+    describe_replay_error, HostErrorCode, HostErrorDescriptor, HostRuleId,
 };
-pub use runner::{HostedAdapterConfig, HostedEvent, HostedRunner, HostedStepOutcome};
+pub use runner::{
+    is_recoverable_hosted_step_error, HostedAdapterConfig, HostedEvent, HostedRunner,
+    HostedStepOutcome,
+};
 
 // Canonical client-facing host seams. CLI and SDK should route product-level
 // run, replay, validation, and manual-step orchestration through these exports.
@@ -89,7 +95,7 @@ pub use usecases::{
     InterruptionReason, PrepareHostedRunnerFromPathsRequest, ReplayGraphFromAssetsRequest,
     ReplayGraphFromPathsRequest, ReplayGraphRequest, ReplayGraphResult, RunControl,
     RunGraphFromAssetsRequest, RunGraphFromPathsRequest, RunGraphResponse, RunOutcome, RunSummary,
-    RuntimeSurfaces,
+    RuntimeSurfaces, SessionIntent,
 };
 
 // Lower-level host building blocks. These remain public for advanced embedded

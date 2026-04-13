@@ -22,16 +22,15 @@
 //! - CLI and SDK run entrypoints re-exported through `usecases.rs` and `lib.rs`.
 //!
 //! Safety notes:
-//! - Host stop and bounded-run limits intentionally preserve partial truthful capture only after at
-//!   least one committed event; that lifecycle split is still encoded as
-//!   `committed_event_count == 0` in `host_stop_driver_execution(...)`.
-//! - Lower-level live-run entrypoints still defend direct callers with local fixture validation
-//!   even though canonical driver preflight lives in `live_prep.rs`; that split is part of the
-//!   deferred cleanup in issue #72.
-//! - `validate_fixture_items_input(...)` and `run_fixture_items_driver(...)` duplicate the same
-//!   episode/event-shape rules, and `run_graph_with_policy(...)` /
-//!   `run_graph_from_assets_internal(...)` duplicate execution/finalization structure. Second-pass
-//!   refactor pressure is tracked in issue #72.
+//! - Host stop and bounded-run limits intentionally preserve partial truthful
+//!   capture only after at least one committed event; fixture ingress now
+//!   carries that boundary through `FixtureDriverCommitPhase`.
+//! - Lower-level live-run entrypoints still defend direct callers with local
+//!   fixture validation, but they do so through the same prepared fixture-input
+//!   phase that canonical driver preflight uses indirectly.
+//! - `PreparedFixtureInput` owns fixture normalization/validation, while
+//!   `run_prepared_graph_with_policy(...)` owns the shared execute/finalize
+//!   orchestration across path-backed and asset-backed run lanes.
 //! - `RunSummary.events` and `episode_event_counts` come from driver bookkeeping, while
 //!   `invoked`/`deferred` come from finalized capture truth.
 //! - The current `InterruptionReason` Display/Debug contract is downstream-significant, but tests
@@ -41,6 +40,7 @@
 #![allow(clippy::arc_with_non_send_sync)]
 
 use super::*;
+use std::ops::ControlFlow;
 
 pub(super) enum DriverTerminal {
     Completed,
@@ -87,6 +87,231 @@ impl RunLifecycleState {
         }
 
         false
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FixtureDriverCommitPhase {
+    BeforeFirstCommittedStep,
+    AfterFirstCommittedStep,
+}
+
+#[derive(Debug)]
+struct PreparedFixtureEpisode {
+    label: String,
+    events: Vec<HostedEvent>,
+}
+
+#[derive(Debug)]
+struct PreparedFixtureInput {
+    episodes: Vec<PreparedFixtureEpisode>,
+}
+
+impl PreparedFixtureInput {
+    fn from_items(
+        fixture_items: impl IntoIterator<Item = fixture::FixtureItem>,
+        source_label: &str,
+        adapter_bound: bool,
+    ) -> Result<Self, HostDriverInputError> {
+        let mut episodes: Vec<PreparedFixtureEpisode> = Vec::new();
+        let mut current_episode: Option<usize> = None;
+        let mut event_counter = 0usize;
+        let mut seen_fixture_event_ids = HashSet::new();
+
+        for item in fixture_items {
+            match item {
+                fixture::FixtureItem::EpisodeStart { label } => {
+                    episodes.push(PreparedFixtureEpisode {
+                        label,
+                        events: Vec::new(),
+                    });
+                    current_episode = Some(episodes.len() - 1);
+                }
+                fixture::FixtureItem::Event {
+                    id,
+                    kind,
+                    payload,
+                    semantic_kind,
+                } => {
+                    if current_episode.is_none() {
+                        let label = format!("E{}", episodes.len() + 1);
+                        episodes.push(PreparedFixtureEpisode {
+                            label,
+                            events: Vec::new(),
+                        });
+                        current_episode = Some(episodes.len() - 1);
+                    }
+
+                    event_counter += 1;
+                    let event_id = id.unwrap_or_else(|| format!("fixture_evt_{event_counter}"));
+                    if !seen_fixture_event_ids.insert(event_id.clone()) {
+                        return Err(HostDriverInputError::DuplicateEventId { event_id });
+                    }
+
+                    let hosted_event = if adapter_bound {
+                        let semantic_kind = semantic_kind.ok_or_else(|| {
+                            HostDriverInputError::MissingSemanticKind {
+                                event_id: event_id.clone(),
+                            }
+                        })?;
+                        HostedEvent {
+                            event_id,
+                            kind,
+                            at: EventTime::default(),
+                            semantic_kind: Some(semantic_kind),
+                            payload: Some(payload.unwrap_or_else(|| {
+                                serde_json::Value::Object(serde_json::Map::new())
+                            })),
+                        }
+                    } else {
+                        if semantic_kind.is_some() {
+                            return Err(HostDriverInputError::UnexpectedSemanticKind { event_id });
+                        }
+                        HostedEvent {
+                            event_id,
+                            kind,
+                            at: EventTime::default(),
+                            semantic_kind: None,
+                            payload,
+                        }
+                    };
+
+                    let index = current_episode.expect("episode index set");
+                    episodes[index].events.push(hosted_event);
+                }
+            }
+        }
+
+        if episodes.is_empty() {
+            return Err(HostDriverInputError::NoEpisodes {
+                source_label: source_label.to_string(),
+            });
+        }
+
+        let event_count: usize = episodes.iter().map(|episode| episode.events.len()).sum();
+        if event_count == 0 {
+            return Err(HostDriverInputError::NoEvents {
+                source_label: source_label.to_string(),
+            });
+        }
+
+        if let Some(episode) = episodes.iter().find(|episode| episode.events.is_empty()) {
+            return Err(HostDriverInputError::EpisodeWithoutEvents {
+                label: episode.label.clone(),
+            });
+        }
+
+        Ok(Self { episodes })
+    }
+}
+
+#[derive(Debug)]
+struct FixtureDriverProgress {
+    event_count: usize,
+    committed_event_count: usize,
+    commit_phase: FixtureDriverCommitPhase,
+    episode_event_counts: Vec<(String, usize)>,
+}
+
+impl FixtureDriverProgress {
+    fn new(input: &PreparedFixtureInput) -> Self {
+        Self {
+            event_count: 0,
+            committed_event_count: 0,
+            commit_phase: FixtureDriverCommitPhase::BeforeFirstCommittedStep,
+            episode_event_counts: input
+                .episodes
+                .iter()
+                .map(|episode| (episode.label.clone(), 0))
+                .collect(),
+        }
+    }
+
+    fn committed_event_count(&self) -> usize {
+        self.committed_event_count
+    }
+
+    fn record_committed_event(&mut self, episode_index: usize) {
+        self.event_count += 1;
+        self.committed_event_count += 1;
+        self.commit_phase = FixtureDriverCommitPhase::AfterFirstCommittedStep;
+        self.episode_event_counts[episode_index].1 += 1;
+    }
+
+    fn record_interrupted_event(&mut self, episode_index: usize) {
+        self.event_count += 1;
+        self.episode_event_counts[episode_index].1 += 1;
+    }
+
+    fn into_parts(self) -> (usize, FixtureDriverCommitPhase, Vec<(String, usize)>) {
+        (
+            self.event_count,
+            self.commit_phase,
+            self.episode_event_counts,
+        )
+    }
+}
+
+struct FixtureDriverState {
+    runner: HostedRunner,
+    progress: FixtureDriverProgress,
+}
+
+impl FixtureDriverState {
+    fn new(runner: HostedRunner, input: &PreparedFixtureInput) -> Self {
+        Self {
+            runner,
+            progress: FixtureDriverProgress::new(input),
+        }
+    }
+
+    fn committed_event_count(&self) -> usize {
+        self.progress.committed_event_count()
+    }
+
+    fn record_committed_event(&mut self, episode_index: usize) {
+        self.progress.record_committed_event(episode_index);
+    }
+
+    fn record_interrupted_event(&mut self, episode_index: usize) {
+        self.progress.record_interrupted_event(episode_index);
+    }
+
+    fn into_execution(self, terminal: DriverTerminal) -> DriverExecution {
+        let (event_count, _, episode_event_counts) = self.progress.into_parts();
+        DriverExecution {
+            runner: self.runner,
+            event_count,
+            episode_event_counts,
+            terminal,
+        }
+    }
+
+    fn into_host_stop_execution(self) -> Result<DriverExecution, HostRunError> {
+        let (event_count, commit_phase, episode_event_counts) = self.progress.into_parts();
+        if commit_phase == FixtureDriverCommitPhase::BeforeFirstCommittedStep {
+            return Err(HostRunError::Driver(HostDriverError::Output(
+                HostDriverOutputError::StopBeforeFirstCommittedEvent,
+            )));
+        }
+
+        Ok(DriverExecution {
+            runner: self.runner,
+            event_count,
+            episode_event_counts,
+            terminal: DriverTerminal::Interrupted(InterruptionReason::HostStopRequested),
+        })
+    }
+}
+
+fn maybe_fixture_host_stop(
+    state: FixtureDriverState,
+    lifecycle: &RunLifecycleState,
+) -> Result<ControlFlow<DriverExecution, FixtureDriverState>, HostRunError> {
+    if lifecycle.should_stop(state.committed_event_count()) {
+        state.into_host_stop_execution().map(ControlFlow::Break)
+    } else {
+        Ok(ControlFlow::Continue(state))
     }
 }
 
@@ -155,6 +380,7 @@ pub(super) fn run_graph_from_paths_internal(
     let options = LivePrepOptions {
         adapter: adapter_path.map(AdapterInput::Path),
         egress_config,
+        session_intent: session_intent_from_driver(&driver),
     };
 
     let PreparedLiveRunnerSetup {
@@ -277,36 +503,15 @@ pub(super) fn run_graph_from_assets_internal(
         dependency_summary,
         runner,
     } = prepare_live_runner_setup_from_assets(&assets, &prep, runtime_surfaces)?;
-    let DriverExecution {
-        runner,
-        event_count,
-        episode_event_counts,
-        terminal,
-    } = execute_run_graph_with_policy(
+    run_prepared_graph_with_policy(
         driver,
         adapter_bound,
         dependency_summary,
         runner,
+        capture,
         process_policy,
         control,
-    )?;
-    let host_stop_requested = matches!(
-        terminal,
-        DriverTerminal::Interrupted(InterruptionReason::HostStopRequested)
-    );
-    let summary = finalize_run_summary(
-        capture,
-        runner,
-        event_count,
-        episode_event_counts,
-        host_stop_requested,
-    )?;
-    match terminal {
-        DriverTerminal::Completed => Ok(RunOutcome::Completed(summary)),
-        DriverTerminal::Interrupted(reason) => {
-            Ok(RunOutcome::Interrupted(InterruptedRun { summary, reason }))
-        }
-    }
+    )
 }
 
 fn run_graph_with_policy(
@@ -323,43 +528,15 @@ fn run_graph_with_policy(
         dependency_summary,
         runner,
     } = request;
-    let DriverExecution {
-        runner,
-        event_count,
-        episode_event_counts,
-        terminal,
-    } = execute_run_graph_with_policy(
+    run_prepared_graph_with_policy(
         driver,
         adapter_bound,
         dependency_summary,
         runner,
+        capture_policy_for_paths(&graph_path, capture_output, pretty_capture),
         process_policy,
         control,
-    )?;
-
-    match terminal {
-        DriverTerminal::Completed => {
-            let summary = finalize_run_summary(
-                capture_policy_for_paths(&graph_path, capture_output, pretty_capture),
-                runner,
-                event_count,
-                episode_event_counts,
-                false,
-            )?;
-            Ok(RunOutcome::Completed(summary))
-        }
-        DriverTerminal::Interrupted(reason) => {
-            let host_stop_requested = matches!(reason, InterruptionReason::HostStopRequested);
-            let summary = finalize_run_summary(
-                capture_policy_for_paths(&graph_path, capture_output, pretty_capture),
-                runner,
-                event_count,
-                episode_event_counts,
-                host_stop_requested,
-            )?;
-            Ok(RunOutcome::Interrupted(InterruptedRun { summary, reason }))
-        }
-    }
+    )
 }
 
 fn validate_fixture_items_input(
@@ -367,65 +544,58 @@ fn validate_fixture_items_input(
     source_label: &str,
     adapter_bound: bool,
 ) -> Result<(), HostDriverInputError> {
-    let mut episodes: Vec<(String, usize)> = Vec::new();
-    let mut current_episode: Option<usize> = None;
-    let mut event_counter = 0usize;
-    let mut seen_fixture_event_ids = HashSet::new();
+    PreparedFixtureInput::from_items(fixture_items.iter().cloned(), source_label, adapter_bound)
+        .map(|_| ())
+}
 
-    for item in fixture_items {
-        match item {
-            fixture::FixtureItem::EpisodeStart { label } => {
-                episodes.push((label.clone(), 0));
-                current_episode = Some(episodes.len() - 1);
-            }
-            fixture::FixtureItem::Event {
-                id, semantic_kind, ..
-            } => {
-                if current_episode.is_none() {
-                    let label = format!("E{}", episodes.len() + 1);
-                    episodes.push((label, 0));
-                    current_episode = Some(episodes.len() - 1);
-                }
+fn run_prepared_graph_with_policy(
+    driver: DriverConfig,
+    adapter_bound: bool,
+    dependency_summary: AdapterDependencySummary,
+    runner: HostedRunner,
+    capture: CapturePolicy,
+    process_policy: ProcessDriverPolicy,
+    control: RunControl,
+) -> RunGraphResponse {
+    let execution = execute_run_graph_with_policy(
+        driver,
+        adapter_bound,
+        dependency_summary,
+        runner,
+        process_policy,
+        control,
+    )?;
+    finalize_driver_execution(capture, execution)
+}
 
-                event_counter += 1;
-                let event_id = id
-                    .clone()
-                    .unwrap_or_else(|| format!("fixture_evt_{event_counter}"));
-                if !seen_fixture_event_ids.insert(event_id.clone()) {
-                    return Err(HostDriverInputError::DuplicateEventId { event_id });
-                }
+fn finalize_driver_execution(
+    capture: CapturePolicy,
+    execution: DriverExecution,
+) -> RunGraphResponse {
+    let DriverExecution {
+        runner,
+        event_count,
+        episode_event_counts,
+        terminal,
+    } = execution;
+    let host_stop_requested = matches!(
+        terminal,
+        DriverTerminal::Interrupted(InterruptionReason::HostStopRequested)
+    );
+    let summary = finalize_run_summary(
+        capture,
+        runner,
+        event_count,
+        episode_event_counts,
+        host_stop_requested,
+    )?;
 
-                if adapter_bound {
-                    if semantic_kind.is_none() {
-                        return Err(HostDriverInputError::MissingSemanticKind { event_id });
-                    }
-                } else if semantic_kind.is_some() {
-                    return Err(HostDriverInputError::UnexpectedSemanticKind { event_id });
-                }
-
-                let index = current_episode.expect("episode index set");
-                episodes[index].1 += 1;
-            }
+    match terminal {
+        DriverTerminal::Completed => Ok(RunOutcome::Completed(summary)),
+        DriverTerminal::Interrupted(reason) => {
+            Ok(RunOutcome::Interrupted(InterruptedRun { summary, reason }))
         }
     }
-
-    if episodes.is_empty() {
-        return Err(HostDriverInputError::NoEpisodes {
-            source_label: source_label.to_string(),
-        });
-    }
-    if event_counter == 0 {
-        return Err(HostDriverInputError::NoEvents {
-            source_label: source_label.to_string(),
-        });
-    }
-    if let Some((label, _)) = episodes.iter().find(|(_, count)| *count == 0) {
-        return Err(HostDriverInputError::EpisodeWithoutEvents {
-            label: label.clone(),
-        });
-    }
-
-    Ok(())
 }
 
 fn execute_run_graph_with_policy(
@@ -437,6 +607,7 @@ fn execute_run_graph_with_policy(
     control: RunControl,
 ) -> Result<DriverExecution, HostRunError> {
     ensure_adapter_requirement_satisfied(adapter_bound, &dependency_summary)?;
+    ensure_production_adapter_bound(adapter_bound, session_intent_from_driver(&driver))?;
 
     start_live_runner_egress(&mut runner)?;
 
@@ -480,184 +651,52 @@ fn run_fixture_items_driver(
     fixture_items: Vec<fixture::FixtureItem>,
     source_label: &str,
     adapter_bound: bool,
-    mut runner: HostedRunner,
+    runner: HostedRunner,
     lifecycle: &RunLifecycleState,
 ) -> Result<DriverExecution, HostRunError> {
-    let mut episodes: Vec<(String, usize)> = Vec::new();
-    let mut current_episode: Option<usize> = None;
-    let mut event_counter = 0usize;
-    let mut committed_event_count = 0usize;
-    let mut seen_fixture_event_ids = HashSet::new();
+    let prepared = PreparedFixtureInput::from_items(fixture_items, source_label, adapter_bound)
+        .map_err(|err| HostRunError::Driver(HostDriverError::Input(err)))?;
+    let mut state = FixtureDriverState::new(runner, &prepared);
 
-    for item in fixture_items {
-        if lifecycle.should_stop(committed_event_count) {
-            return host_stop_driver_execution(
-                runner,
-                event_counter,
-                committed_event_count,
-                episodes,
-            );
-        }
+    for (episode_index, episode) in prepared.episodes.into_iter().enumerate() {
+        state = match maybe_fixture_host_stop(state, lifecycle)? {
+            ControlFlow::Break(execution) => return Ok(execution),
+            ControlFlow::Continue(state) => state,
+        };
 
-        match item {
-            fixture::FixtureItem::EpisodeStart { label } => {
-                episodes.push((label, 0));
-                current_episode = Some(episodes.len() - 1);
-            }
-            fixture::FixtureItem::Event {
-                id,
-                kind,
-                payload,
-                semantic_kind,
-            } => {
-                if lifecycle.should_stop(committed_event_count) {
-                    return host_stop_driver_execution(
-                        runner,
-                        event_counter,
-                        committed_event_count,
-                        episodes,
-                    );
+        for event in episode.events {
+            state = match maybe_fixture_host_stop(state, lifecycle)? {
+                ControlFlow::Break(execution) => return Ok(execution),
+                ControlFlow::Continue(state) => state,
+            };
+
+            match state.runner.step(event) {
+                Ok(_) => {
+                    state.record_committed_event(episode_index);
+                    state = match maybe_fixture_host_stop(state, lifecycle)? {
+                        ControlFlow::Break(execution) => return Ok(execution),
+                        ControlFlow::Continue(state) => state,
+                    };
                 }
-
-                if current_episode.is_none() {
-                    let label = format!("E{}", episodes.len() + 1);
-                    episodes.push((label, 0));
-                    current_episode = Some(episodes.len() - 1);
-                }
-
-                event_counter += 1;
-                let event_id = id.unwrap_or_else(|| format!("fixture_evt_{}", event_counter));
-                if !seen_fixture_event_ids.insert(event_id.clone()) {
-                    return Err(HostRunError::Driver(HostDriverError::Input(
-                        HostDriverInputError::DuplicateEventId { event_id },
+                Err(crate::HostedStepError::EgressDispatchFailure(failure)) => {
+                    state.record_interrupted_event(episode_index);
+                    return Ok(state.into_execution(DriverTerminal::Interrupted(
+                        interruption_from_egress_dispatch_failure(failure),
                     )));
                 }
-
-                let hosted_event =
-                    if adapter_bound {
-                        let semantic = semantic_kind.ok_or_else(|| {
-                            HostRunError::Driver(HostDriverError::Input(
-                                HostDriverInputError::MissingSemanticKind {
-                                    event_id: event_id.clone(),
-                                },
-                            ))
-                        })?;
-                        HostedEvent {
-                            event_id,
-                            kind,
-                            at: EventTime::default(),
-                            semantic_kind: Some(semantic),
-                            payload: Some(payload.unwrap_or_else(|| {
-                                serde_json::Value::Object(serde_json::Map::new())
-                            })),
-                        }
-                    } else {
-                        if semantic_kind.is_some() {
-                            return Err(HostRunError::Driver(HostDriverError::Input(
-                                HostDriverInputError::UnexpectedSemanticKind { event_id },
-                            )));
-                        }
-                        HostedEvent {
-                            event_id,
-                            kind,
-                            at: EventTime::default(),
-                            semantic_kind: None,
-                            payload,
-                        }
-                    };
-
-                match runner.step(hosted_event) {
-                    Ok(_) => {
-                        committed_event_count += 1;
-                        let index = current_episode.expect("episode index set");
-                        episodes[index].1 += 1;
-                        if lifecycle.should_stop(committed_event_count) {
-                            return host_stop_driver_execution(
-                                runner,
-                                event_counter,
-                                committed_event_count,
-                                episodes,
-                            );
-                        }
-                    }
-                    Err(crate::HostedStepError::EgressDispatchFailure(failure)) => {
-                        let index = current_episode.expect("episode index set");
-                        episodes[index].1 += 1;
-                        return Ok(DriverExecution {
-                            runner,
-                            event_count: event_counter,
-                            episode_event_counts: episodes,
-                            terminal: DriverTerminal::Interrupted(
-                                interruption_from_egress_dispatch_failure(failure),
-                            ),
-                        });
-                    }
-                    Err(err) => {
-                        return Err(HostRunError::Step(err));
-                    }
+                Err(err) => {
+                    return Err(HostRunError::Step(err));
                 }
             }
         }
     }
 
-    if lifecycle.should_stop(committed_event_count) {
-        return host_stop_driver_execution(runner, event_counter, committed_event_count, episodes);
-    }
+    state = match maybe_fixture_host_stop(state, lifecycle)? {
+        ControlFlow::Break(execution) => return Ok(execution),
+        ControlFlow::Continue(state) => state,
+    };
 
-    if episodes.is_empty() {
-        return Err(HostRunError::Driver(HostDriverError::Input(
-            HostDriverInputError::NoEpisodes {
-                source_label: source_label.to_string(),
-            },
-        )));
-    }
-    if event_counter == 0 {
-        return Err(HostRunError::Driver(HostDriverError::Input(
-            HostDriverInputError::NoEvents {
-                source_label: source_label.to_string(),
-            },
-        )));
-    }
-    if let Some((label, _)) = episodes.iter().find(|(_, count)| *count == 0) {
-        return Err(HostRunError::Driver(HostDriverError::Input(
-            HostDriverInputError::EpisodeWithoutEvents {
-                label: label.clone(),
-            },
-        )));
-    }
-
-    // Re-check after validation so late stop requests or duration limits reached during
-    // bookkeeping still report an interrupted run instead of a completed one.
-    if lifecycle.should_stop(committed_event_count) {
-        return host_stop_driver_execution(runner, event_counter, committed_event_count, episodes);
-    }
-
-    Ok(DriverExecution {
-        runner,
-        event_count: event_counter,
-        episode_event_counts: episodes,
-        terminal: DriverTerminal::Completed,
-    })
-}
-
-pub(super) fn host_stop_driver_execution(
-    runner: HostedRunner,
-    event_count: usize,
-    committed_event_count: usize,
-    episode_event_counts: Vec<(String, usize)>,
-) -> Result<DriverExecution, HostRunError> {
-    if committed_event_count == 0 {
-        return Err(HostRunError::Driver(HostDriverError::Output(
-            HostDriverOutputError::StopBeforeFirstCommittedEvent,
-        )));
-    }
-
-    Ok(DriverExecution {
-        runner,
-        event_count,
-        episode_event_counts,
-        terminal: DriverTerminal::Interrupted(InterruptionReason::HostStopRequested),
-    })
+    Ok(state.into_execution(DriverTerminal::Completed))
 }
 
 struct FinalizedRunCapture {
