@@ -1,31 +1,62 @@
-// ===============================
-// RUNTIME EXECUTION (PHASES 5–6)
-//
-// This module consumes ExpandedGraph.
-// - No ExternalInput is permitted.
-// - All inputs must originate from Source primitives.
-// - ExecutionContext must not supply values directly.
-// - Single unified DAG, single execution pass.
-//
-// DO NOT introduce alternative input paths.
-// ===============================
+//! runtime/validate.rs — Kernel graph validation engine
+//!
+//! Purpose:
+//! - Validates an `ExpandedGraph` against the registered primitive
+//!   catalog before execution, ensuring all structural and semantic
+//!   constraints are satisfied.
+//!
+//! Behavior:
+//! - Returns `Result<ValidatedGraph, GraphValidationError>`.
+//! - Short-circuits on the first encountered error — callers receive
+//!   a single `GraphValidationError`, not a collected list.
+//!
+//! Owns (invariant → enforcing function → rule ID):
+//! - V.1  No cycles in graph           → `topological_sort`             (CycleDetected)
+//! - V.2  Wiring matrix / port legality→ `enforce_wiring_matrix`        (InvalidEdgeKind / MissingInputMetadata / MissingOutputMetadata)
+//! - V.3  Required inputs connected    → `enforce_required_inputs`      (MissingRequiredInput)
+//! - V.4  Type constraints at edges    → `enforce_types`                (TypeMismatch)
+//! - V.5  Action trigger gating        → `enforce_action_gating`        (ActionNotGated)
+//! - V.7  Single edge per input port   → `enforce_single_edge_per_input`(MultipleInboundEdges)
+//! - V.8  Primitive catalog existence  → `validate` main loop           (MissingPrimitive)
+//! - (boundary outputs — no doc V-number) → `enforce_boundary_outputs`  (MissingBoundaryOutput)
+//! - E.3  ExternalInput rejection      → `validate` main loop           (ExternalInputNotAllowed)
+//!
+//! Note: V.6 ("All nodes pass validation before any action executes") is a
+//! meta-invariant satisfied by the fact that `validate` runs to completion
+//! before `execute` is called — it is not a single check function.
+//!
+//! Does not own:
+//! - Graph execution (see `execute.rs`)
+//! - Primitive registration (see `catalog.rs`)
+//! - Graph construction or expansion (see `cluster.rs`)
+//! - E.3 expansion-time enforcement (see `cluster.rs::expand`)
+//!
+//! Connects to:
+//! - `execute.rs` — produces `ValidatedGraph` consumed by execution
+//! - `types.rs` — uses `GraphValidationError` for reporting violations
+//! - `catalog.rs` — queries primitive metadata for validation
+//!
+//! Safety notes:
+//! - Validation is pure and deterministic — no side effects
+//! - E.3 is enforced twice: first during expansion (`cluster.rs`),
+//!   then again here as a defense-in-depth check
 
 use std::collections::{BTreeSet, HashMap};
 
 use crate::cluster::{ExpandedEndpoint, ExpandedGraph, PrimitiveCatalog, PrimitiveKind, ValueType};
 
-use super::types::{Endpoint, ValidatedEdge, ValidatedGraph, ValidatedNode, ValidationError};
+use super::types::{Endpoint, GraphValidationError, ValidatedEdge, ValidatedGraph, ValidatedNode};
 
 pub fn validate<C: PrimitiveCatalog>(
     expanded: &ExpandedGraph,
     catalog: &C,
-) -> Result<ValidatedGraph, ValidationError> {
+) -> Result<ValidatedGraph, GraphValidationError> {
     let mut nodes: HashMap<String, ValidatedNode> = HashMap::new();
 
     for (id, node) in &expanded.nodes {
         let meta = catalog
             .get(&node.implementation.impl_id, &node.implementation.version)
-            .ok_or_else(|| ValidationError::MissingPrimitive {
+            .ok_or_else(|| GraphValidationError::MissingPrimitive {
                 id: node.implementation.impl_id.clone(),
                 version: node.implementation.version.clone(),
             })?;
@@ -73,14 +104,14 @@ pub fn validate<C: PrimitiveCatalog>(
     })
 }
 
-fn map_endpoint(ep: &ExpandedEndpoint) -> Result<Endpoint, ValidationError> {
+fn map_endpoint(ep: &ExpandedEndpoint) -> Result<Endpoint, GraphValidationError> {
     match ep {
         ExpandedEndpoint::NodePort { node_id, port_name } => Ok(Endpoint::NodePort {
             node_id: node_id.clone(),
             port_name: port_name.clone(),
         }),
         ExpandedEndpoint::ExternalInput { name } => {
-            Err(ValidationError::ExternalInputNotAllowed { name: name.clone() })
+            Err(GraphValidationError::ExternalInputNotAllowed { name: name.clone() })
         }
     }
 }
@@ -88,7 +119,7 @@ fn map_endpoint(ep: &ExpandedEndpoint) -> Result<Endpoint, ValidationError> {
 fn topological_sort(
     nodes: &HashMap<String, ValidatedNode>,
     edges: &[ValidatedEdge],
-) -> Result<Vec<String>, ValidationError> {
+) -> Result<Vec<String>, GraphValidationError> {
     let mut in_degree: HashMap<String, usize> = nodes.keys().map(|k| (k.clone(), 0)).collect();
     let mut dependents: HashMap<String, Vec<String>> =
         nodes.keys().map(|k| (k.clone(), vec![])).collect();
@@ -98,10 +129,10 @@ fn topological_sort(
         let Endpoint::NodePort { node_id: to, .. } = &edge.to;
         *in_degree
             .get_mut(to)
-            .ok_or_else(|| ValidationError::UnknownNode(to.clone()))? += 1;
+            .ok_or_else(|| GraphValidationError::UnknownNode(to.clone()))? += 1;
         dependents
             .get_mut(from)
-            .ok_or_else(|| ValidationError::UnknownNode(from.clone()))?
+            .ok_or_else(|| GraphValidationError::UnknownNode(from.clone()))?
             .push(to.clone());
     }
 
@@ -121,7 +152,7 @@ fn topological_sort(
             for dep in deps {
                 let deg = in_degree
                     .get_mut(dep)
-                    .ok_or_else(|| ValidationError::UnknownNode(dep.clone()))?;
+                    .ok_or_else(|| GraphValidationError::UnknownNode(dep.clone()))?;
                 *deg -= 1;
                 if *deg == 0 {
                     queue.insert(dep.clone());
@@ -131,7 +162,7 @@ fn topological_sort(
     }
 
     if sorted.len() != nodes.len() {
-        return Err(ValidationError::CycleDetected);
+        return Err(GraphValidationError::CycleDetected);
     }
 
     Ok(sorted)
@@ -140,16 +171,16 @@ fn topological_sort(
 fn enforce_edge_nodes_exist(
     nodes: &HashMap<String, ValidatedNode>,
     edges: &[ValidatedEdge],
-) -> Result<(), ValidationError> {
+) -> Result<(), GraphValidationError> {
     for edge in edges {
         let Endpoint::NodePort { node_id: from, .. } = &edge.from;
         if !nodes.contains_key(from) {
-            return Err(ValidationError::UnknownNode(from.clone()));
+            return Err(GraphValidationError::UnknownNode(from.clone()));
         }
 
         let Endpoint::NodePort { node_id: to, .. } = &edge.to;
         if !nodes.contains_key(to) {
-            return Err(ValidationError::UnknownNode(to.clone()));
+            return Err(GraphValidationError::UnknownNode(to.clone()));
         }
     }
     Ok(())
@@ -158,7 +189,7 @@ fn enforce_edge_nodes_exist(
 fn enforce_wiring_matrix(
     nodes: &HashMap<String, ValidatedNode>,
     edges: &[ValidatedEdge],
-) -> Result<(), ValidationError> {
+) -> Result<(), GraphValidationError> {
     for edge in edges {
         let Endpoint::NodePort {
             node_id: from,
@@ -171,13 +202,13 @@ fn enforce_wiring_matrix(
 
         let from_node = nodes
             .get(from)
-            .ok_or_else(|| ValidationError::UnknownNode(from.clone()))?;
+            .ok_or_else(|| GraphValidationError::UnknownNode(from.clone()))?;
         let to_node = nodes
             .get(to)
-            .ok_or_else(|| ValidationError::UnknownNode(to.clone()))?;
+            .ok_or_else(|| GraphValidationError::UnknownNode(to.clone()))?;
 
         if !wiring_allowed_for_edge(from_node, to_node, to_port)? {
-            return Err(ValidationError::InvalidEdgeKind {
+            return Err(GraphValidationError::InvalidEdgeKind {
                 from: from_node.kind.clone(),
                 to: to_node.kind.clone(),
             });
@@ -189,7 +220,7 @@ fn enforce_wiring_matrix(
 fn enforce_required_inputs(
     nodes: &HashMap<String, ValidatedNode>,
     edges: &[ValidatedEdge],
-) -> Result<(), ValidationError> {
+) -> Result<(), GraphValidationError> {
     let mut incoming: HashMap<(&String, &str), bool> = HashMap::new();
     for edge in edges {
         let Endpoint::NodePort {
@@ -202,7 +233,7 @@ fn enforce_required_inputs(
     for node in nodes.values() {
         for input in node.required_inputs() {
             if !incoming.contains_key(&(&node.runtime_id, input.name.as_str())) {
-                return Err(ValidationError::MissingRequiredInput {
+                return Err(GraphValidationError::MissingRequiredInput {
                     node: node.runtime_id.clone(),
                     input: input.name.clone(),
                 });
@@ -215,7 +246,7 @@ fn enforce_required_inputs(
 fn enforce_types(
     nodes: &HashMap<String, ValidatedNode>,
     edges: &[ValidatedEdge],
-) -> Result<(), ValidationError> {
+) -> Result<(), GraphValidationError> {
     for edge in edges {
         let Endpoint::NodePort {
             node_id: from,
@@ -228,15 +259,15 @@ fn enforce_types(
 
         let from_node = nodes
             .get(from)
-            .ok_or_else(|| ValidationError::UnknownNode(from.clone()))?;
+            .ok_or_else(|| GraphValidationError::UnknownNode(from.clone()))?;
         let to_node = nodes
             .get(to)
-            .ok_or_else(|| ValidationError::UnknownNode(to.clone()))?;
+            .ok_or_else(|| GraphValidationError::UnknownNode(to.clone()))?;
 
         let from_type = from_node
             .outputs
             .get(from_port)
-            .ok_or_else(|| ValidationError::MissingOutputMetadata {
+            .ok_or_else(|| GraphValidationError::MissingOutputMetadata {
                 node: from.clone(),
                 output: from_port.clone(),
             })?
@@ -247,7 +278,7 @@ fn enforce_types(
             .inputs
             .iter()
             .find(|i| i.name == *to_port)
-            .ok_or_else(|| ValidationError::MissingInputMetadata {
+            .ok_or_else(|| GraphValidationError::MissingInputMetadata {
                 node: to.clone(),
                 input: to_port.clone(),
             })?
@@ -255,7 +286,7 @@ fn enforce_types(
             .clone();
 
         if from_type != expected {
-            return Err(ValidationError::TypeMismatch {
+            return Err(GraphValidationError::TypeMismatch {
                 from: from.clone(),
                 output: from_port.clone(),
                 to: to.clone(),
@@ -272,7 +303,7 @@ fn enforce_types(
 fn enforce_action_gating(
     nodes: &HashMap<String, ValidatedNode>,
     edges: &[ValidatedEdge],
-) -> Result<(), ValidationError> {
+) -> Result<(), GraphValidationError> {
     let mut action_inputs: HashMap<String, bool> = HashMap::new();
 
     for edge in edges {
@@ -298,7 +329,7 @@ fn enforce_action_gating(
 
     for (id, node) in nodes {
         if node.kind == PrimitiveKind::Action && !action_inputs.get(id).copied().unwrap_or(false) {
-            return Err(ValidationError::ActionNotGated(id.clone()));
+            return Err(GraphValidationError::ActionNotGated(id.clone()));
         }
     }
 
@@ -308,14 +339,14 @@ fn enforce_action_gating(
 fn enforce_boundary_outputs(
     nodes: &HashMap<String, ValidatedNode>,
     boundary_outputs: &[crate::cluster::OutputPortSpec],
-) -> Result<(), ValidationError> {
+) -> Result<(), GraphValidationError> {
     for output in boundary_outputs {
         let target_node = nodes
             .get(&output.maps_to.node_id)
-            .ok_or_else(|| ValidationError::UnknownNode(output.maps_to.node_id.clone()))?;
+            .ok_or_else(|| GraphValidationError::UnknownNode(output.maps_to.node_id.clone()))?;
 
         if !target_node.outputs.contains_key(&output.maps_to.port_name) {
-            return Err(ValidationError::MissingOutputMetadata {
+            return Err(GraphValidationError::MissingOutputMetadata {
                 node: output.maps_to.node_id.clone(),
                 output: output.maps_to.port_name.clone(),
             });
@@ -340,7 +371,7 @@ fn wiring_allowed_for_edge(
     from_node: &ValidatedNode,
     to_node: &ValidatedNode,
     to_port: &str,
-) -> Result<bool, ValidationError> {
+) -> Result<bool, GraphValidationError> {
     if wiring_allowed(&from_node.kind, &to_node.kind) {
         return Ok(true);
     }
@@ -356,7 +387,7 @@ fn wiring_allowed_for_edge(
             .inputs
             .iter()
             .find(|input| input.name == to_port)
-            .ok_or_else(|| ValidationError::MissingInputMetadata {
+            .ok_or_else(|| GraphValidationError::MissingInputMetadata {
                 node: to_node.runtime_id.clone(),
                 input: to_port.to_string(),
             })?;
@@ -375,7 +406,7 @@ fn wiring_allowed_for_edge(
 
 /// V.MULTI-EDGE: Reject multiple edges targeting the same input port.
 /// All inputs currently have Cardinality::Single; fan-in is not supported.
-fn enforce_single_edge_per_input(edges: &[ValidatedEdge]) -> Result<(), ValidationError> {
+fn enforce_single_edge_per_input(edges: &[ValidatedEdge]) -> Result<(), GraphValidationError> {
     let mut inbound_count: HashMap<(&String, &String), usize> = HashMap::new();
 
     for edge in edges {
@@ -385,7 +416,7 @@ fn enforce_single_edge_per_input(edges: &[ValidatedEdge]) -> Result<(), Validati
 
     for ((node_id, port_name), count) in inbound_count {
         if count > 1 {
-            return Err(ValidationError::MultipleInboundEdges {
+            return Err(GraphValidationError::MultipleInboundEdges {
                 node: node_id.clone(),
                 input: port_name.clone(),
             });

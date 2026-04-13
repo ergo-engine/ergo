@@ -995,10 +995,7 @@ impl Ergo {
             ReplayGraphFromAssetsRequest {
                 bundle: config.bundle,
                 assets,
-                prep: LivePrepOptions::for_fixture(
-                    config.adapter,
-                    None,
-                ),
+                prep: LivePrepOptions::for_fixture(config.adapter, None),
             },
             self.runtime_surfaces.clone(),
         )
@@ -1268,10 +1265,7 @@ impl Ergo {
                 ReplayGraphFromAssetsRequest {
                     bundle,
                     assets,
-                    prep: LivePrepOptions::for_fixture(
-                        prep.adapter,
-                        None,
-                    ),
+                    prep: LivePrepOptions::for_fixture(prep.adapter, None),
                 },
                 self.runtime_surfaces.clone(),
             )
@@ -1346,10 +1340,9 @@ impl ProfileRunner {
             }
         }
 
-        let runner = self
-            .runner
-            .as_mut()
-            .expect("active profile runner must hold hosted runner");
+        let runner = self.runner.as_mut().ok_or_else(|| {
+            lifecycle_violation("internal: active profile runner must hold hosted runner")
+        })?;
         match runner.step(event) {
             Ok(outcome) => {
                 self.successful_steps += 1;
@@ -1404,10 +1397,9 @@ impl ProfileRunner {
         }
 
         self.state = ProfileRunnerState::Finished;
-        let runner = self
-            .runner
-            .take()
-            .expect("unfinished profile runner must hold hosted runner");
+        let runner = self.runner.take().ok_or_else(|| {
+            lifecycle_violation("internal: unfinished profile runner must hold hosted runner")
+        })?;
         finalize_hosted_runner_capture(runner, false)
     }
 

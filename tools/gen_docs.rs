@@ -1,3 +1,13 @@
+//! gen_docs.rs — Documentation generation helper
+//!
+//! Purpose:  Compiled helper that generates or updates documentation
+//!           artifacts (e.g., invariant tables, phase summaries) from
+//!           source-level metadata in the kernel runtime crate.
+//!
+//! Authority: Operational tooling — not a CI gate.
+//!
+//! Scope:    Reads source files, writes documentation output.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

@@ -282,7 +282,7 @@ are rejected during CLI parse before registry validation.
 | COMP-5 | Input type equals upstream output type | `upstream.output.type == compute.input.type` |
 | COMP-6 | Output type equals downstream input type | `compute.output.type == downstream.input.type` |
 
-**Enforcement location:** `crates/kernel/runtime/src/runtime/validate.rs` (`ValidationError::TypeMismatch`)
+**Enforcement location:** `crates/kernel/runtime/src/runtime/validate.rs` (`GraphValidationError::TypeMismatch`)
 
 ---
 

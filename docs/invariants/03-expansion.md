@@ -32,7 +32,7 @@ Change Rule: Operational log
 
 ### Notes
 
-- **E.3:** Expansion may still materialize `ExpandedEndpoint::ExternalInput` for unresolved or top-level `$input` sources. Expand debug-asserts that `ExternalInput` is never used as a sink during rewrite, and runtime validation rejects any surviving `ExternalInput` endpoint before execution.
+- **E.3:** Expansion may still materialize `ExpandedEndpoint::ExternalInput` for unresolved or top-level `$input` sources. Enforced during expansion in `cluster.rs`; returns `ExpandError::InvariantViolation` if an `ExternalInput` survives as an edge sink. Runtime validation also rejects any surviving `ExternalInput` endpoint before execution.
 - **E.6:** True by clone semantics but not explicitly enforced.
 - **E.7:** `ExpandedGraph` already documents retained boundary ports. `boundary_inputs` remain part of signature inference, while `boundary_outputs` also survive validation and are used during execution to assemble named runtime outputs.
 - **E.2:** Boundary output mapping (`map_boundary_outputs`) and nested output mapping now return typed `D.4` mapping errors instead of silently falling through. `ExpandError::UnmappedBoundaryOutput { ... }` and `ExpandError::UnmappedNestedOutput { ... }` are output-port mapping failures, not placeholder-edge rewrite failures.

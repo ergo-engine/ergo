@@ -1,3 +1,14 @@
+//! composition.rs — Adapter-to-runtime composition and binding
+//!
+//! Purpose:
+//! - Composes a validated adapter manifest with runtime primitives,
+//!   producing the `AdapterProvides` structure that the host uses
+//!   to configure execution context and event routing.
+//!
+//! Owns:
+//! - Mapping adapter context keys to runtime source inputs
+//! - Mapping adapter event kinds to runtime trigger configurations
+
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fmt;

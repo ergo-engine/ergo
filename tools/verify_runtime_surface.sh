@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# verify_runtime_surface.sh — Runtime API surface stability check
+#
+# Purpose:  Verifies that the public API surface of the kernel runtime
+#           crate has not changed in ways that break downstream
+#           contracts.  Detects accidental exposure of internal types.
+#
+# Authority: Informational — detects unexpected public API drift.
+#
+# Scope:    crates/kernel/runtime/src/. Does not modify code.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

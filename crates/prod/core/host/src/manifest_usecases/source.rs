@@ -188,6 +188,9 @@ struct RawSourceManifest {
     side_effects: bool,
 }
 
+/// Deserialization-only DTO for source manifest input declarations.
+/// Fields are read during YAML parsing and mapped to kernel types;
+/// the struct itself is never used after the conversion pass.
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct RawSourceInput {

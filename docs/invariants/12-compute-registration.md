@@ -57,7 +57,7 @@ Change Rule: Operational log
 - **Registration enforcement location:** `crates/prod/core/host/src/manifest_usecases.rs` (file-manifest parse) and `crates/kernel/runtime/src/compute/registry.rs` (typed runtime registry)
 - **Registration test location:** `crates/kernel/runtime/src/compute/registry.rs` (typed runtime registry) and `crates/prod/clients/cli/tests/phase7_cli.rs` (file-manifest validation coverage)
 - **Execution test location:** `crates/kernel/runtime/src/runtime/tests.rs`
-- **COMP-4/COMP-5/COMP-6:** Compute-adjacent composition aliases enforced by Validation Phase invariant **V.4** (`ValidationError::TypeMismatch`) in `crates/kernel/runtime/src/runtime/validate.rs`.
+- **COMP-4/COMP-5/COMP-6:** Compute-adjacent composition aliases enforced by Validation Phase invariant **V.4** (`GraphValidationError::TypeMismatch`) in `crates/kernel/runtime/src/runtime/validate.rs`.
 - **CMP-15:** The semantic contract is `Number | Bool`. On the file-backed front door, `crates/prod/core/host/src/manifest_usecases.rs` still accepts `int` as an alias for `Number` and can reject malformed parameter spellings before typed registration; the runtime registry then enforces the canonical contract by rejecting `String` and `Series`.
 - **CMP-19:** Current prod file-manifest validation rejects default mismatches in `crates/prod/core/host/src/manifest_usecases.rs` (`ComputeParseError::InvalidParameterDefault`). The typed runtime-registry path in `crates/kernel/runtime/src/compute/registry.rs` still rejects mismatched defaults as `ValidationError::InvalidParameterType`.
 - **CMP-20:** Invalid output type strings are rejected on the prod file-manifest surface during parse; the typed runtime layer only admits `Number | Series | Bool | String`.

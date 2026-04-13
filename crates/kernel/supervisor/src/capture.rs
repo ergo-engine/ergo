@@ -27,8 +27,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use sha2::{Digest, Sha256};
-
 use ergo_adapter::capture::ExternalEventRecord;
 use ergo_adapter::{ExternalEvent, GraphId, RuntimeInvoker};
 
@@ -194,16 +192,9 @@ impl<L: DecisionLog> DecisionLog for CapturingDecisionLog<L> {
         let captured_effects: Vec<CapturedActionEffect> = entry
             .effects
             .iter()
-            .map(|effect| {
-                let effect_bytes =
-                    serde_json::to_vec(effect).expect("ActionEffect must be serializable");
-                let mut hasher = Sha256::new();
-                hasher.update(&effect_bytes);
-                let effect_hash = hex::encode(hasher.finalize());
-                CapturedActionEffect {
-                    effect: effect.clone(),
-                    effect_hash,
-                }
+            .map(|effect| CapturedActionEffect {
+                effect_hash: crate::compute_effect_hash(effect),
+                effect: effect.clone(),
             })
             .collect();
 

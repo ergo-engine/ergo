@@ -31,9 +31,22 @@ use ergo_runtime::catalog::{CorePrimitiveCatalog, CoreRegistries};
 use ergo_runtime::cluster::ExpandedGraph;
 use ergo_runtime::common::ActionEffect;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// Capture bundle format version. This repo treats captures as ephemeral artifacts.
 pub(crate) const CAPTURE_FORMAT_VERSION: &str = "v3";
+
+/// Compute a deterministic SHA-256 hash for an `ActionEffect`.
+///
+/// Used by both capture (to stamp each effect at recording time) and
+/// replay (to verify effect determinism against the recorded hash).
+pub fn compute_effect_hash(effect: &ActionEffect) -> String {
+    let effect_bytes =
+        serde_json::to_vec(effect).expect("ActionEffect serialization is infallible");
+    let mut hasher = Sha256::new();
+    hasher.update(&effect_bytes);
+    hex::encode(hasher.finalize())
+}
 pub const NO_ADAPTER_PROVENANCE: &str = "none";
 
 mod capture;

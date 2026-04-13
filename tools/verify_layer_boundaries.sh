@@ -1,4 +1,16 @@
 #!/usr/bin/env bash
+# verify_layer_boundaries.sh — Kernel/prod layer separation enforcement
+#
+# Purpose:  Automated guard for the five bleed-detection rules from
+#           kernel-prod-separation.md §4.  Scans all workspace crates
+#           for cross-layer violations that would break kernel/prod
+#           ownership boundaries.
+#
+# Authority: Enforces LAYER-1 through LAYER-5 of kernel-prod-separation.md.
+#            This script is a CI-level gate — failures block merges.
+#
+# Scope:    All crates under crates/kernel/ and crates/prod/.
+#           Does not modify code.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -82,11 +94,62 @@ else
   SEARCH_CMD=(grep -En)
 fi
 
-echo "checking loader RuleViolation boundary"
-if "${SEARCH_CMD[@]}" "RuleViolation" crates/prod/core/loader/src; then
-  echo "error: loader must not expose or return RuleViolation"
-  exit 1
-fi
+echo "checking prod RuleViolation boundary (LAYER-2 / bleed rule 1)"
+# Rule 1 from kernel-prod-separation §4: "Prod introduces new semantic
+# rule meanings, rule IDs, or RuleViolation ownership."
+#
+# The host legitimately wraps kernel RuleViolation into HostRuleViolation,
+# so the host is exempt.  The loader and clients must not create, return,
+# or re-expose raw kernel RuleViolation.
+python3 - <<'PY'
+import sys
+from pathlib import Path
+import re
+
+# Loader: must not use RuleViolation at all
+# Clients/SDK/shared: must not use raw kernel RuleViolation (HostRuleViolation is OK)
+loader_dir = Path("crates/prod/core/loader/src")
+client_dirs = [
+    Path("crates/prod/clients/cli/src"),
+    Path("crates/prod/clients/sdk-rust/src"),
+    Path("crates/prod/clients/sdk-types/src"),
+    Path("crates/prod/shared/duration/src"),
+]
+
+comment_pattern = re.compile(r"^\s*(//|///|//!)")
+raw_rule_violation = re.compile(r"\bRuleViolation\b")
+host_rule_violation = re.compile(r"\bHostRuleViolation\b")
+violations = []
+
+# Loader: no RuleViolation at all
+if loader_dir.is_dir():
+    for rs_file in sorted(loader_dir.rglob("*.rs")):
+        for lineno, line in enumerate(rs_file.read_text().splitlines(), start=1):
+            if comment_pattern.match(line):
+                continue
+            if raw_rule_violation.search(line):
+                violations.append(f"{rs_file}:{lineno}:{line.strip()}")
+
+# Clients: no raw kernel RuleViolation (HostRuleViolation wrapper is OK).
+# Strip the allowed wrapper first so that a line containing both
+# HostRuleViolation and a raw RuleViolation is still caught.
+for dir_path in client_dirs:
+    if not dir_path.is_dir():
+        continue
+    for rs_file in sorted(dir_path.rglob("*.rs")):
+        for lineno, line in enumerate(rs_file.read_text().splitlines(), start=1):
+            if comment_pattern.match(line):
+                continue
+            stripped_line = host_rule_violation.sub("", line)
+            if raw_rule_violation.search(stripped_line):
+                violations.append(f"{rs_file}:{lineno}:{line.strip()}")
+
+if violations:
+    for v in violations:
+        print(v)
+    print("error: loader/clients must not create or re-expose kernel RuleViolation (kernel-prod-separation §4 rule 1)")
+    sys.exit(1)
+PY
 
 echo "checking clients against parser-internal imports"
 if "${SEARCH_CMD[@]}" "decode::yaml_graph::|decode::json_graph::|selector_matches_version|RawClusterDefinition" \
@@ -153,8 +216,17 @@ files = [
 ]
 pattern = re.compile(r"ergo_(runtime|adapter|supervisor)::")
 test_mod_pattern = re.compile(r"(pub\s+)?mod tests\b")
+# Regex to strip string literals and comments before counting braces.
+# This prevents false positives from braces inside strings or comments.
+strip_noise = re.compile(r'"(?:[^"\\]|\\.)*"|//.*$')
 
 def strip_cfg_test_modules(text: str) -> str:
+    """Remove #[cfg(test)] mod tests { ... } blocks from source text.
+
+    Uses brace-depth tracking on content after stripping string literals
+    and line comments to avoid miscounting braces in strings.
+    Also handles the declaration-only form #[cfg(test)] mod tests; (no body).
+    """
     lines = text.splitlines()
     kept = []
     i = 0
@@ -164,10 +236,17 @@ def strip_cfg_test_modules(text: str) -> str:
             while j < len(lines) and not lines[j].strip():
                 j += 1
             if j < len(lines) and test_mod_pattern.match(lines[j].strip()):
-                brace_depth = lines[j].count("{") - lines[j].count("}")
+                # Declaration-only: #[cfg(test)] mod tests;
+                if lines[j].strip().endswith(";"):
+                    i = j + 1
+                    continue
+                # Inline block: #[cfg(test)] mod tests { ... }
+                cleaned = strip_noise.sub("", lines[j])
+                brace_depth = cleaned.count("{") - cleaned.count("}")
                 i = j + 1
                 while i < len(lines) and brace_depth > 0:
-                    brace_depth += lines[i].count("{") - lines[i].count("}")
+                    cleaned = strip_noise.sub("", lines[i])
+                    brace_depth += cleaned.count("{") - cleaned.count("}")
                     i += 1
                 continue
         kept.append(lines[i])
@@ -266,6 +345,78 @@ if violations:
     for violation in violations:
         print(violation)
     print("error: SDK run/validation orchestration must delegate to host-owned orchestration")
+    sys.exit(1)
+PY
+
+echo "checking LAYER-4: prod must not reinterpret primitive ontology (bleed rule 4)"
+python3 - <<'PY'
+import sys
+from pathlib import Path
+import re
+
+prod_dirs = [
+    "crates/prod/core/host/src",
+    "crates/prod/core/loader/src",
+    "crates/prod/clients/cli/src",
+    "crates/prod/clients/sdk-rust/src",
+    "crates/prod/clients/sdk-types/src",
+]
+comment_pattern = re.compile(r"^\s*(//|///|//!)")
+ontology_patterns = [
+    re.compile(r"\benum\s+PrimitiveKind\b"),
+    re.compile(r"\bfn\s+wiring_legality\b"),
+    re.compile(r"\bfn\s+slot_type_check\b"),
+    re.compile(r"\bfn\s+validate_slot_compatibility\b"),
+]
+violations = []
+for dir_path in prod_dirs:
+    d = Path(dir_path)
+    if not d.is_dir():
+        continue
+    for rs_file in sorted(d.rglob("*.rs")):
+        for lineno, line in enumerate(rs_file.read_text().splitlines(), start=1):
+            if comment_pattern.match(line):
+                continue
+            for pat in ontology_patterns:
+                if pat.search(line):
+                    violations.append(f"{rs_file}:{lineno}:{line.strip()}")
+
+if violations:
+    for v in violations:
+        print(v)
+    print("error: prod crates must not reinterpret primitive ontology (kernel-prod-separation §4 rule 4)")
+    sys.exit(1)
+PY
+
+echo "checking LAYER-5: loader must not perform kernel semantic enforcement (bleed rule 5)"
+python3 - <<'PY'
+import sys
+from pathlib import Path
+import re
+
+comment_pattern = re.compile(r"^\s*(//|///|//!)")
+semantic_patterns = [
+    re.compile(r"\bfn\s+validate_graph_semantics\b"),
+    re.compile(r"\bfn\s+expand\("),
+    re.compile(r"\bfn\s+schedule_execution\b"),
+    re.compile(r"\bfn\s+validate_wiring\b"),
+    re.compile(r"\bRuleViolation\b"),
+]
+violations = []
+d = Path("crates/prod/core/loader/src")
+if d.is_dir():
+    for rs_file in sorted(d.rglob("*.rs")):
+        for lineno, line in enumerate(rs_file.read_text().splitlines(), start=1):
+            if comment_pattern.match(line):
+                continue
+            for pat in semantic_patterns:
+                if pat.search(line):
+                    violations.append(f"{rs_file}:{lineno}:{line.strip()}")
+
+if violations:
+    for v in violations:
+        print(v)
+    print("error: loader must not perform semantic enforcement belonging in kernel (kernel-prod-separation §4 rule 5)")
     sys.exit(1)
 PY
 

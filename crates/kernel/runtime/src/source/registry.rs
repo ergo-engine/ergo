@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use semver::Version;
 
 use super::{Cadence, SourceKind, SourcePrimitive, SourcePrimitiveManifest, SourceValidationError};
-use crate::common::ValueType;
+use crate::common::{is_valid_id, ValueType};
 
 pub struct SourceRegistry {
     primitives: HashMap<String, Box<dyn SourcePrimitive>>,
@@ -156,15 +156,4 @@ impl Default for SourceRegistry {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn is_valid_id(id: &str) -> bool {
-    let mut chars = id.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !first.is_ascii_lowercase() {
-        return false;
-    }
-    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }

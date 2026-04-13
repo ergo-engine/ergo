@@ -68,4 +68,4 @@ must be implemented as clusters with explicit state flow through environment.
   - `should_skip_action()` in execute.rs checks for any `TriggerEvent::NotEmitted` input (AND semantics)
   - Skipped actions return `ActionOutcome::Skipped` for Event outputs
   - Test: `r7_action_skipped_when_trigger_not_emitted` verifies enforcement
-  - **Strengthened (2025-01-05):** `map_to_action_value()` now uses explicit pattern matching on `TriggerEvent::Emitted` and `TriggerEvent::NotEmitted` rather than wildcard. NotEmitted case includes `unreachable!("R.7 violation: NotEmitted must be caught by should_skip_action")` to prevent silent acceptance of future TriggerEvent variants. Location: `execute.rs::map_to_action_value()`.
+  - **Strengthened (2025-01-05):** `map_to_action_value()` now uses explicit pattern matching on `TriggerEvent::Emitted` and `TriggerEvent::NotEmitted` rather than wildcard. If `NotEmitted` reaches the value-conversion arm despite the gate, `ExecError::ActionSkipViolation { node, port }` is returned instead of panicking, maintaining kernel determinism. Location: `execute.rs::map_to_action_value()`.

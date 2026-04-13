@@ -328,7 +328,7 @@ Rules:
 | ACT-9 | Registration | `ActionValidationError::InvalidOutputType` | `act_9_output_not_event_rejected` |
 | ACT-10 | Registration | `ActionValidationError::StateNotAllowed` | `act_10_action_has_state_rejected` |
 | ACT-11 | Registration | `ActionValidationError::SideEffectsRequired` | `act_11_action_no_side_effects_rejected` |
-| ACT-12 | Validation | `ValidationError::ActionNotGated` | `act_12_action_not_gated_rejected` |
+| ACT-12 | Validation | `GraphValidationError::ActionNotGated` | `act_12_action_not_gated_rejected` |
 | ACT-13 | Registration | Parse/default normalization | `—` |
 | ACT-14 | Registration | `ActionValidationError::DuplicateWriteName` | `act_14_duplicate_write_name_rejected` |
 | ACT-15 | Registration | `ActionValidationError::InvalidWriteType` | `act_15_write_types_valid_accepts_all_scalar_variants` |
@@ -355,7 +355,7 @@ Rules:
 
 **Validation enforcement location:** `crates/kernel/runtime/src/runtime/validate.rs`
 
-**ACT-12 mapping note:** Doctrine rule `ACT-12` is enforced by validation surface `V.5` (`ValidationError::ActionNotGated`).
+**ACT-12 mapping note:** Doctrine rule `ACT-12` is enforced by validation surface `V.5` (`GraphValidationError::ActionNotGated`).
 
 ---
 

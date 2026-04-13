@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# verify_invariant_index.sh — Invariant index completeness check
+#
+# Purpose:  Verifies that every invariant ID referenced in code or
+#           phase files has a corresponding entry in
+#           docs/invariants/INDEX.md, and vice versa.
+#
+# Authority: Informational — detects stale or untracked invariant IDs.
+#
+# Scope:    docs/invariants/ and all .rs source files. Does not modify code.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

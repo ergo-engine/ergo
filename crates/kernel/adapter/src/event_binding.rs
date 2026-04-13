@@ -1,3 +1,14 @@
+//! event_binding.rs — External event validation and binding
+//!
+//! Purpose:
+//! - Validates incoming external events against the adapter manifest's
+//!   declared event kinds and context key schemas, producing a
+//!   `ValidatedHostedEvent` ready for kernel execution.
+//!
+//! Owns:
+//! - Event kind matching, JSON schema validation of payloads,
+//!   context value type checking
+
 use std::collections::HashMap;
 use std::fmt;
 

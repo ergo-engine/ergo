@@ -58,7 +58,7 @@ Change Rule: Operational log
 
 ### Notes
 
-- **ACT-12:** Composition-time validation. Same predicate and enforcement as **V.5** (`ValidationError::ActionNotGated` in `crates/kernel/runtime/src/runtime/validate.rs`). It remains documented in the `ACT-*` family file for action-contract traceability.
+- **ACT-12:** Composition-time validation. Same predicate and enforcement as **V.5** (`GraphValidationError::ActionNotGated` in `crates/kernel/runtime/src/runtime/validate.rs`). It remains documented in the `ACT-*` family file for action-contract traceability.
 - **ACT-19:** Current prod file-manifest validation rejects default mismatches in `crates/prod/core/host/src/manifest_usecases.rs` (`ActionParseError::InvalidParameterDefault`). The typed runtime-registry path in `crates/kernel/runtime/src/action/registry.rs` still rejects mismatched defaults as `ActionValidationError::InvalidParameterType`.
 - **ACT-20/ACT-21:** Registration-time cross-check for parameter-bound write names (`$key` convention). Ensures `$`-prefixed write spec names reference declared String-typed parameters.
 - **ACT-22/ACT-23:** Registration-time checks for write payload binding (`from_input`) and scalar type compatibility. These define the declarative "what" channel for action writes; they do not by themselves authorize upstream wiring.

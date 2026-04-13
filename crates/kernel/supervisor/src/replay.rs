@@ -24,8 +24,6 @@ use std::collections::HashSet;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use sha2::{Digest, Sha256};
-
 use ergo_adapter::capture::{CaptureError, ExternalEventRecord};
 use ergo_adapter::{EventId, ExternalEventPayloadError, RuntimeInvoker};
 use ergo_runtime::common::ActionEffect;
@@ -350,12 +348,9 @@ pub fn compare_decisions(
     Ok(true)
 }
 
-/// Hash an ActionEffect using the same serialization path as capture.
+/// Delegate to the shared hashing function in the crate root.
 pub fn hash_effect(effect: &ActionEffect) -> String {
-    let effect_bytes = serde_json::to_vec(effect).expect("ActionEffect must be serializable");
-    let mut hasher = Sha256::new();
-    hasher.update(&effect_bytes);
-    hex::encode(hasher.finalize())
+    crate::compute_effect_hash(effect)
 }
 
 fn rehydrate_event(

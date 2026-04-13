@@ -1238,10 +1238,7 @@ impl LivePrepOptions {
     /// Production sessions require an adapter contract — the adapter
     /// is non-optional.  This is structurally enforced: callers cannot
     /// construct production prep options without providing an adapter.
-    pub fn for_production(
-        adapter: AdapterInput,
-        egress_config: Option<EgressConfig>,
-    ) -> Self {
+    pub fn for_production(adapter: AdapterInput, egress_config: Option<EgressConfig>) -> Self {
         Self {
             adapter: Some(adapter),
             egress_config,
@@ -1261,10 +1258,7 @@ impl LivePrepOptions {
     /// constructor for sessions that will receive live external data —
     /// use [`Self::for_production`] instead.  Misuse allows unvalidated
     /// payloads to enter the graph without adapter schema governance.
-    pub fn for_fixture(
-        adapter: Option<AdapterInput>,
-        egress_config: Option<EgressConfig>,
-    ) -> Self {
+    pub fn for_fixture(adapter: Option<AdapterInput>, egress_config: Option<EgressConfig>) -> Self {
         Self {
             adapter,
             egress_config,

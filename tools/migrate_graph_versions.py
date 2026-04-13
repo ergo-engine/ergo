@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+# migrate_graph_versions.py — Graph version migration utility
+#
+# Purpose:  Migrates graph YAML files between schema versions when
+#           the graph serialization format evolves.
+#
+# Authority: Operational tooling — not a CI gate.  Changes are
+#            applied to graph fixture and test files.
+#
+# Scope:    Graph YAML files in the workspace.  Modifies files in place.
 """Check/rewrite legacy graph version selectors to strict semver.
 
 This is intentionally conservative and only touches schema-known YAML keys:

@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+# verify_doctrine_gate.sh — Doctrine compliance verification
+#
+# Purpose:  Ensures that codebase changes do not violate the frozen
+#           doctrinal rules governing graph expansion, primitive
+#           registration, and runtime execution contracts.
+#
+# Authority: Enforces invariants from docs/invariants/ phase files.
+#            This script is a CI-level gate — failures block merges.
+#
+# Scope:    Kernel and host crate source files. Does not modify code.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

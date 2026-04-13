@@ -1,3 +1,18 @@
+//! validate.rs — Adapter manifest structural validation
+//!
+//! Purpose:
+//! - Validates adapter manifests for structural correctness: unique
+//!   context key names, unique event kind names, unique effect names,
+//!   required field presence, and schema well-formedness.
+//!
+//! Owns:
+//! - ADP-1 through ADP-14 structural checks
+//!
+//! Does not own:
+//! - ADP-15 (context key schema constraints) — deferred
+//! - ADP-16 (event kind schema distinguishability) — deferred
+//! - Runtime binding or event dispatch (see `event_binding.rs`)
+
 use std::collections::{HashMap, HashSet};
 
 use ergo_runtime::runtime_version;
@@ -11,6 +26,21 @@ use crate::manifest::AdapterManifest;
 use crate::schema_materialization::{
     schema_properties, schema_property_to_context_type, schema_required_fields,
 };
+
+/// Find the first duplicate name in a sequence, returning the name
+/// and the indices of the first and second occurrence.
+fn find_first_duplicate<'a>(
+    names: impl Iterator<Item = &'a str>,
+) -> Option<(&'a str, usize, usize)> {
+    let mut seen: HashMap<&str, usize> = HashMap::new();
+    for (index, name) in names.enumerate() {
+        if let Some(&first_index) = seen.get(name) {
+            return Some((name, first_index, index));
+        }
+        seen.insert(name, index);
+    }
+    None
+}
 
 pub fn validate_adapter(manifest: &AdapterManifest) -> Result<(), InvalidAdapter> {
     check_adp_1(manifest)?;
@@ -30,7 +60,9 @@ pub fn validate_adapter(manifest: &AdapterManifest) -> Result<(), InvalidAdapter
     check_adp_17(manifest)?;
     check_adp_19(manifest)?;
     check_adp_18(manifest)?;
-    // ADP-15, ADP-16: TODO - Deferred until REP-SCOPE expansion
+    // ADP-15 (context_key schema constraint validation) and ADP-16
+    // (event_kind schema distinguishability) are not yet enforced.
+    // Deferred until REP-SCOPE expansion — see docs/invariants/INDEX.md.
     Ok(())
 }
 
@@ -160,16 +192,14 @@ fn check_adp_4(m: &AdapterManifest) -> Result<(), InvalidAdapter> {
 
 /// ADP-5: Context key names unique
 fn check_adp_5(m: &AdapterManifest) -> Result<(), InvalidAdapter> {
-    let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-    for (index, key) in m.context_keys.iter().enumerate() {
-        if let Some(&first_index) = seen.get(key.name.as_str()) {
-            return Err(InvalidAdapter::DuplicateContextKey {
-                name: key.name.clone(),
-                first_index,
-                second_index: index,
-            });
-        }
-        seen.insert(&key.name, index);
+    if let Some((name, first_index, second_index)) =
+        find_first_duplicate(m.context_keys.iter().map(|k| k.name.as_str()))
+    {
+        return Err(InvalidAdapter::DuplicateContextKey {
+            name: name.to_string(),
+            first_index,
+            second_index,
+        });
     }
     Ok(())
 }
@@ -192,15 +222,13 @@ fn check_adp_6(m: &AdapterManifest) -> Result<(), InvalidAdapter> {
 
 /// ADP-7: Event kind names unique
 fn check_adp_7(m: &AdapterManifest) -> Result<(), InvalidAdapter> {
-    let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-    for (index, event) in m.event_kinds.iter().enumerate() {
-        if let Some(&_first_index) = seen.get(event.name.as_str()) {
-            return Err(InvalidAdapter::DuplicateEventKind {
-                name: event.name.clone(),
-                index,
-            });
-        }
-        seen.insert(&event.name, index);
+    if let Some((name, _first_index, index)) =
+        find_first_duplicate(m.event_kinds.iter().map(|e| e.name.as_str()))
+    {
+        return Err(InvalidAdapter::DuplicateEventKind {
+            name: name.to_string(),
+            index,
+        });
     }
     Ok(())
 }
@@ -274,15 +302,13 @@ fn check_adp_11(m: &AdapterManifest) -> Result<(), InvalidAdapter> {
 /// ADP-12: Effect names unique
 fn check_adp_12(m: &AdapterManifest) -> Result<(), InvalidAdapter> {
     if let Some(accepts) = &m.accepts {
-        let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-        for (index, effect) in accepts.effects.iter().enumerate() {
-            if let Some(&_first_index) = seen.get(effect.name.as_str()) {
-                return Err(InvalidAdapter::DuplicateEffectName {
-                    name: effect.name.clone(),
-                    index,
-                });
-            }
-            seen.insert(&effect.name, index);
+        if let Some((name, _first_index, index)) =
+            find_first_duplicate(accepts.effects.iter().map(|e| e.name.as_str()))
+        {
+            return Err(InvalidAdapter::DuplicateEffectName {
+                name: name.to_string(),
+                index,
+            });
         }
     }
     Ok(())

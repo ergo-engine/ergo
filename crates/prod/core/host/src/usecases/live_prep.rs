@@ -625,10 +625,7 @@ fn validate_run_graph_internal(
     runtime_surfaces: Option<RuntimeSurfaces>,
 ) -> Result<(), HostRunError> {
     let validated = validate_live_runner_setup_from_assets(assets, options, runtime_surfaces)?;
-    ensure_production_adapter_bound(
-        validated.adapter_bound,
-        session_intent_from_driver(driver),
-    )?;
+    ensure_production_adapter_bound(validated.adapter_bound, session_intent_from_driver(driver))?;
     validate_driver_input(driver, validated.adapter_bound)?;
     Ok(())
 }
