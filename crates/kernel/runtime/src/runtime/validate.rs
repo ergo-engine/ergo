@@ -18,7 +18,7 @@
 //! - V.5  Action trigger gating        → `enforce_action_gating`        (ActionNotGated)
 //! - V.7  Single edge per input port   → `enforce_single_edge_per_input`(MultipleInboundEdges)
 //! - V.8  Primitive catalog existence  → `validate` main loop           (MissingPrimitive)
-//! - (boundary outputs — no doc V-number) → `enforce_boundary_outputs`  (MissingBoundaryOutput)
+//! - (boundary outputs — no doc V-number) → `enforce_boundary_outputs`  (MissingOutputMetadata)
 //! - E.3  ExternalInput rejection      → `validate` main loop           (ExternalInputNotAllowed)
 //!
 //! Note: V.6 ("All nodes pass validation before any action executes") is a
