@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# verify_replay_naming.sh — Replay type and naming convention check
+#
+# Purpose:  Enforces naming conventions for replay-related types,
+#           functions, and error variants across the host and
+#           supervisor crates to prevent naming drift.
+#
+# Authority: Informational — detects convention violations.
+#
+# Scope:    Replay-related source files in kernel and host. Does not modify code.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

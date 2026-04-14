@@ -12,7 +12,7 @@ use crate::compute::PrimitiveRegistry as ComputeRegistry;
 use crate::compute::{ComputePrimitive, ComputePrimitiveManifest};
 use crate::runtime::run;
 use crate::runtime::types::{
-    ExecError, ExecutionContext, Registries, RuntimeValue, ValidationError,
+    ExecError, ExecutionContext, GraphValidationError, Registries, RuntimeValue,
 };
 use crate::source::{SourceKind, SourcePrimitive, SourcePrimitiveManifest, SourceRegistry};
 use crate::trigger::TriggerRegistry;
@@ -728,7 +728,7 @@ fn validation_fails_on_missing_required_input() {
     assert_eq!(err.rule_id(), "V.3");
     assert_eq!(err.path().as_deref(), Some("$.edges"));
     match err {
-        crate::runtime::types::ValidationError::MissingRequiredInput { node, input } => {
+        crate::runtime::types::GraphValidationError::MissingRequiredInput { node, input } => {
             assert_eq!(node, "gt1");
             assert_eq!(input, "a");
         }
@@ -1117,7 +1117,7 @@ fn validate_returns_error_when_edge_references_unknown_node() {
     assert_eq!(err.rule_id(), "D.2");
     assert_eq!(err.path().as_deref(), Some("$.nodes"));
     match err {
-        ValidationError::UnknownNode(node) => assert_eq!(node, "missing"),
+        GraphValidationError::UnknownNode(node) => assert_eq!(node, "missing"),
         other => panic!("expected UnknownNode, got {:?}", other),
     }
 }
@@ -1161,7 +1161,7 @@ fn validate_rejects_invalid_boundary_output_port() {
     assert_eq!(err.rule_id(), "D.2");
     assert_eq!(err.path().as_deref(), Some("$.nodes"));
     match err {
-        ValidationError::MissingOutputMetadata { node, output } => {
+        GraphValidationError::MissingOutputMetadata { node, output } => {
             assert_eq!(node, "src1");
             assert_eq!(output, "does_not_exist");
         }
@@ -1243,7 +1243,7 @@ fn validate_rejects_cycle_detected() {
     let err = crate::runtime::validate(&expanded, &catalog).unwrap_err();
     assert_eq!(err.rule_id(), "V.1");
     assert_eq!(err.path().as_deref(), Some("$.edges"));
-    assert!(matches!(err, ValidationError::CycleDetected));
+    assert!(matches!(err, GraphValidationError::CycleDetected));
 }
 
 #[test]
@@ -1324,7 +1324,7 @@ fn validate_rejects_source_event_edge_to_action() {
     let err = crate::runtime::validate(&expanded, &catalog).unwrap_err();
     assert_eq!(err.rule_id(), "V.2");
     assert_eq!(err.path().as_deref(), Some("$.edges"));
-    assert!(matches!(err, ValidationError::InvalidEdgeKind { .. }));
+    assert!(matches!(err, GraphValidationError::InvalidEdgeKind { .. }));
 }
 
 #[test]
@@ -1782,7 +1782,7 @@ fn validate_rejects_compute_event_edge_to_action_event_input() {
 
     let err = crate::runtime::validate(&expanded, &catalog).unwrap_err();
     assert_eq!(err.rule_id(), "V.2");
-    assert!(matches!(err, ValidationError::InvalidEdgeKind { .. }));
+    assert!(matches!(err, GraphValidationError::InvalidEdgeKind { .. }));
 }
 
 #[test]
@@ -1845,7 +1845,7 @@ fn validate_rejects_action_with_scalar_payload_edge_but_no_trigger_gate() {
 
     let err = crate::runtime::validate(&expanded, &catalog).unwrap_err();
     assert_eq!(err.rule_id(), "V.5");
-    assert!(matches!(err, ValidationError::ActionNotGated(node) if node == "act"));
+    assert!(matches!(err, GraphValidationError::ActionNotGated(node) if node == "act"));
 }
 
 #[test]
@@ -1893,7 +1893,7 @@ fn validate_rejects_external_input_endpoint() {
     assert_eq!(err.path().as_deref(), Some("$.edges"));
     assert!(matches!(
         err,
-        ValidationError::ExternalInputNotAllowed { .. }
+        GraphValidationError::ExternalInputNotAllowed { .. }
     ));
 }
 
@@ -1928,7 +1928,7 @@ fn validate_rejects_missing_primitive_metadata() {
     assert_eq!(err.path().as_deref(), Some("$.nodes"));
     assert!(matches!(
         err,
-        ValidationError::MissingPrimitive { id, version }
+        GraphValidationError::MissingPrimitive { id, version }
             if id == "missing_compute" && version == "0.1.0"
     ));
 }
@@ -1983,7 +1983,7 @@ fn act_12_action_not_gated_rejected() {
     assert_eq!(err.rule_id(), "V.5");
     assert_eq!(err.path().as_deref(), Some("$.edges"));
     match err {
-        ValidationError::ActionNotGated(node) => assert_eq!(node, "act"),
+        GraphValidationError::ActionNotGated(node) => assert_eq!(node, "act"),
         other => panic!("expected ActionNotGated, got {:?}", other),
     }
 }
@@ -2050,7 +2050,7 @@ fn comp_4_source_output_type_mismatch_rejected() {
     assert_eq!(err.rule_id(), "V.4");
     assert_eq!(err.path().as_deref(), Some("$.edges"));
     match err {
-        ValidationError::TypeMismatch { expected, got, .. } => {
+        GraphValidationError::TypeMismatch { expected, got, .. } => {
             assert_eq!(expected, ValueType::Number);
             assert_eq!(got, ValueType::Bool);
         }
@@ -2422,7 +2422,7 @@ fn validate_rejects_multiple_edges_to_same_input() {
     assert_eq!(err.rule_id(), "V.7");
     assert_eq!(err.path().as_deref(), Some("$.edges"));
     match err {
-        ValidationError::MultipleInboundEdges { node, input } => {
+        GraphValidationError::MultipleInboundEdges { node, input } => {
             assert_eq!(node, "add1");
             assert_eq!(input, "a");
         }

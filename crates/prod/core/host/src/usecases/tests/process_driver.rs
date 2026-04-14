@@ -68,7 +68,9 @@ fn process_driver_executes_via_canonical_host_path() -> Result<(), Box<dyn std::
             serde_json::to_string(
                 &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
             )?,
-            serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?,
+            serde_json::to_string(
+                &json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}),
+            )?,
             serde_json::to_string(&json!({"type":"end"}))?,
         ],
     )?;
@@ -130,7 +132,9 @@ fn process_driver_assets_lane_matches_path_lane_summary_and_capture_shape(
             serde_json::to_string(
                 &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
             )?,
-            serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?,
+            serde_json::to_string(
+                &json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}),
+            )?,
             serde_json::to_string(&json!({"type":"end"}))?,
         ],
     )?;
@@ -493,7 +497,9 @@ fn process_driver_signal_race_after_stop_still_returns_host_stop_requested(
     let emitted_path = temp_dir.join("driver.emitted");
     let hello =
         serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
-    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?;
+    let event = serde_json::to_string(
+        &json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}),
+    )?;
     let driver = write_process_driver_program(
         &temp_dir,
         "driver.sh",
@@ -736,7 +742,9 @@ fn process_driver_protocol_violation_after_start_returns_interrupted_and_replaya
             serde_json::to_string(
                 &json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}),
             )?,
-            serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?,
+            serde_json::to_string(
+                &json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}),
+            )?,
             "{not-json".to_string(),
         ],
     )?;
@@ -804,7 +812,9 @@ fn process_driver_malformed_bytes_after_start_return_interrupted_and_replayable_
     )?;
     let hello =
         serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
-    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?;
+    let event = serde_json::to_string(
+        &json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}),
+    )?;
     let driver = write_process_driver_program(
         &temp_dir,
         "driver.sh",
@@ -871,7 +881,9 @@ fn process_driver_non_zero_exit_after_end_returns_interrupted(
     )?;
     let hello =
         serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
-    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?;
+    let event = serde_json::to_string(
+        &json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}),
+    )?;
     let end = serde_json::to_string(&json!({"type":"end"}))?;
     let driver = write_process_driver_program(
         &temp_dir,
@@ -929,7 +941,9 @@ fn process_driver_delayed_clean_exit_within_grace_returns_completed(
     )?;
     let hello =
         serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
-    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?;
+    let event = serde_json::to_string(
+        &json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}),
+    )?;
     let end = serde_json::to_string(&json!({"type":"end"}))?;
     let driver = write_process_driver_program(
         &temp_dir,
@@ -985,7 +999,9 @@ fn process_driver_extra_output_after_end_returns_protocol_violation(
     )?;
     let hello =
         serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
-    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?;
+    let event = serde_json::to_string(
+        &json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}),
+    )?;
     let end = serde_json::to_string(&json!({"type":"end"}))?;
     let driver = write_process_driver_program(
         &temp_dir,
@@ -1043,7 +1059,9 @@ fn process_driver_hang_after_end_is_bounded_and_interrupted(
     )?;
     let hello =
         serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
-    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?;
+    let event = serde_json::to_string(
+        &json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}),
+    )?;
     let end = serde_json::to_string(&json!({"type":"end"}))?;
     let driver = write_process_driver_program(
         &temp_dir,
@@ -1104,7 +1122,9 @@ fn process_driver_stdout_eof_before_exit_is_bounded_and_interrupted(
     )?;
     let hello =
         serde_json::to_string(&json!({"type":"hello","protocol":PROCESS_DRIVER_PROTOCOL_VERSION}))?;
-    let event = serde_json::to_string(&json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}))?;
+    let event = serde_json::to_string(
+        &json!({"type":"event","event":hosted_event_with_semantic_kind("evt1")}),
+    )?;
     let driver = write_process_driver_program(
         &temp_dir,
         "driver.sh",

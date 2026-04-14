@@ -29,6 +29,12 @@ pub struct IntentRecord {
 pub struct ActionEffect {
     pub kind: String,
     pub writes: Vec<EffectWrite>,
+    /// Optional intent records attached to this effect.
+    ///
+    /// `#[serde(default)]` is intentional: captures created before
+    /// intent support was added will not have this field.  Deserializing
+    /// those captures must produce an empty vec rather than a parse error
+    /// to maintain backward compatibility with existing capture bundles.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub intents: Vec<IntentRecord>,
 }

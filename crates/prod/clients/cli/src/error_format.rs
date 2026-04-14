@@ -1,25 +1,21 @@
-//! error_format
+//! error_format.rs — CLI error rendering
 //!
 //! Purpose:
-//! - Define the small CLI-owned error rendering primitive used to shape
-//!   human-readable and JSON diagnostics at the command boundary.
+//! - Renders host and loader errors into structured CLI output with
+//!   rule IDs, fix suggestions, and consistent formatting.
 //!
 //! Owns:
-//! - The `CliErrorInfo` transport shape and the canonical text/JSON rendering
-//!   used by CLI command handlers.
+//! - `CliErrorInfo` structure and `render_cli_error` function
+//! - JSON error rendering for structured output (test-only)
 //!
 //! Does not own:
-//! - Command-specific error-code policy; individual CLI modules choose codes,
-//!   messages, and fixes before calling these helpers.
-//!
-//! Connects to:
-//! - CLI command modules and output renderers that need stable end-user error
-//!   formatting.
-//!
+//! - Command-specific error-code policy; individual CLI modules choose
+//!   codes, messages, and fixes before calling these helpers.
 //! Safety notes:
 //! - `CliErrorInfo` stores owned strings so command modules can pass typed
 //!   errors at the final boundary without retaining borrowed state.
 
+#[cfg(test)]
 use serde_json::{json, Value as JsonValue};
 
 #[derive(Debug, Clone)]
@@ -87,7 +83,7 @@ pub fn render_cli_error(info: &CliErrorInfo) -> String {
     lines.join("\n")
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn render_cli_error_json(info: &CliErrorInfo) -> JsonValue {
     json!({
         "code": info.code,

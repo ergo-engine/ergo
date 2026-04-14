@@ -1519,12 +1519,7 @@ fn validate_project_in_memory_preserves_adapter_required_preflight(
     )
     .expect("in-memory process profile should validate");
     // Note: no `.adapter(...)` call — intentionally omitted.
-    let snapshot = in_memory_project(
-        "memory-project",
-        "0.1.0",
-        "live",
-        profile,
-    );
+    let snapshot = in_memory_project("memory-project", "0.1.0", "live", profile);
 
     let err = Ergo::builder()
         .in_memory_project(snapshot)

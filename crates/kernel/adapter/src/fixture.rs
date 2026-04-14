@@ -193,16 +193,7 @@ pub fn fixture_output_path(path: &Path) -> PathBuf {
     PathBuf::from("target").join(format!("{stem}-capture.json"))
 }
 
-fn json_type_name(value: &serde_json::Value) -> &'static str {
-    match value {
-        serde_json::Value::Null => "null",
-        serde_json::Value::Bool(_) => "boolean",
-        serde_json::Value::Number(_) => "number",
-        serde_json::Value::String(_) => "string",
-        serde_json::Value::Array(_) => "array",
-        serde_json::Value::Object(_) => "object",
-    }
-}
+use crate::common::json_type_name;
 
 #[cfg(test)]
 mod tests {

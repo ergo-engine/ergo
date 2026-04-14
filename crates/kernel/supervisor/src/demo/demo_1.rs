@@ -1,3 +1,15 @@
+//! demo_1.rs — Demo graph fixture for integration testing
+//!
+//! Purpose:
+//! - Provides a canonical 2-source, 2-compute, 2-trigger, 2-action
+//!   demo graph used by integration tests and the fixture runner.
+//! - Includes `summarize_report` and `compute_summary` helpers for
+//!   asserting execution results.
+//!
+//! Owns:
+//! - Demo graph structure and registration
+//! - Demo-specific summary types (`Demo1Summary`)
+
 use std::collections::HashMap;
 
 use ergo_adapter::EventId;
@@ -440,27 +452,39 @@ pub fn build_demo_1_graph() -> ExpandedGraph {
     }
 }
 
-fn number_output(report: &ExecutionReport, name: &str) -> f64 {
+fn number_output(report: &ExecutionReport, name: &str) -> Result<f64, String> {
     match report.outputs.get(name) {
-        Some(RuntimeValue::Number(value)) => *value,
-        other => panic!("expected numeric output '{}', got {:?}", name, other),
+        Some(RuntimeValue::Number(value)) => Ok(*value),
+        other => Err(format!(
+            "expected numeric output '{}', got {:?}",
+            name, other
+        )),
     }
 }
 
-fn action_output(report: &ExecutionReport, name: &str) -> ActionOutcome {
+fn action_output(report: &ExecutionReport, name: &str) -> Result<ActionOutcome, String> {
     match report.outputs.get(name) {
-        Some(RuntimeValue::Event(RuntimeEvent::Action(outcome))) => outcome.clone(),
-        other => panic!("expected action output '{}', got {:?}", name, other),
+        Some(RuntimeValue::Event(RuntimeEvent::Action(outcome))) => Ok(outcome.clone()),
+        other => Err(format!(
+            "expected action output '{}', got {:?}",
+            name, other
+        )),
     }
 }
 
+pub fn try_summarize_report(report: &ExecutionReport) -> Result<Demo1Summary, String> {
+    Ok(Demo1Summary {
+        sum_left: number_output(report, "sum_left")?,
+        sum_total: number_output(report, "sum_total")?,
+        action_a_outcome: action_output(report, "action_a_outcome")?,
+        action_b_outcome: action_output(report, "action_b_outcome")?,
+    })
+}
+
+/// Convenience wrapper — panics on unexpected report shape.
+/// Preserves the original public API for demo/test callers.
 pub fn summarize_report(report: &ExecutionReport) -> Demo1Summary {
-    Demo1Summary {
-        sum_left: number_output(report, "sum_left"),
-        sum_total: number_output(report, "sum_total"),
-        action_a_outcome: action_output(report, "action_a_outcome"),
-        action_b_outcome: action_output(report, "action_b_outcome"),
-    }
+    try_summarize_report(report).expect("demo report should contain expected outputs")
 }
 
 pub fn summary_for_context_value(context_value: Option<f64>) -> Demo1Summary {
@@ -490,11 +514,11 @@ pub fn summary_for_context_value(context_value: Option<f64>) -> Demo1Summary {
     }
 }
 
-pub fn compute_summary(
+pub fn try_compute_summary(
     graph: &ExpandedGraph,
     catalog: &CorePrimitiveCatalog,
     registries: &CoreRegistries,
-) -> Demo1Summary {
+) -> Result<Demo1Summary, String> {
     let runtime_registries = Registries {
         sources: &registries.sources,
         computes: &registries.computes,
@@ -507,8 +531,19 @@ pub fn compute_summary(
         &runtime_registries,
         &ExecutionContext::default(),
     )
-    .expect("demo graph should execute");
-    summarize_report(&report)
+    .map_err(|e| format!("demo graph execution failed: {:?}", e))?;
+    try_summarize_report(&report)
+}
+
+/// Convenience wrapper — panics on execution or report errors.
+/// Preserves the original public API for demo/test callers.
+pub fn compute_summary(
+    graph: &ExpandedGraph,
+    catalog: &CorePrimitiveCatalog,
+    registries: &CoreRegistries,
+) -> Demo1Summary {
+    try_compute_summary(graph, catalog, registries)
+        .expect("demo graph should execute and summarize successfully")
 }
 
 pub fn format_episode_summary(

@@ -33,7 +33,7 @@ Change Rule: Operational log
 
 - Validation phase is well-covered by existing executor tests.
 - **V.5:** Validation confirms structural wiring (Action has Trigger input). Runtime enforcement (R.7) additionally gates execution on `TriggerEvent::Emitted`. Both validation and runtime enforcement are now complete.
-- **V.7:** ✅ **CLOSED.** Enforced in `runtime/validate.rs::enforce_single_edge_per_input()`. Returns `ValidationError::MultipleInboundEdges { node, input }` when multiple edges target same input port. Test: `validate_rejects_multiple_edges_to_same_input`.
+- **V.7:** ✅ **CLOSED.** Enforced in `runtime/validate.rs::enforce_single_edge_per_input()`. Returns `GraphValidationError::MultipleInboundEdges { node, input }` when multiple edges target same input port. Test: `validate_rejects_multiple_edges_to_same_input`.
   - **Prior behavior:** `execute.rs` used `HashMap::insert` for input collection; multiple edges to same input caused silent last-write-wins data loss.
   - **Rationale:** Silent data loss is truth-destroying. Aggregation semantics (Cardinality::Multiple) remain schema-placeholder only; if ever needed, require explicit v1 decision.
-- **V.8:** Enforced at validation entry in `runtime/validate.rs`: each expanded node must resolve through `PrimitiveCatalog::get`, else `ValidationError::MissingPrimitive { id, version }`. Test: `validate_rejects_missing_primitive_metadata`.
+- **V.8:** Enforced at validation entry in `runtime/validate.rs`: each expanded node must resolve through `PrimitiveCatalog::get`, else `GraphValidationError::MissingPrimitive { id, version }`. Test: `validate_rejects_missing_primitive_metadata`.

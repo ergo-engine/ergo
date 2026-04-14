@@ -1,3 +1,12 @@
+//! errors.rs — Adapter error types
+//!
+//! Purpose:
+//! - Defines error types for adapter manifest validation, event
+//!   binding, fixture construction, and composition failures.
+//!
+//! Owns:
+//! - `InvalidAdapter`, `InvalidAdapterComposition`, `InvalidBinding`
+
 use std::borrow::Cow;
 use std::fmt;
 

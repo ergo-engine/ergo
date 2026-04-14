@@ -30,13 +30,13 @@ Legend:
 
 ---
 
-### R.7 — TriggerEvent mapping is explicit; NotEmitted is unreachable post-gating
+### R.7 — TriggerEvent mapping is explicit; NotEmitted returns typed error post-gating
 
 - **ID:** R.7-MAP
 - **Rule:** Only `TriggerEvent::Emitted` maps to `ActionOutcome::Attempted`; `NotEmitted` must be caught by `should_skip_action()`.
 - **Disposition:** CLOSE
 - **Enforcement locus:** execute-time mapping in `crates/kernel/runtime/src/runtime/execute.rs`
-- **Error:** `unreachable!("R.7 violation...")` (assertion of invariant)
+- **Error:** `ExecError::ActionSkipViolation { node, port }` (typed error, deterministic, no panic)
 - **Test:** existing `r7_action_skipped_when_trigger_not_emitted` (+ relies on should_skip_action)
 - **PR/Commit:** <fill>
 
@@ -48,7 +48,7 @@ Legend:
 - **Rule:** No input port may receive more than one inbound edge. Merges must be explicit via combiner nodes.
 - **Disposition:** REJECT
 - **Enforcement locus:** validation in `crates/kernel/runtime/src/runtime/validate.rs` (`enforce_single_edge_per_input`)
-- **Error:** `ValidationError::MultipleInboundEdges { node, input }`
+- **Error:** `GraphValidationError::MultipleInboundEdges { node, input }`
 - **Test:** `validate_rejects_multiple_edges_to_same_input`
 - **PR/Commit:** <fill>
 
@@ -60,7 +60,7 @@ Legend:
 - **Rule:** Malformed graphs must not panic; validation/execution return typed errors.
 - **Disposition:** CLOSE
 - **Enforcement locus:** `crates/kernel/runtime/src/runtime/validate.rs`, `crates/kernel/runtime/src/runtime/execute.rs`
-- **Error:** `ValidationError::UnknownNode`, `ValidationError::MissingOutputMetadata`, `ExecError::MissingNode` (etc.)
+- **Error:** `GraphValidationError::UnknownNode`, `GraphValidationError::MissingOutputMetadata`, `ExecError::MissingNode` (etc.)
 - **Tests:** malformed-graph regression tests added (unknown edge node, invalid boundary output, missing node in topo)
 - **PR/Commit:** <fill>
 
@@ -330,7 +330,7 @@ Legend:
   - `crates/kernel/runtime/src/action/mod.rs`
   - `crates/kernel/runtime/src/common/errors.rs`
   - `crates/kernel/runtime/src/cluster.rs`
-  - `crates/kernel/runtime/src/runtime/types.rs` (`ValidationError`, `ExecError`)
+  - `crates/kernel/runtime/src/runtime/types.rs` (`GraphValidationError`, `ExecError`)
 - **Required treatment per variant:** assign real rule ID when governed; keep explicit `INTERNAL` arm only for documented defense-in-depth variants; remove dead/phase-impure variants per approved disposition.
 - **Test evidence:** compile-time exhaustiveness after wildcard removal + targeted regression tests for reassigned/live variants.
 - **PR/Commit:** working tree (uncommitted)

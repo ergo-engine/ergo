@@ -287,14 +287,14 @@ pub fn describe_replay_error(err: &ergo_supervisor::replay::ReplayError) -> Host
                 info = info.with_detail(format!(
                     "expected: {}",
                     serde_json::to_string(&exp.effect)
-                        .unwrap_or_else(|_| "<unserializable>".to_string())
+                        .unwrap_or_else(|e| { format!("<serialization failed: {}>", e) })
                 ));
             }
             if let Some(act) = actual {
                 info = info.with_detail(format!(
                     "actual: {}",
                     serde_json::to_string(&act.effect)
-                        .unwrap_or_else(|_| "<unserializable>".to_string())
+                        .unwrap_or_else(|e| { format!("<serialization failed: {}>", e) })
                 ));
             }
 

@@ -1,3 +1,14 @@
+//! manifest.rs — Adapter manifest types
+//!
+//! Purpose:
+//! - Defines the `AdapterManifest` and related structures that
+//!   represent a validated adapter contract: context keys, event
+//!   kinds, action accepts, and effect schemas.
+//!
+//! Owns:
+//! - Canonical serde shapes for adapter YAML parsing
+//! - `NO_ADAPTER_PROVENANCE` sentinel for fixture sessions
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

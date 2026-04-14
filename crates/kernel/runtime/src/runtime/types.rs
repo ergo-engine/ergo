@@ -55,8 +55,12 @@ pub struct ValidatedGraph {
     pub boundary_outputs: Vec<crate::cluster::OutputPortSpec>,
 }
 
+/// Backward-compatible alias — external crates may reference
+/// `ValidationError` from before the rename to `GraphValidationError`.
+pub type ValidationError = GraphValidationError;
+
 #[derive(Debug)]
-pub enum ValidationError {
+pub enum GraphValidationError {
     CycleDetected,
     UnknownNode(String),
     MissingPrimitive {
@@ -99,7 +103,7 @@ pub enum ValidationError {
     },
 }
 
-impl ErrorInfo for ValidationError {
+impl ErrorInfo for GraphValidationError {
     fn rule_id(&self) -> &'static str {
         match self {
             Self::CycleDetected => "V.1",
@@ -267,6 +271,13 @@ pub enum ExecError {
     IntentMetadataRequired {
         node: String,
     },
+    /// R.7: NotEmitted trigger reached an Action that should_skip_action
+    /// should have caught.  This indicates a kernel scheduling invariant
+    /// violation.
+    ActionSkipViolation {
+        node: String,
+        port: String,
+    },
 }
 
 impl ErrorInfo for ExecError {
@@ -283,6 +294,7 @@ impl ErrorInfo for ExecError {
             Self::UnknownPrimitive { .. } => "INTERNAL",
             Self::MissingNode { .. } => "INTERNAL",
             Self::IntentMetadataRequired { .. } => "GW-EFX-META-1",
+            Self::ActionSkipViolation { .. } => "R.7",
         }
     }
 
@@ -347,6 +359,10 @@ impl ErrorInfo for ExecError {
             Self::IntentMetadataRequired { node } => Cow::Owned(format!(
                 "Action node '{}' declares intents; execute_with_metadata must be used",
                 node
+            )),
+            Self::ActionSkipViolation { node, port } => Cow::Owned(format!(
+                "NotEmitted trigger reached action value conversion at '{}.{}' — should_skip_action must catch this before execution (R.7)",
+                node, port
             )),
         }
     }
@@ -456,13 +472,13 @@ impl ValidatedNode {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExecError, ValidationError};
+    use super::{ExecError, GraphValidationError};
     use crate::cluster::PrimitiveKind;
     use crate::common::ErrorInfo;
 
     #[test]
     fn v8_missing_primitive_maps_to_v8() {
-        let err = ValidationError::MissingPrimitive {
+        let err = GraphValidationError::MissingPrimitive {
             id: "missing".to_string(),
             version: "0.1.0".to_string(),
         };
@@ -528,7 +544,7 @@ mod tests {
 
     #[test]
     fn validation_known_rules_unchanged() {
-        let err = ValidationError::InvalidEdgeKind {
+        let err = GraphValidationError::InvalidEdgeKind {
             from: PrimitiveKind::Source,
             to: PrimitiveKind::Action,
         };

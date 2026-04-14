@@ -1369,7 +1369,6 @@ fn validate_graph_adapter_text_parse_error_mentions_source_label(
     Ok(())
 }
 
-
 // --- Production closure gate tests ---
 
 #[test]

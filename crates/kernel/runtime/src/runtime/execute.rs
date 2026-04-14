@@ -1,3 +1,35 @@
+//! runtime/execute.rs — Kernel graph execution engine
+//!
+//! Purpose:
+//! - Executes a validated expanded graph against registered primitive
+//!   implementations (sources, computes, triggers, actions) within a
+//!   supplied `ExecutionContext`.
+//!
+//! Owns:
+//! - Topological execution ordering of nodes
+//! - Value propagation along wired edges
+//! - Type conversion between runtime value domains (trigger ↔ action)
+//! - Context key injection for source nodes
+//! - Parameter binding for compute and trigger nodes
+//! - Action skip/invoke gating (R.7)
+//! - Non-finite numeric output rejection (NUM-FINITE-1)
+//!
+//! Does not own:
+//! - Graph validation (see `validate.rs`)
+//! - Primitive registration or catalog ownership (see `catalog.rs`)
+//! - Episode lifecycle or replay (see `ergo-supervisor`)
+//!
+//! Connects to:
+//! - `validate.rs` — receives `ValidatedGraph` after validation
+//! - `types.rs` — uses `ExecError`, `ExecutionReport`, `Registries`
+//! - `catalog.rs` — queries primitive metadata for parameter binding
+//!
+//! Safety notes:
+//! - All execution paths must remain deterministic for replay integrity
+//! - R.7: NotEmitted triggers must be caught by should_skip_action
+//!   before reaching action value conversion; violation returns
+//!   `ExecError::ActionSkipViolation` instead of panicking
+
 use std::collections::HashMap;
 
 use crate::action::{ActionOutcome, ActionValue};
@@ -637,11 +669,7 @@ fn map_action_value(v: ActionValue) -> RuntimeValue {
     }
 }
 
-fn map_to_action_value(
-    v: &RuntimeValue,
-    _node: &str,
-    _port: &str,
-) -> Result<ActionValue, ExecError> {
+fn map_to_action_value(v: &RuntimeValue, node: &str, port: &str) -> Result<ActionValue, ExecError> {
     Ok(match v {
         RuntimeValue::Event(RuntimeEvent::Action(e)) => ActionValue::Event(e.clone()),
         RuntimeValue::Event(RuntimeEvent::Trigger(TriggerEvent::Emitted)) => {
@@ -649,7 +677,11 @@ fn map_to_action_value(
         }
         RuntimeValue::Event(RuntimeEvent::Trigger(TriggerEvent::NotEmitted)) => {
             // R.7: should_skip_action() must catch NotEmitted before this point.
-            unreachable!("R.7 violation: NotEmitted must be caught by should_skip_action")
+            // Return an error instead of panicking to maintain kernel determinism.
+            return Err(ExecError::ActionSkipViolation {
+                node: node.to_string(),
+                port: port.to_string(),
+            });
         }
         RuntimeValue::Number(n) => ActionValue::Number(*n),
         RuntimeValue::Series(s) => ActionValue::Series(s.clone()),

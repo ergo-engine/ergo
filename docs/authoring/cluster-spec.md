@@ -376,8 +376,8 @@ the phase invariants in `docs/invariants/INDEX.md`.
 | ID | Rule | Enforcement Locus | Error Type / Notes |
 |----|------|-------------------|--------------------|
 | D.1 | Cluster contains ≥1 node | `cluster.rs::expand_with_context` | `ExpandError::EmptyCluster` |
-| D.2 | Edges reference existing nodes/ports | `runtime/validate.rs` (post-expansion) | `ValidationError::UnknownNode` / `MissingInputMetadata` / `MissingOutputMetadata` |
-| D.3 | Edges satisfy wiring matrix | `runtime/validate.rs::enforce_wiring_matrix` | `ValidationError::InvalidEdgeKind` |
+| D.2 | Edges reference existing nodes/ports | `runtime/validate.rs` (post-expansion) | `GraphValidationError::UnknownNode` / `MissingInputMetadata` / `MissingOutputMetadata` |
+| D.3 | Edges satisfy wiring matrix | `runtime/validate.rs::enforce_wiring_matrix` | `GraphValidationError::InvalidEdgeKind` |
 | D.4 | Output ports reference valid internal node outputs | `cluster.rs::map_boundary_outputs` + `infer_signature` | `ExpandError::UnmappedBoundaryOutput` / `ExpandError::SignatureInferenceFailed` |
 | D.5 | Input port names unique | `cluster.rs::validate_cluster_definition` | `ExpandError::DuplicateInputPort` |
 | D.6 | Output port names unique | `cluster.rs::validate_cluster_definition` | `ExpandError::DuplicateOutputPort` |
@@ -391,8 +391,8 @@ the phase invariants in `docs/invariants/INDEX.md`.
 
 | ID | Rule | Enforcement Locus | Error Type / Notes |
 |----|------|-------------------|--------------------|
-| I.1 | Wiring from parent edge source to cluster kind is legal | `runtime/validate.rs::enforce_wiring_matrix` | `ValidationError::InvalidEdgeKind` |
-| I.2 | Port types match at connection points | `runtime/validate.rs::enforce_types` | `ValidationError::TypeMismatch` |
+| I.1 | Wiring from parent edge source to cluster kind is legal | `runtime/validate.rs::enforce_wiring_matrix` | `GraphValidationError::InvalidEdgeKind` |
+| I.2 | Port types match at connection points | `runtime/validate.rs::enforce_types` | `GraphValidationError::TypeMismatch` |
 | I.3 | Required parameters bound or exposed | `cluster.rs::validate_parameter_bindings` / `build_resolved_params` | `ExpandError::MissingRequiredParameter` / `UnresolvedExposedBinding` |
 | I.4 | Bound parameter values type-compatible | `cluster.rs::validate_parameter_bindings` | `ExpandError::ParameterBindingTypeMismatch` / `ExposedParameterTypeMismatch` |
 | I.5 | Exposed parameters exist in parent | `cluster.rs::validate_parameter_bindings` | `ExpandError::ExposedParameterNotFound` |
@@ -405,7 +405,7 @@ the phase invariants in `docs/invariants/INDEX.md`.
 |----|------|-------------------|--------------------|
 | E.1 | Output contains only primitives | Type (`ExpandedNode` uses `ImplementationInstance`) | No runtime error |
 | E.2 | Placeholder edges rewritten to node-to-node edges | `cluster.rs::redirect_placeholder_edges` | Verified by tests; no error type |
-| E.3 | `ExternalInput` not an edge sink | `cluster.rs::expand` debug assertion | Assertion only |
+| E.3 | `ExternalInput` not an edge sink | Enforced during expansion in `cluster.rs`; returns `ExpandError::InvariantViolation` if an `ExternalInput` survives as an edge sink | `ExpandError::InvariantViolation` |
 | E.4 | Authoring path preserved | `cluster.rs::expand_with_context` | Verified by tests; no error type |
 | E.5 | Empty clusters rejected | `cluster.rs::expand_with_context` | `ExpandError::EmptyCluster` |
 | E.6 | Definitions not mutated | Clone semantics | No runtime error |
@@ -440,14 +440,14 @@ Behavior:
 
 | ID | Rule | Enforcement Locus | Error Type / Notes |
 |----|------|-------------------|--------------------|
-| V.1 | No cycles in graph | `runtime/validate.rs::topological_sort` | `ValidationError::CycleDetected` |
-| V.2 | Edges satisfy wiring matrix (including Action gate/payload input refinement) | `runtime/validate.rs::enforce_wiring_matrix` | `ValidationError::InvalidEdgeKind` |
-| V.3 | Required inputs connected | `runtime/validate.rs::enforce_required_inputs` | `ValidationError::MissingRequiredInput` |
-| V.4 | Type constraints satisfied at edges | `runtime/validate.rs::enforce_types` | `ValidationError::TypeMismatch` |
-| V.5 | Actions gated by triggers | `runtime/validate.rs::enforce_action_gating` | `ValidationError::ActionNotGated` |
+| V.1 | No cycles in graph | `runtime/validate.rs::topological_sort` | `GraphValidationError::CycleDetected` |
+| V.2 | Edges satisfy wiring matrix (including Action gate/payload input refinement) | `runtime/validate.rs::enforce_wiring_matrix` | `GraphValidationError::InvalidEdgeKind` |
+| V.3 | Required inputs connected | `runtime/validate.rs::enforce_required_inputs` | `GraphValidationError::MissingRequiredInput` |
+| V.4 | Type constraints satisfied at edges | `runtime/validate.rs::enforce_types` | `GraphValidationError::TypeMismatch` |
+| V.5 | Actions gated by triggers | `runtime/validate.rs::enforce_action_gating` | `GraphValidationError::ActionNotGated` |
 | V.6 | All nodes pass validation before any action executes | `runtime::validate()` before `execute()` | Structural; no dedicated error |
-| V.7 | Each input has ≤1 inbound edge | `runtime/validate.rs::enforce_single_edge_per_input` | `ValidationError::MultipleInboundEdges` |
-| V.8 | Referenced primitive implementations exist in catalog | `runtime/validate.rs::validate` (catalog lookup per node) | `ValidationError::MissingPrimitive` |
+| V.7 | Each input has ≤1 inbound edge | `runtime/validate.rs::enforce_single_edge_per_input` | `GraphValidationError::MultipleInboundEdges` |
+| V.8 | Referenced primitive implementations exist in catalog | `runtime/validate.rs::validate` (catalog lookup per node) | `GraphValidationError::MissingPrimitive` |
 
 ---
 
