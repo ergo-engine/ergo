@@ -1,28 +1,27 @@
 //! usecases shared
 //!
 //! Purpose:
-//! - Hold the private import/prelude authority for the host `usecases`
-//!   submodules and shared internal support types.
+//! - Shared external-crate and standard-library import prelude for the host
+//!   `usecases` submodules (`live_prep`, `live_run`, and the `usecases.rs`
+//!   facade).
 //!
 //! Owns:
-//! - The internal `use` surface consumed by `live_prep`, `live_run`,
-//!   `process_driver`, and the `usecases.rs` facade implementation.
+//! - The `pub(super)` re-export surface consumed via `use super::shared::*`
+//!   in sibling modules. Items here are external-crate types, std types, and
+//!   crate-internal re-exports that multiple siblings need.
 //!
 //! Does not own:
-//! - Public host API types or canonical orchestration entrypoints; those remain
-//!   in `usecases.rs`.
-//!
-//! Connects to:
-//! - `usecases.rs` as the parent facade implementation.
-//! - `live_prep.rs`, `live_run.rs`, and `process_driver.rs` as the private
-//!   execution submodules.
+//! - Public host API types (owned by `usecases.rs`).
+//! - Sibling-module types (imported explicitly between siblings).
+//! - Process-driver-only types (`process_driver.rs` imports directly).
 //!
 //! Safety notes:
-//! - This module exists specifically so the public facade is no longer the
-//!   de facto import authority for every child module.
-//! - Keep imports here narrowly aligned with real submodule needs; do not turn
-//!   this into a second semantic authority.
+//! - `process_driver.rs` imports all its dependencies explicitly and does NOT
+//!   use this prelude. Only `live_prep.rs` and `live_run.rs` consume it.
+//! - Keep imports here narrowly aligned with real multi-consumer needs; do not
+//!   add items used by only one sibling.
 
+// --- External crate types ---
 pub(super) use ergo_adapter::{
     adapter_fingerprint,
     fixture::{self, FixtureParseError},
@@ -50,21 +49,19 @@ pub(super) use ergo_supervisor::{
     write_capture_bundle, CaptureBundle, CaptureJsonStyle, CaptureWriteError, Constraints,
     NO_ADAPTER_PROVENANCE,
 };
-pub(super) use serde::{Deserialize, Serialize};
+
+// --- Standard library ---
 pub(super) use std::collections::{BTreeSet, HashMap, HashSet};
 pub(super) use std::fs;
-pub(super) use std::io::{BufRead, BufReader, Read};
 pub(super) use std::path::{Path, PathBuf};
-pub(super) use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
 pub(super) use std::sync::atomic::{AtomicBool, Ordering};
-pub(super) use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 pub(super) use std::sync::Arc;
-pub(super) use std::thread::{self, JoinHandle};
 pub(super) use std::time::{Duration, Instant};
 
+// --- Crate-internal re-exports ---
 pub(super) use crate::egress::compute_egress_provenance;
 pub(super) use crate::{
     decision_counts, replay_bundle_strict, runner::validate_hosted_runner_configuration,
     EgressConfig, EgressDispatchFailure, HostedAdapterConfig, HostedEvent, HostedReplayError,
-    HostedRunner, HostedStepError, PROCESS_DRIVER_PROTOCOL_VERSION,
+    HostedRunner, HostedStepError,
 };

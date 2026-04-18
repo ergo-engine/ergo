@@ -39,10 +39,28 @@
 //!   instead of collapsing back into the old `HostRunError` string variants.
 //! - On Unix, abort kills the host-managed process group configured during
 //!   spawn, not just the direct child.
+//! - The process driver step loop and the fixture driver step loop in
+//!   `live_run.rs` share the same commit/interrupt outcome routing but are
+//!   structurally different ingress protocols. See `live_run.rs` header for
+//!   the design rationale on keeping them separate.
 
-use super::*;
-
+use super::live_run::{DriverExecution, DriverTerminal, RunLifecycleState};
+use super::{
+    interruption_from_egress_dispatch_failure, HostDriverError, HostDriverInputError,
+    HostDriverIoError, HostDriverOutputError, HostDriverProtocolError, HostDriverStartError,
+    HostRunError, InterruptionReason,
+};
+use crate::{HostedEvent, HostedRunner, PROCESS_DRIVER_PROTOCOL_VERSION};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::io::{BufRead, BufReader, Read};
 use std::ops::ControlFlow;
+use std::path::Path;
+use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
+
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
@@ -113,6 +131,10 @@ enum ProcessDriverCommitPhase {
     AfterFirstCommittedStep,
 }
 
+/// Synthetic episode label for `ergo-driver.v0`, which has no episode-boundary
+/// frame. All events are attributed to a single episode with this label.
+const V0_SINGLE_EPISODE_LABEL: &str = "E1";
+
 #[derive(Debug)]
 enum ProcessDriverEpisodeLedger {
     V0SingleEpisode { event_count: usize },
@@ -132,7 +154,9 @@ impl ProcessDriverEpisodeLedger {
     fn into_episode_event_counts(self) -> Vec<(String, usize)> {
         match self {
             Self::V0SingleEpisode { event_count: 0 } => Vec::new(),
-            Self::V0SingleEpisode { event_count } => vec![("E1".to_string(), event_count)],
+            Self::V0SingleEpisode { event_count } => {
+                vec![(V0_SINGLE_EPISODE_LABEL.to_string(), event_count)]
+            }
         }
     }
 }
@@ -184,6 +208,22 @@ impl ProcessDriverProgress {
     }
 }
 
+/// Composed state machine for the process-driver protocol loop.
+///
+/// Three independent axes tracked simultaneously:
+/// - **Wire phase** (`ProcessDriverWirePhase`): `AwaitingHello` → `StreamingEvents`.
+///   Controls startup timeout behavior and hello-first protocol enforcement.
+/// - **Commit phase** (`ProcessDriverCommitPhase` inside `progress`):
+///   `BeforeFirstCommittedStep` → `AfterFirstCommittedStep`. This is the semantic
+///   boundary that determines whether failures become `HostRunError` (startup) or
+///   `DriverExecution::Interrupted` (partial capture). Transitions on first
+///   successful `runner.step()`.
+/// - **Episode ledger** (`ProcessDriverEpisodeLedger` inside `progress`):
+///   `V0SingleEpisode(count)`. The v0 protocol has no episode-boundary frame, so
+///   all events are attributed to a single synthetic episode.
+///
+/// Initial state: `AwaitingHello × BeforeFirstCommittedStep × V0SingleEpisode(0)`.
+/// Only `StreamingEvents` can host a transition to `AfterFirstCommittedStep`.
 struct ProcessDriverLoopState {
     runner: HostedRunner,
     progress: ProcessDriverProgress,
@@ -246,6 +286,21 @@ impl ProcessDriverLoopState {
         }
     }
 
+    /// Terminal failure routing: before first committed step → startup error,
+    /// after first committed step → interrupted execution with partial capture.
+    fn into_terminal_failure(
+        self,
+        reason: InterruptionReason,
+        before_commit_error: impl FnOnce() -> HostRunError,
+    ) -> Result<DriverExecution, HostRunError> {
+        match self.commit_phase() {
+            ProcessDriverCommitPhase::BeforeFirstCommittedStep => Err(before_commit_error()),
+            ProcessDriverCommitPhase::AfterFirstCommittedStep => {
+                Ok(self.into_execution(DriverTerminal::Interrupted(reason)))
+            }
+        }
+    }
+
     fn into_host_stop_execution(
         self,
         child: &mut Child,
@@ -269,24 +324,27 @@ impl ProcessDriverLoopState {
     }
 }
 
-fn process_driver_host_stop_execution(
-    state: ProcessDriverLoopState,
-    child: &mut Child,
-    stderr_handle: &mut Option<JoinHandle<String>>,
-) -> Result<DriverExecution, HostRunError> {
-    state.into_host_stop_execution(child, stderr_handle)
-}
-
-fn maybe_process_driver_host_stop(
+/// Single host-stop authority for the process-driver loop. Checks lifecycle,
+/// and if a stop is requested, consumes state and returns the stop execution.
+/// If no stop is needed, returns the state unchanged via `Continue`.
+///
+/// Every call site matches explicitly:
+/// ```ignore
+/// state = match check_host_stop(state, &mut child, &mut stderr_handle, lifecycle) {
+///     ControlFlow::Continue(s) => s,
+///     ControlFlow::Break(result) => return result,
+/// };
+/// ```
+fn check_host_stop(
     state: ProcessDriverLoopState,
     child: &mut Child,
     stderr_handle: &mut Option<JoinHandle<String>>,
     lifecycle: &RunLifecycleState,
-) -> Result<ControlFlow<DriverExecution, ProcessDriverLoopState>, HostRunError> {
+) -> ControlFlow<Result<DriverExecution, HostRunError>, ProcessDriverLoopState> {
     if lifecycle.should_stop(state.committed_event_count()) {
-        process_driver_host_stop_execution(state, child, stderr_handle).map(ControlFlow::Break)
+        ControlFlow::Break(state.into_host_stop_execution(child, stderr_handle))
     } else {
-        Ok(ControlFlow::Continue(state))
+        ControlFlow::Continue(state)
     }
 }
 
@@ -351,12 +409,10 @@ pub(super) fn run_process_driver(
     let mut state = ProcessDriverLoopState::new(runner, process_policy);
 
     loop {
-        state =
-            match maybe_process_driver_host_stop(state, &mut child, &mut stderr_handle, lifecycle)?
-            {
-                ControlFlow::Break(execution) => return Ok(execution),
-                ControlFlow::Continue(state) => state,
-            };
+        state = match check_host_stop(state, &mut child, &mut stderr_handle, lifecycle) {
+            ControlFlow::Continue(s) => s,
+            ControlFlow::Break(result) => return result,
+        };
 
         if state.startup_timed_out() {
             let detail = abort_process_child(&mut child, stderr_handle.take());
@@ -377,26 +433,16 @@ pub(super) fn run_process_driver(
         let observation = match recv_process_stream_observation(&stdout_rx, Some(recv_timeout)) {
             Ok(observation) => observation,
             Err(RecvTimeoutError::Timeout) => {
-                state = match maybe_process_driver_host_stop(
-                    state,
-                    &mut child,
-                    &mut stderr_handle,
-                    lifecycle,
-                )? {
-                    ControlFlow::Break(execution) => return Ok(execution),
-                    ControlFlow::Continue(state) => state,
+                state = match check_host_stop(state, &mut child, &mut stderr_handle, lifecycle) {
+                    ControlFlow::Continue(s) => s,
+                    ControlFlow::Break(result) => return result,
                 };
                 continue;
             }
             Err(RecvTimeoutError::Disconnected) => {
-                state = match maybe_process_driver_host_stop(
-                    state,
-                    &mut child,
-                    &mut stderr_handle,
-                    lifecycle,
-                )? {
-                    ControlFlow::Break(execution) => return Ok(execution),
-                    ControlFlow::Continue(state) => state,
+                state = match check_host_stop(state, &mut child, &mut stderr_handle, lifecycle) {
+                    ControlFlow::Continue(s) => s,
+                    ControlFlow::Break(result) => return result,
                 };
                 let detail = abort_process_child(&mut child, stderr_handle.take());
                 let message = if detail.is_empty() {
@@ -408,13 +454,9 @@ pub(super) fn run_process_driver(
                         "receive process driver stdout for {command_display}: stdout reader disconnected unexpectedly ({detail})"
                     )
                 };
-                return match state.commit_phase() {
-                    ProcessDriverCommitPhase::BeforeFirstCommittedStep => {
-                        Err(driver_io_error(message))
-                    }
-                    ProcessDriverCommitPhase::AfterFirstCommittedStep => Ok(state
-                        .into_execution(DriverTerminal::Interrupted(InterruptionReason::DriverIo))),
-                };
+                return state.into_terminal_failure(InterruptionReason::DriverIo, || {
+                    driver_io_error(message)
+                });
             }
         };
 
@@ -425,33 +467,22 @@ pub(super) fn run_process_driver(
                     Ok(message) => message,
                     Err(err) => {
                         let _detail = abort_process_child(&mut child, stderr_handle.take());
-                        return match state.commit_phase() {
-                            ProcessDriverCommitPhase::BeforeFirstCommittedStep => {
-                                Err(driver_protocol_json_error(
-                                    format!(
-                                        "process driver {command_display} emitted invalid JSONL protocol before first committed step: {err}"
-                                    ),
-                                    err,
-                                ))
-                            }
-                            ProcessDriverCommitPhase::AfterFirstCommittedStep => {
-                                Ok(state.into_execution(DriverTerminal::Interrupted(
-                                    InterruptionReason::ProtocolViolation,
-                                )))
-                            }
-                        };
+                        return state.into_terminal_failure(
+                            InterruptionReason::ProtocolViolation,
+                            || driver_protocol_json_error(
+                                format!(
+                                    "process driver {command_display} emitted invalid JSONL protocol before first committed step: {err}"
+                                ),
+                                err,
+                            ),
+                        );
                     }
                 }
             }
             ProcessDriverStreamObservation::Eof => {
-                state = match maybe_process_driver_host_stop(
-                    state,
-                    &mut child,
-                    &mut stderr_handle,
-                    lifecycle,
-                )? {
-                    ControlFlow::Break(execution) => return Ok(execution),
-                    ControlFlow::Continue(state) => state,
+                state = match check_host_stop(state, &mut child, &mut stderr_handle, lifecycle) {
+                    ControlFlow::Continue(s) => s,
+                    ControlFlow::Break(result) => return result,
                 };
                 let exit_status =
                     wait_for_child_exit(&mut child, process_policy).map_err(|err| {
@@ -478,40 +509,34 @@ pub(super) fn run_process_driver(
                     None => abort_process_child(&mut child, stderr_handle.take()),
                 };
 
-                if state.commit_phase() == ProcessDriverCommitPhase::BeforeFirstCommittedStep {
-                    let suffix = if detail.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" ({detail})")
-                    };
-                    let message = match exit_status {
-                        Some(status) => format!(
-                            "process driver {command_display} ended before first committed step ({}){}",
-                            status,
-                            suffix
-                        ),
-                        None => format!(
-                            "process driver {command_display} closed stdout but did not exit within {}ms before first committed step{}",
-                            process_policy.termination_grace.as_millis(),
-                            suffix
-                        ),
-                    };
-                    return Err(driver_start_error(message));
-                }
-
-                return Ok(state.into_execution(DriverTerminal::Interrupted(
+                let suffix = if detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({detail})")
+                };
+                return state.into_terminal_failure(
                     InterruptionReason::DriverTerminated,
-                )));
+                    || {
+                        let message = match exit_status {
+                            Some(status) => format!(
+                                "process driver {command_display} ended before first committed step ({}){}",
+                                status,
+                                suffix
+                            ),
+                            None => format!(
+                                "process driver {command_display} closed stdout but did not exit within {}ms before first committed step{}",
+                                process_policy.termination_grace.as_millis(),
+                                suffix
+                            ),
+                        };
+                        driver_start_error(message)
+                    },
+                );
             }
             ProcessDriverStreamObservation::ReadError(failure) => {
-                state = match maybe_process_driver_host_stop(
-                    state,
-                    &mut child,
-                    &mut stderr_handle,
-                    lifecycle,
-                )? {
-                    ControlFlow::Break(execution) => return Ok(execution),
-                    ControlFlow::Continue(state) => state,
+                state = match check_host_stop(state, &mut child, &mut stderr_handle, lifecycle) {
+                    ControlFlow::Continue(s) => s,
+                    ControlFlow::Break(result) => return result,
                 };
                 let extra = abort_process_child(&mut child, stderr_handle.take());
                 match failure {
@@ -526,15 +551,10 @@ pub(super) fn run_process_driver(
                                 "process driver {command_display} emitted malformed protocol bytes: {detail} ({extra})"
                             )
                         };
-                        return match state.commit_phase() {
-                            ProcessDriverCommitPhase::BeforeFirstCommittedStep => {
-                                Err(driver_protocol_io_error(message, source))
-                            }
-                            ProcessDriverCommitPhase::AfterFirstCommittedStep => Ok(state
-                                .into_execution(DriverTerminal::Interrupted(
-                                    InterruptionReason::ProtocolViolation,
-                                ))),
-                        };
+                        return state
+                            .into_terminal_failure(InterruptionReason::ProtocolViolation, || {
+                                driver_protocol_io_error(message, source)
+                            });
                     }
                     ProcessDriverReadFailure::Io(source) => {
                         let detail = source.to_string();
@@ -545,15 +565,9 @@ pub(super) fn run_process_driver(
                                 "read process driver stdout for {command_display}: {detail} ({extra})"
                             )
                         };
-                        return match state.commit_phase() {
-                            ProcessDriverCommitPhase::BeforeFirstCommittedStep => {
-                                Err(driver_io_source_error(message, source))
-                            }
-                            ProcessDriverCommitPhase::AfterFirstCommittedStep => Ok(state
-                                .into_execution(DriverTerminal::Interrupted(
-                                    InterruptionReason::DriverIo,
-                                ))),
-                        };
+                        return state.into_terminal_failure(InterruptionReason::DriverIo, || {
+                            driver_io_source_error(message, source)
+                        });
                     }
                 }
             }
@@ -586,26 +600,22 @@ pub(super) fn run_process_driver(
         match message {
             ProcessDriverMessage::Hello { .. } => {
                 let _detail = abort_process_child(&mut child, stderr_handle.take());
-                if state.commit_phase() == ProcessDriverCommitPhase::BeforeFirstCommittedStep {
-                    return Err(driver_protocol_error(format!(
-                        "process driver {command_display} sent duplicate hello before first committed step"
-                    )));
-                }
-                return Ok(state.into_execution(DriverTerminal::Interrupted(
+                return state.into_terminal_failure(
                     InterruptionReason::ProtocolViolation,
-                )));
+                    || {
+                        driver_protocol_error(format!(
+                            "process driver {command_display} sent duplicate hello before first committed step"
+                        ))
+                    },
+                );
             }
             ProcessDriverMessage::Event { event } => match state.runner.step(event) {
                 Ok(_) => {
                     state.record_committed_event();
-                    state = match maybe_process_driver_host_stop(
-                        state,
-                        &mut child,
-                        &mut stderr_handle,
-                        lifecycle,
-                    )? {
-                        ControlFlow::Break(execution) => return Ok(execution),
-                        ControlFlow::Continue(state) => state,
+                    state = match check_host_stop(state, &mut child, &mut stderr_handle, lifecycle)
+                    {
+                        ControlFlow::Continue(s) => s,
+                        ControlFlow::Break(result) => return result,
                     };
                 }
                 Err(crate::HostedStepError::EgressDispatchFailure(failure)) => {

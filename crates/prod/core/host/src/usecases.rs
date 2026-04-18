@@ -990,6 +990,9 @@ impl InterruptionReason {
     }
 }
 
+/// Display delegates to `code()`. This is a public contract consumed by CLI
+/// and SDK callers that pattern-match on the formatted output. Locked by
+/// `interruption_reason_code_and_display_contract_is_locked` in contract tests.
 impl std::fmt::Display for InterruptionReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.code())
@@ -1290,23 +1293,6 @@ pub struct RunGraphFromAssetsRequest {
     pub capture: CapturePolicy,
 }
 
-pub(super) struct PreparedLiveRunnerSetup {
-    adapter_bound: bool,
-    dependency_summary: AdapterDependencySummary,
-    runner: HostedRunner,
-}
-
-struct ValidatedLiveRunnerSetup {
-    graph_id: GraphId,
-    runtime_provenance: String,
-    runtime: RuntimeHandle,
-    adapter_config: Option<HostedAdapterConfig>,
-    egress_config: Option<EgressConfig>,
-    egress_provenance: Option<String>,
-    adapter_bound: bool,
-    dependency_summary: AdapterDependencySummary,
-}
-
 #[derive(Debug)]
 pub struct ReplayGraphResult {
     pub graph_id: GraphId,
@@ -1374,12 +1360,6 @@ pub use self::live_run::{
     run_graph_from_paths_with_surfaces_and_control, run_graph_with_control,
 };
 
-use self::live_prep::{
-    ensure_adapter_requirement_satisfied, ensure_production_adapter_bound,
-    finalize_hosted_runner_capture_with_stage, prepare_live_runner_setup_from_assets,
-    session_intent_from_driver, start_live_runner_egress, HostedRunnerFinalizeFailure,
-};
-use self::live_run::{validate_driver_input, DriverExecution, DriverTerminal, RunLifecycleState};
 use self::process_driver::{
     run_process_driver, validate_process_driver_command, ProcessDriverPolicy,
     DEFAULT_PROCESS_DRIVER_POLICY,
