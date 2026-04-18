@@ -29,6 +29,7 @@
 
 mod capture_enrichment;
 mod demo_fixture_usecase;
+mod diagnostics;
 mod egress;
 mod error;
 mod expand_diagnostics;

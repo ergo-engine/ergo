@@ -38,6 +38,10 @@
 //!   currently preserve typed `HostedStepError` at the public run boundary:
 //!   it keeps the finalization phases explicit so future host decisions do not
 //!   have to rediscover where pending-ack versus stop-egress failures split.
+//!   This module owns the 3-step staged orchestration in the capture finalization
+//!   pipeline (check → stop egress → extract bundle). The runner-owned gate
+//!   (`CaptureFinalizationState`) lives in `runner.rs`; the driver-level
+//!   validation and summary DTO live in `live_run.rs`.
 //! - Replay representability checks intentionally treat `set_context` as the
 //!   host-internal handler effect path and exclude it from replay-owned
 //!   external kinds.
@@ -54,8 +58,54 @@
 
 #![allow(clippy::arc_with_non_send_sync)]
 
-use super::*;
+// Shared standard-library and external-crate prelude for usecase submodules.
+use super::shared::*;
+// Usecases-owned types used by this module.
+use super::{
+    scan_adapter_dependencies, summarize_expand_error, validate_adapter_composition,
+    AdapterDependencySummary, AdapterInput, DriverConfig, HostAdapterSetupError,
+    HostGraphPreparationError, HostReplayError, HostReplaySetupError, HostRunError, HostSetupError,
+    LivePrepOptions, PrepareHostedRunnerFromPathsRequest, ReplayGraphFromAssetsRequest,
+    ReplayGraphFromPathsRequest, ReplayGraphRequest, ReplayGraphResult, RunGraphFromAssetsRequest,
+    RunGraphFromPathsRequest, RuntimeSurfaces, SessionIntent,
+};
+// Sibling module types.
+use super::live_run::{replay_graph, validate_driver_input};
+// Crate-internal helpers.
+use crate::diagnostics::emit_warnings_to_stderr;
 use crate::runner::host_internal_handler_kinds;
+
+pub(super) struct PreparedLiveRunnerSetup {
+    adapter_bound: bool,
+    dependency_summary: AdapterDependencySummary,
+    runner: HostedRunner,
+}
+
+impl PreparedLiveRunnerSetup {
+    pub(super) fn adapter_bound(&self) -> bool {
+        self.adapter_bound
+    }
+
+    pub(super) fn dependency_summary(&self) -> &AdapterDependencySummary {
+        &self.dependency_summary
+    }
+
+    /// Consume the setup, yielding the hosted runner for the run phase.
+    pub(super) fn into_runner(self) -> HostedRunner {
+        self.runner
+    }
+}
+
+struct ValidatedLiveRunnerSetup {
+    graph_id: GraphId,
+    runtime_provenance: String,
+    runtime: RuntimeHandle,
+    adapter_config: Option<HostedAdapterConfig>,
+    egress_config: Option<EgressConfig>,
+    egress_provenance: Option<String>,
+    adapter_bound: bool,
+    dependency_summary: AdapterDependencySummary,
+}
 
 fn map_live_prep_loader_result(
     result: Result<ergo_loader::PreparedGraphAssets, ergo_loader::LoaderError>,
@@ -355,7 +405,7 @@ fn validate_live_runner_setup_from_assets(
         .as_ref()
         .map(compute_egress_provenance);
     let graph_emittable_effect_kinds = runtime.graph_emittable_effect_kinds();
-    validate_hosted_runner_configuration(
+    let warnings = validate_hosted_runner_configuration(
         adapter_setup.adapter_config.as_ref(),
         options.egress_config.as_ref(),
         egress_provenance.as_deref(),
@@ -363,6 +413,7 @@ fn validate_live_runner_setup_from_assets(
         &graph_emittable_effect_kinds,
     )
     .map_err(hosted_runner_setup_error)?;
+    emit_warnings_to_stderr(&warnings);
 
     Ok(ValidatedLiveRunnerSetup {
         graph_id: GraphId::new(graph_id),
@@ -626,8 +677,7 @@ fn validate_run_graph_internal(
 ) -> Result<(), HostRunError> {
     let validated = validate_live_runner_setup_from_assets(assets, options, runtime_surfaces)?;
     ensure_production_adapter_bound(validated.adapter_bound, session_intent_from_driver(driver))?;
-    validate_driver_input(driver, validated.adapter_bound)?;
-    Ok(())
+    validate_driver_input(driver, validated.adapter_bound).map(|_| ())
 }
 
 fn load_capture_bundle_from_path(capture_path: &Path) -> Result<CaptureBundle, HostReplayError> {

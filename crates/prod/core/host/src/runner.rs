@@ -29,16 +29,26 @@
 //! - `HostDecisionLog` propagates mutex poison via `expect(...)`; a panic while the lock is held is
 //!   treated as unrecoverable for the runner lifetime.
 //! - `CaptureFinalizationState` is load-bearing: `FinalizeOnly` permits capture finalization but
-//!   blocks further stepping, while `Fatal` blocks both.
-//! - `HostedEvent` intentionally stays a public wire DTO; the private
-//!   `ValidatedHostedEvent` phase is the runner-owned validation boundary before
-//!   adapter binding or external-event construction.
+//!   blocks further stepping, while `Fatal` blocks both. This is the runner-owned
+//!   gate in the capture finalization pipeline:
+//!     runner.rs: `CaptureFinalizationState` (gate), `ensure_capture_finalizable()`,
+//!       `into_capture_bundle()` (extraction)
+//!     live_prep.rs: `HostedRunnerFinalizeFailure` (staged error),
+//!       `finalize_hosted_runner_capture_with_stage()` (3-step orchestration)
+//!     live_run.rs: `FinalizedRunCapture` (summary DTO),
+//!       `finalize_run_capture()` (driver-level validation)
+//! - `HostedEvent` intentionally stays in this file as the public wire DTO
+//!   consumed by CLI/SDK callers. The typing boundary is the private
+//!   `ValidatedHostedEvent` phase, not the wire shape. `semantic_kind` remains
+//!   `Option<String>` for wire compatibility; validation of semantic-kind
+//!   coherence happens during adapter binding, not at the DTO level.
 //! - `host_internal_handler_kinds()` is the host-owned authority for effect
 //!   kinds that stay inside the runner/handler path rather than replay-owned
 //!   external effects.
-//! - Non-fatal egress validation warnings currently surface through an explicit
-//!   stderr helper because the host has no structured warning sink at this
-//!   layer.
+//! - `validate_hosted_runner_configuration()` is a pure validation function
+//!   that returns warnings as data. `HostedRunner::new()` emits warnings to
+//!   stderr to preserve behavior for direct callers; orchestration callers
+//!   (e.g. `live_prep.rs`) handle warnings at their own layer.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Arc, Mutex};
@@ -62,6 +72,7 @@ use crate::capture_enrichment::{
     enrich_bundle_with_host_artifacts, AppliedEffectsByDecision, AppliedIntentAcksByDecision,
     StepInterruptionsByDecision,
 };
+use crate::diagnostics::emit_warnings_to_stderr;
 use crate::egress::{
     validate_egress_config, EgressConfig, EgressProcessError, EgressRuntime,
     EgressValidationWarning,
@@ -232,6 +243,44 @@ enum CaptureFinalizationState {
     Fatal,
 }
 
+/// Domain-shaped transition methods. Each method represents a specific
+/// lifecycle event rather than a generic state target, so call sites
+/// cannot request meaningless moves.
+///
+/// Legal transitions:
+/// - `NoCommittedSteps → Eligible`   (on_step_success)
+/// - `NoCommittedSteps → FinalizeOnly` (on_dispatch_failure)
+/// - `NoCommittedSteps → Fatal`      (on_fatal_error)
+/// - `Eligible → FinalizeOnly`       (on_dispatch_failure)
+/// - `Eligible → Fatal`              (on_fatal_error)
+/// - `FinalizeOnly → Fatal`          (on_fatal_error)
+impl CaptureFinalizationState {
+    /// A step executed successfully. `NoCommittedSteps → Eligible` on first
+    /// call; idempotent once `Eligible`. `FinalizeOnly`/`Fatal` are unreachable
+    /// here (guarded by `ensure_step_allowed`) but preserved defensively.
+    fn on_step_success(self) -> Self {
+        match self {
+            Self::NoCommittedSteps => Self::Eligible,
+            other => other,
+        }
+    }
+
+    /// An egress dispatch failure occurred. Moves to `FinalizeOnly`.
+    /// Legal from `NoCommittedSteps` and `Eligible`. Idempotent from
+    /// `FinalizeOnly`. `Fatal` is preserved (already terminal).
+    fn on_dispatch_failure(self) -> Self {
+        match self {
+            Self::Fatal => Self::Fatal,
+            _ => Self::FinalizeOnly,
+        }
+    }
+
+    /// A non-recoverable error occurred. Always moves to `Fatal`.
+    fn on_fatal_error(self) -> Self {
+        Self::Fatal
+    }
+}
+
 pub(crate) const HOST_INTERNAL_SET_CONTEXT_KIND: &str = "set_context";
 
 fn default_handlers() -> BTreeMap<String, Arc<dyn EffectHandler>> {
@@ -253,7 +302,7 @@ pub(crate) fn validate_hosted_runner_configuration(
     egress_provenance: Option<&str>,
     replay_external_kinds: &HashSet<String>,
     graph_emittable_effect_kinds: &HashSet<String>,
-) -> Result<(), HostedStepError> {
+) -> Result<Vec<EgressValidationWarning>, HostedStepError> {
     let handler_kinds = host_internal_handler_kinds();
 
     if egress_config.is_some() && !replay_external_kinds.is_empty() {
@@ -273,15 +322,16 @@ pub(crate) fn validate_hosted_runner_configuration(
         ));
     }
 
+    let mut warnings = Vec::new();
+
     if let Some(config) = adapter {
         if let Some(egress_config) = egress_config {
-            let warnings = validate_egress_config(
+            warnings = validate_egress_config(
                 egress_config,
                 &config.provides,
                 graph_emittable_effect_kinds,
                 &handler_kinds,
             )?;
-            emit_egress_validation_warnings_to_stderr(&warnings);
         } else {
             ensure_handler_coverage(
                 &config.provides,
@@ -311,7 +361,7 @@ pub(crate) fn validate_hosted_runner_configuration(
         ));
     }
 
-    Ok(())
+    Ok(warnings)
 }
 
 pub struct HostedRunner {
@@ -366,13 +416,14 @@ impl HostedRunner {
     ) -> Result<Self, HostedStepError> {
         let graph_emittable_effect_kinds = runtime.graph_emittable_effect_kinds();
         let replay_external_kinds = replay_external_kinds.unwrap_or_default();
-        validate_hosted_runner_configuration(
+        let warnings = validate_hosted_runner_configuration(
             adapter.as_ref(),
             egress_config.as_ref(),
             egress_provenance.as_deref(),
             &replay_external_kinds,
             &graph_emittable_effect_kinds,
         )?;
+        emit_warnings_to_stderr(&warnings);
 
         Ok(Self::new_validated(
             graph_id,
@@ -468,7 +519,7 @@ impl HostedRunner {
         let outcome = self.execute_step(external_event, mode);
         match &outcome {
             Ok(_) => {
-                self.capture_finalization_state = CaptureFinalizationState::Eligible;
+                self.capture_finalization_state = self.capture_finalization_state.on_step_success();
             }
             Err(err) => self.record_step_error(err),
         }
@@ -651,15 +702,13 @@ impl HostedRunner {
     }
 
     fn record_step_error(&mut self, err: &HostedStepError) {
-        match err {
+        self.capture_finalization_state = match err {
             HostedStepError::EgressDispatchFailure(_) => {
-                self.capture_finalization_state = CaptureFinalizationState::FinalizeOnly;
+                self.capture_finalization_state.on_dispatch_failure()
             }
-            err if is_recoverable_hosted_step_error(err) => {}
-            _ => {
-                self.capture_finalization_state = CaptureFinalizationState::Fatal;
-            }
-        }
+            err if is_recoverable_hosted_step_error(err) => self.capture_finalization_state,
+            _ => self.capture_finalization_state.on_fatal_error(),
+        };
     }
 
     fn build_external_event(&self, event: HostedEvent) -> Result<ExternalEvent, HostedStepError> {
@@ -874,12 +923,6 @@ fn allowed_schema_keys(
     }
 
     Ok(keys)
-}
-
-fn emit_egress_validation_warnings_to_stderr(warnings: &[EgressValidationWarning]) {
-    for warning in warnings {
-        eprintln!("warning: {warning}");
-    }
 }
 
 #[cfg(test)]

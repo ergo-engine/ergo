@@ -1389,3 +1389,163 @@ fn fatal_step_error_is_sticky_for_future_steps_and_finalization() {
         HostedStepError::LifecycleViolation { .. }
     ));
 }
+
+#[test]
+fn validate_hosted_runner_configuration_returns_warnings_as_data() {
+    // Scenario: adapter accepts `place_order`, egress routes `place_order`,
+    // but the graph (number_source) has no action nodes so it cannot emit
+    // `place_order`. The route is valid but non-emittable → warning.
+    let provides = adapter_provides_with_effects(&["place_order"]);
+    let runtime = runtime_for_graph(build_number_source_graph(), provides.clone());
+    let adapter = adapter_config(provides);
+    let egress_config = EgressConfig::builder(Duration::from_millis(50))
+        .channel(
+            "broker",
+            EgressChannelConfig::process(vec!["echo".to_string()])
+                .expect("channel config should be valid"),
+        )
+        .expect("channel should insert")
+        .route(
+            "place_order",
+            EgressRoute::new("broker", None).expect("route should be valid"),
+        )
+        .expect("route should insert")
+        .build()
+        .expect("egress config should build");
+
+    let graph_emittable = runtime.graph_emittable_effect_kinds();
+
+    // Pure validation returns warnings as data — no stderr emission.
+    let warnings = validate_hosted_runner_configuration(
+        Some(&adapter),
+        Some(&egress_config),
+        Some("epv1:sha256:test"),
+        &HashSet::new(),
+        &graph_emittable,
+    )
+    .expect("validation should pass with non-emittable route as warning");
+
+    assert_eq!(warnings.len(), 1, "expected exactly one warning");
+    assert!(
+        matches!(
+            &warnings[0],
+            crate::egress::EgressValidationWarning::RouteForNonEmittableKind { intent_kind }
+            if intent_kind == "place_order"
+        ),
+        "expected RouteForNonEmittableKind warning for place_order, got {warnings:?}"
+    );
+}
+
+#[test]
+fn hosted_runner_new_succeeds_with_non_emittable_egress_route_warnings() {
+    // Same scenario as above, but through the public HostedRunner::new() path.
+    // Verifies that non-fatal warnings don't block construction — the compatibility
+    // contract for direct CLI/SDK callers.
+    let provides = adapter_provides_with_effects(&["place_order"]);
+    let runtime = runtime_for_graph(build_number_source_graph(), provides.clone());
+    let adapter = adapter_config(provides);
+    let egress_config = EgressConfig::builder(Duration::from_millis(50))
+        .channel(
+            "broker",
+            EgressChannelConfig::process(vec!["echo".to_string()])
+                .expect("channel config should be valid"),
+        )
+        .expect("channel should insert")
+        .route(
+            "place_order",
+            EgressRoute::new("broker", None).expect("route should be valid"),
+        )
+        .expect("route should insert")
+        .build()
+        .expect("egress config should build");
+
+    // HostedRunner::new() must succeed — warnings are emitted to stderr
+    // but do not block construction.
+    let _runner = HostedRunner::new(
+        GraphId::new("g"),
+        Constraints::default(),
+        runtime,
+        "runtime:test".to_string(),
+        Some(adapter),
+        Some(egress_config),
+        Some("epv1:sha256:test".to_string()),
+        None,
+    )
+    .expect("runner construction must not fail due to non-emittable route warnings");
+}
+
+// --- CaptureFinalizationState domain transition contract tests ---
+
+#[test]
+fn capture_finalization_on_step_success_from_no_committed_steps() {
+    let state = CaptureFinalizationState::NoCommittedSteps;
+    assert_eq!(state.on_step_success(), CaptureFinalizationState::Eligible);
+}
+
+#[test]
+fn capture_finalization_on_step_success_idempotent_from_eligible() {
+    let state = CaptureFinalizationState::Eligible;
+    assert_eq!(state.on_step_success(), CaptureFinalizationState::Eligible);
+}
+
+#[test]
+fn capture_finalization_on_step_success_preserves_finalize_only() {
+    // FinalizeOnly is unreachable on success path (guarded by ensure_step_allowed),
+    // but the method defensively preserves the state.
+    let state = CaptureFinalizationState::FinalizeOnly;
+    assert_eq!(
+        state.on_step_success(),
+        CaptureFinalizationState::FinalizeOnly
+    );
+}
+
+#[test]
+fn capture_finalization_on_step_success_preserves_fatal() {
+    let state = CaptureFinalizationState::Fatal;
+    assert_eq!(state.on_step_success(), CaptureFinalizationState::Fatal);
+}
+
+#[test]
+fn capture_finalization_on_dispatch_failure_from_no_committed_steps() {
+    let state = CaptureFinalizationState::NoCommittedSteps;
+    assert_eq!(
+        state.on_dispatch_failure(),
+        CaptureFinalizationState::FinalizeOnly
+    );
+}
+
+#[test]
+fn capture_finalization_on_dispatch_failure_from_eligible() {
+    let state = CaptureFinalizationState::Eligible;
+    assert_eq!(
+        state.on_dispatch_failure(),
+        CaptureFinalizationState::FinalizeOnly
+    );
+}
+
+#[test]
+fn capture_finalization_on_dispatch_failure_idempotent_from_finalize_only() {
+    let state = CaptureFinalizationState::FinalizeOnly;
+    assert_eq!(
+        state.on_dispatch_failure(),
+        CaptureFinalizationState::FinalizeOnly
+    );
+}
+
+#[test]
+fn capture_finalization_on_dispatch_failure_preserves_fatal() {
+    let state = CaptureFinalizationState::Fatal;
+    assert_eq!(state.on_dispatch_failure(), CaptureFinalizationState::Fatal);
+}
+
+#[test]
+fn capture_finalization_on_fatal_error_from_all_states() {
+    for state in [
+        CaptureFinalizationState::NoCommittedSteps,
+        CaptureFinalizationState::Eligible,
+        CaptureFinalizationState::FinalizeOnly,
+        CaptureFinalizationState::Fatal,
+    ] {
+        assert_eq!(state.on_fatal_error(), CaptureFinalizationState::Fatal);
+    }
+}

@@ -35,11 +35,42 @@
 //!   `invoked`/`deferred` come from finalized capture truth.
 //! - The current `InterruptionReason` Display/Debug contract is downstream-significant, but tests
 //!   for that enum belong with its definition in `usecases.rs`, not here.
+//! - `RunLifecycleState` is owned by this module and shared with
+//!   `process_driver.rs` via `pub(super)` function parameter. This module
+//!   owns the lifecycle policy (bounded-run limits, host stop); the process
+//!   driver consumes it to decide when to stop reading events.
+//! - The fixture step loop (`run_fixture_items_driver`) and the process driver
+//!   step loop (`process_driver.rs`) share the same commit/interrupt outcome
+//!   routing pattern but are structurally different ingress protocols (nested
+//!   episode→event iteration vs. streaming message parsing). Unifying them
+//!   would require a trait/callback abstraction that adds indirection without
+//!   reducing meaningful risk. The duplication is structural, not accidental.
 
 // Allow non-Send/Sync in Arc: CoreRegistries and CorePrimitiveCatalog contain non-Send/Sync types.
 #![allow(clippy::arc_with_non_send_sync)]
 
-use super::*;
+use super::live_prep::{
+    ensure_adapter_requirement_satisfied, ensure_production_adapter_bound,
+    finalize_hosted_runner_capture_with_stage, load_graph_assets_from_paths,
+    prepare_live_runner_setup_from_assets, session_intent_from_driver, start_live_runner_egress,
+    HostedRunnerFinalizeFailure,
+};
+// Shared standard-library and external-crate prelude for usecase submodules.
+use super::shared::*;
+// Usecases-owned types used by this module.
+use super::{
+    interruption_from_egress_dispatch_failure, AdapterDependencySummary, AdapterInput,
+    CapturePolicy, DriverConfig, HostDriverError, HostDriverInputError, HostDriverOutputError,
+    HostReplayError, HostRunError, InterruptedRun, InterruptionReason, LivePrepOptions,
+    ReplayGraphRequest, ReplayGraphResult, RunControl, RunFixtureRequest, RunFixtureResult,
+    RunGraphFromAssetsRequest, RunGraphFromPathsRequest, RunGraphRequest, RunGraphResponse,
+    RunOutcome, RunSummary, RuntimeSurfaces,
+};
+// Process driver types (sibling module, imported through parent).
+use super::{
+    run_process_driver, validate_process_driver_command, ProcessDriverPolicy,
+    DEFAULT_PROCESS_DRIVER_POLICY,
+};
 use std::ops::ControlFlow;
 
 pub(super) enum DriverTerminal {
@@ -103,7 +134,7 @@ struct PreparedFixtureEpisode {
 }
 
 #[derive(Debug)]
-struct PreparedFixtureInput {
+pub(super) struct PreparedFixtureInput {
     episodes: Vec<PreparedFixtureEpisode>,
 }
 
@@ -383,11 +414,7 @@ pub(super) fn run_graph_from_paths_internal(
         session_intent: session_intent_from_driver(&driver),
     };
 
-    let PreparedLiveRunnerSetup {
-        adapter_bound,
-        dependency_summary,
-        runner,
-    } = prepare_live_runner_setup_from_assets(&assets, &options, runtime_surfaces)?;
+    let setup = prepare_live_runner_setup_from_assets(&assets, &options, runtime_surfaces)?;
 
     run_graph_with_policy(
         RunGraphRequest {
@@ -395,9 +422,9 @@ pub(super) fn run_graph_from_paths_internal(
             driver,
             capture_output,
             pretty_capture,
-            adapter_bound,
-            dependency_summary,
-            runner,
+            adapter_bound: setup.adapter_bound(),
+            dependency_summary: setup.dependency_summary().clone(),
+            runner: setup.into_runner(),
         },
         process_policy,
         control,
@@ -462,10 +489,20 @@ pub fn run_graph_from_assets_with_surfaces_and_control(
     )
 }
 
+/// Validated driver input. Produced by `validate_driver_input` and consumed by
+/// the execution path, so fixture preparation happens exactly once.
+pub(super) enum ValidatedDriverInput {
+    Fixture(PreparedFixtureInput),
+    Process { command: Vec<String> },
+}
+
+/// Validate driver input and produce a `ValidatedDriverInput` that the execution
+/// path can consume directly. Fixture items are parsed and prepared once here;
+/// the run path no longer needs to repeat that work.
 pub(super) fn validate_driver_input(
     driver: &DriverConfig,
     adapter_bound: bool,
-) -> Result<(), HostRunError> {
+) -> Result<ValidatedDriverInput, HostRunError> {
     match driver {
         DriverConfig::Fixture { path } => {
             let fixture_items = fixture::parse_fixture(path).map_err(|err| {
@@ -473,16 +510,27 @@ pub(super) fn validate_driver_input(
                     err,
                 )))
             })?;
-            validate_fixture_items_input(&fixture_items, &path.display().to_string(), adapter_bound)
-                .map_err(|err| HostRunError::Driver(HostDriverError::Input(err)))
+            PreparedFixtureInput::from_items(
+                fixture_items.into_iter(),
+                &path.display().to_string(),
+                adapter_bound,
+            )
+            .map(ValidatedDriverInput::Fixture)
+            .map_err(|err| HostRunError::Driver(HostDriverError::Input(err)))
         }
         DriverConfig::FixtureItems {
             items,
             source_label,
-        } => validate_fixture_items_input(items, source_label, adapter_bound)
+        } => PreparedFixtureInput::from_items(items.iter().cloned(), source_label, adapter_bound)
+            .map(ValidatedDriverInput::Fixture)
             .map_err(|err| HostRunError::Driver(HostDriverError::Input(err))),
-        DriverConfig::Process { command } => validate_process_driver_command(command)
-            .map_err(|err| HostRunError::Driver(HostDriverError::Input(err))),
+        DriverConfig::Process { command } => {
+            validate_process_driver_command(command)
+                .map_err(|err| HostRunError::Driver(HostDriverError::Input(err)))?;
+            Ok(ValidatedDriverInput::Process {
+                command: command.clone(),
+            })
+        }
     }
 }
 
@@ -498,16 +546,12 @@ pub(super) fn run_graph_from_assets_internal(
         driver,
         capture,
     } = request;
-    let PreparedLiveRunnerSetup {
-        adapter_bound,
-        dependency_summary,
-        runner,
-    } = prepare_live_runner_setup_from_assets(&assets, &prep, runtime_surfaces)?;
+    let setup = prepare_live_runner_setup_from_assets(&assets, &prep, runtime_surfaces)?;
     run_prepared_graph_with_policy(
         driver,
-        adapter_bound,
-        dependency_summary,
-        runner,
+        setup.adapter_bound(),
+        setup.dependency_summary().clone(),
+        setup.into_runner(),
         capture,
         process_policy,
         control,
@@ -537,15 +581,6 @@ fn run_graph_with_policy(
         process_policy,
         control,
     )
-}
-
-fn validate_fixture_items_input(
-    fixture_items: &[fixture::FixtureItem],
-    source_label: &str,
-    adapter_bound: bool,
-) -> Result<(), HostDriverInputError> {
-    PreparedFixtureInput::from_items(fixture_items.iter().cloned(), source_label, adapter_bound)
-        .map(|_| ())
 }
 
 fn run_prepared_graph_with_policy(
@@ -609,53 +644,32 @@ fn execute_run_graph_with_policy(
     ensure_adapter_requirement_satisfied(adapter_bound, &dependency_summary)?;
     ensure_production_adapter_bound(adapter_bound, session_intent_from_driver(&driver))?;
 
+    // Validate and prepare driver input once. The validated input carries any
+    // prepared fixture state so the run path does not re-parse or re-prepare.
+    let validated_input = validate_driver_input(&driver, adapter_bound)?;
+
     start_live_runner_egress(&mut runner)?;
 
     let lifecycle = RunLifecycleState::new(control);
 
-    match driver {
-        DriverConfig::Fixture { path } => {
-            run_fixture_driver(path, adapter_bound, runner, &lifecycle)
+    match validated_input {
+        ValidatedDriverInput::Fixture(prepared) => {
+            run_prepared_fixture_driver(prepared, runner, &lifecycle)
         }
-        DriverConfig::FixtureItems {
-            items,
-            source_label,
-        } => run_fixture_items_driver(items, &source_label, adapter_bound, runner, &lifecycle),
-        DriverConfig::Process { command } => {
+        ValidatedDriverInput::Process { command } => {
             run_process_driver(command, runner, process_policy, &lifecycle)
         }
     }
 }
 
-fn run_fixture_driver(
-    fixture_path: PathBuf,
-    adapter_bound: bool,
+/// Execute a fixture driver with already-prepared input. The preparation
+/// (parsing, validation, episode grouping) was done in `validate_driver_input`,
+/// so this function consumes the result directly — no re-parsing or re-preparation.
+fn run_prepared_fixture_driver(
+    prepared: PreparedFixtureInput,
     runner: HostedRunner,
     lifecycle: &RunLifecycleState,
 ) -> Result<DriverExecution, HostRunError> {
-    let fixture_items = fixture::parse_fixture(&fixture_path).map_err(|err| {
-        HostRunError::Driver(HostDriverError::Input(HostDriverInputError::FixtureParse(
-            err,
-        )))
-    })?;
-    run_fixture_items_driver(
-        fixture_items,
-        &fixture_path.display().to_string(),
-        adapter_bound,
-        runner,
-        lifecycle,
-    )
-}
-
-fn run_fixture_items_driver(
-    fixture_items: Vec<fixture::FixtureItem>,
-    source_label: &str,
-    adapter_bound: bool,
-    runner: HostedRunner,
-    lifecycle: &RunLifecycleState,
-) -> Result<DriverExecution, HostRunError> {
-    let prepared = PreparedFixtureInput::from_items(fixture_items, source_label, adapter_bound)
-        .map_err(|err| HostRunError::Driver(HostDriverError::Input(err)))?;
     let mut state = FixtureDriverState::new(runner, &prepared);
 
     for (episode_index, episode) in prepared.episodes.into_iter().enumerate() {
