@@ -56,7 +56,7 @@ use std::sync::{Arc, Mutex};
 
 use ergo_adapter::{
     bind_semantic_event_with_binder, compile_event_binder, AdapterProvides, EventId, EventTime,
-    ExternalEvent, ExternalEventKind, GraphId, RunTermination, RuntimeHandle,
+    ExternalEvent, ExternalEventKind, GraphId, RunTermination,
 };
 use ergo_runtime::common::ActionEffect;
 use ergo_supervisor::{
@@ -408,14 +408,14 @@ impl HostedRunner {
     pub fn new(
         graph_id: GraphId,
         constraints: Constraints,
-        runtime: RuntimeHandle,
+        runtime: BufferingRuntimeInvoker,
         runtime_provenance: String,
         adapter: Option<HostedAdapterConfig>,
         egress_config: Option<EgressConfig>,
         egress_provenance: Option<String>,
         replay_external_kinds: Option<HashSet<String>>,
     ) -> Result<Self, HostedStepError> {
-        let graph_emittable_effect_kinds = runtime.graph_emittable_effect_kinds();
+        let graph_emittable_effect_kinds = runtime.graph_emittable_effect_kinds().clone();
         let replay_external_kinds = replay_external_kinds.unwrap_or_default();
         let warnings = validate_hosted_runner_configuration(
             adapter.as_ref(),
@@ -441,7 +441,7 @@ impl HostedRunner {
     pub(crate) fn new_validated(
         graph_id: GraphId,
         constraints: Constraints,
-        runtime: RuntimeHandle,
+        runtime: BufferingRuntimeInvoker,
         runtime_provenance: String,
         adapter: Option<HostedAdapterConfig>,
         egress_config: Option<EgressConfig>,
@@ -450,7 +450,6 @@ impl HostedRunner {
     ) -> Self {
         let handlers = default_handlers();
         let egress = egress_config.map(EgressRuntime::new);
-        let runtime = BufferingRuntimeInvoker::new(runtime);
         let decision_log = HostDecisionLog::default();
 
         let adapter_provenance = adapter

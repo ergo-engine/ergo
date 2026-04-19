@@ -21,9 +21,12 @@ use std::error::Error;
 
 use super::*;
 use crate::error::EgressDispatchFailure;
+use crate::host::BufferingRuntimeInvoker;
 use crate::{HostedAdapterConfig, HostedEvent};
 use ergo_adapter::capture::CaptureError;
-use ergo_adapter::{AdapterProvides, ContextKeyProvision, EventId, ExternalEventKind};
+use ergo_adapter::{
+    AdapterProvides, ContextKeyProvision, EventId, ExternalEventKind, ReportingRuntimeHandle,
+};
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
 use ergo_runtime::cluster::{
     ExpandedEdge, ExpandedEndpoint, ExpandedGraph, ExpandedNode, ImplementationInstance,
@@ -681,7 +684,7 @@ fn adapter_provides_for_series_effect() -> AdapterProvides {
 // Allow non-Send/Sync in Arc: CoreRegistries and CorePrimitiveCatalog contain non-Send/Sync types.
 #[allow(clippy::arc_with_non_send_sync)]
 fn runner_for_graph(graph: ExpandedGraph, provides: AdapterProvides) -> HostedRunner {
-    let runtime = ergo_adapter::RuntimeHandle::new(
+    let runtime = ReportingRuntimeHandle::new(
         Arc::new(graph),
         Arc::new(build_core_catalog()),
         Arc::new(core_registries().expect("core registries must initialize for host replay tests")),
@@ -692,7 +695,7 @@ fn runner_for_graph(graph: ExpandedGraph, provides: AdapterProvides) -> HostedRu
     HostedRunner::new(
         ergo_adapter::GraphId::new(GRAPH_ID),
         Constraints::default(),
-        runtime,
+        BufferingRuntimeInvoker::new(runtime),
         RUNTIME_PROVENANCE.to_string(),
         Some(adapter),
         None,

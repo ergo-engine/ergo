@@ -69,10 +69,12 @@ use super::{
     ReplayGraphFromPathsRequest, ReplayGraphRequest, ReplayGraphResult, RunGraphFromAssetsRequest,
     RunGraphFromPathsRequest, RuntimeSurfaces, SessionIntent,
 };
+use ergo_adapter::ReportingRuntimeHandle;
 // Sibling module types.
 use super::live_run::{replay_graph, validate_driver_input};
 // Crate-internal helpers.
 use crate::diagnostics::emit_warnings_to_stderr;
+use crate::host::BufferingRuntimeInvoker;
 use crate::runner::host_internal_handler_kinds;
 
 pub(super) struct PreparedLiveRunnerSetup {
@@ -99,7 +101,7 @@ impl PreparedLiveRunnerSetup {
 struct ValidatedLiveRunnerSetup {
     graph_id: GraphId,
     runtime_provenance: String,
-    runtime: RuntimeHandle,
+    runtime: BufferingRuntimeInvoker,
     adapter_config: Option<HostedAdapterConfig>,
     egress_config: Option<EgressConfig>,
     egress_provenance: Option<String>,
@@ -394,7 +396,7 @@ fn validate_live_runner_setup_from_assets(
         registries,
     } = prepared;
 
-    let runtime = RuntimeHandle::new(
+    let runtime = ReportingRuntimeHandle::new(
         Arc::new(expanded),
         catalog,
         registries,
@@ -418,7 +420,7 @@ fn validate_live_runner_setup_from_assets(
     Ok(ValidatedLiveRunnerSetup {
         graph_id: GraphId::new(graph_id),
         runtime_provenance,
-        runtime,
+        runtime: BufferingRuntimeInvoker::new(runtime),
         adapter_config: adapter_setup.adapter_config,
         egress_config: options.egress_config.clone(),
         egress_provenance,
@@ -524,7 +526,7 @@ fn captured_external_effect_kinds(bundle: &CaptureBundle) -> HashSet<String> {
 }
 
 pub(super) fn replay_owned_external_kinds(
-    runtime: &RuntimeHandle,
+    runtime: &ReportingRuntimeHandle,
     adapter_provides: &AdapterProvides,
     handler_kinds: &BTreeSet<String>,
 ) -> HashSet<String> {
@@ -732,7 +734,7 @@ fn prepare_replay_request_from_assets(
         ..
     } = prepared;
 
-    let runtime = RuntimeHandle::new(
+    let runtime = ReportingRuntimeHandle::new(
         Arc::new(expanded),
         catalog,
         registries,
@@ -753,7 +755,7 @@ fn prepare_replay_request_from_assets(
     let runner = HostedRunner::new(
         GraphId::new(bundle.graph_id.as_str().to_string()),
         bundle.config.clone(),
-        runtime,
+        BufferingRuntimeInvoker::new(runtime),
         runtime_provenance.clone(),
         adapter_setup.adapter_config,
         None,

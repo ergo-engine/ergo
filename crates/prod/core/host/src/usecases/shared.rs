@@ -27,7 +27,7 @@ pub(super) use ergo_adapter::{
     fixture::{self, FixtureParseError},
     validate_action_adapter_composition, validate_capture_format,
     validate_source_adapter_composition, AdapterManifest, AdapterProvides, CompositionError,
-    DemoSourceContextError, EventBindingError, EventTime, GraphId, InvalidAdapter, RuntimeHandle,
+    DemoSourceContextError, EventBindingError, EventTime, GraphId, InvalidAdapter,
 };
 pub(super) use ergo_loader::LoaderError;
 pub(super) use ergo_runtime::catalog::{

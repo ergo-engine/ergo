@@ -1134,7 +1134,7 @@ fn replay_from_paths_handles_external_effect_capture_without_live_egress(
     let adapter = AdapterInput::Path(temp_dir.join("adapter.yaml"));
     let adapter_setup = prepare_adapter_setup(Some(&adapter), &prepared)
         .map_err(|err| format!("prepare replay adapter: {err}"))?;
-    let runtime = RuntimeHandle::new(
+    let runtime = ergo_adapter::ReportingRuntimeHandle::new(
         Arc::new(prepared.expanded),
         prepared.catalog,
         prepared.registries,
@@ -1146,7 +1146,7 @@ fn replay_from_paths_handles_external_effect_capture_without_live_egress(
     let replay_runner = HostedRunner::new(
         GraphId::new(bundle.graph_id.as_str().to_string()),
         bundle.config.clone(),
-        runtime,
+        crate::host::BufferingRuntimeInvoker::new(runtime),
         prepared.runtime_provenance.clone(),
         adapter_setup.adapter_config,
         None,

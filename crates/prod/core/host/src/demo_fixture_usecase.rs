@@ -28,13 +28,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use ergo_adapter::{
-    ensure_demo_sources_have_no_required_context, fixture, AdapterProvides, GraphId, RuntimeHandle,
+    ensure_demo_sources_have_no_required_context, fixture, AdapterProvides, GraphId,
+    ReportingRuntimeHandle,
 };
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
 use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceScheme};
 use ergo_supervisor::demo::demo_1;
 use ergo_supervisor::Constraints;
 
+use crate::host::BufferingRuntimeInvoker;
 use crate::usecases::{
     run_fixture, HostAdapterSetupError, HostGraphPreparationError, HostRunError, HostSetupError,
     RunFixtureRequest, RunFixtureResult,
@@ -75,7 +77,7 @@ pub fn run_demo_fixture_from_path(
         },
     )?;
 
-    let runtime = RuntimeHandle::new(
+    let runtime = ReportingRuntimeHandle::new(
         graph.clone(),
         catalog.clone(),
         core_registries.clone(),
@@ -95,7 +97,7 @@ pub fn run_demo_fixture_from_path(
     let runner = HostedRunner::new(
         GraphId::new(DEMO_GRAPH_ID),
         Constraints::default(),
-        runtime,
+        BufferingRuntimeInvoker::new(runtime),
         runtime_provenance,
         None,
         None,
