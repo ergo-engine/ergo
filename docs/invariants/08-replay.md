@@ -7,6 +7,17 @@ Scope: Replay-phase invariants for capture integrity and deterministic verificat
 Change Rule: Operational log
 ---
 
+> **v1 architectural framing (2026-04-20).** The `REP-*` invariants in
+> this document operate inside the v1 host-boundary architecture
+> committed by [`../system/freeze-v1.md`](../system/freeze-v1.md) and
+> specified by [`../system/host-boundary.md`](../system/host-boundary.md).
+> The invariant table below remains authoritative for rule wording,
+> enforcement sites, and test anchors. For the architectural rationale
+> behind `REP-SCOPE`, the provenance trinity (`REP-7`), and the
+> host-owned capture-enrichment surface that decision and effect
+> comparison operate against (`REP-1`, `REP-8`), see `host-boundary.md`
+> §§4, 6, 8.
+
 ## 8. Replay Phase
 
 **Scope:** Deterministic capture and verification of episode execution.
