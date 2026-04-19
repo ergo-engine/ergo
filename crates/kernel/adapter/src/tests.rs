@@ -200,10 +200,7 @@ fn runtime_handle_rejects_required_context_when_provides_empty() {
     let ctx = ExecutionContext::new(rt_ctx);
     let result = runtime.run(&GraphId::new("g"), &EventId::new("e"), &ctx, None);
 
-    assert_eq!(
-        result.termination,
-        RunTermination::Failed(ErrKind::ValidationFailed)
-    );
+    assert_eq!(result, RunTermination::Failed(ErrKind::ValidationFailed));
 }
 
 #[test]
@@ -249,10 +246,7 @@ fn runtime_handle_rejects_unsupported_capture_format() {
 
     let ctx = ExecutionContext::new(RuntimeExecutionContext::default());
     let result = runtime.run(&GraphId::new("g"), &EventId::new("e"), &ctx, None);
-    assert_eq!(
-        result.termination,
-        RunTermination::Failed(ErrKind::ValidationFailed)
-    );
+    assert_eq!(result, RunTermination::Failed(ErrKind::ValidationFailed));
 }
 
 #[test]

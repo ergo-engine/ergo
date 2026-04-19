@@ -20,8 +20,9 @@
 //!
 //! Safety notes:
 //! - This module is host-owned regardless of its former adapter-crate location.
-//! - `RuntimeResultProvider` remains private to `buffering_invoker.rs`; it is a
-//!   host testability seam, not a public contract.
+//! - The reporting-runtime helper trait remains private to
+//!   `buffering_invoker.rs`; it is a host testability seam, not a public
+//!   contract.
 
 mod buffering_invoker;
 mod context_store;

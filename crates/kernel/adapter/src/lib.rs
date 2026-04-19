@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use ergo_runtime::catalog::{CorePrimitiveCatalog, CoreRegistries};
 use ergo_runtime::cluster::{ExpandedGraph, PrimitiveCatalog, PrimitiveKind};
-use ergo_runtime::common::Value;
+use ergo_runtime::common::{ActionEffect, Value};
 use ergo_runtime::runtime::{
     execute_with_metadata, validate as runtime_validate, ExecError,
     ExecutionContext as RuntimeExecutionContext, Registries,
@@ -179,9 +179,9 @@ pub enum ErrKind {
 
 /// Result of a runtime invocation, carrying termination status and any effects.
 #[derive(Debug, Clone)]
-pub struct RunResult {
-    pub termination: RunTermination,
-    pub effects: Vec<ergo_runtime::common::ActionEffect>,
+struct RunResult {
+    termination: RunTermination,
+    effects: Vec<ActionEffect>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -419,18 +419,17 @@ fn json_to_value(value: &serde_json::Value) -> Option<Value> {
     Some(Value::Series(series))
 }
 
-/// RuntimeHandle holds the execution dependencies needed to invoke the runtime.
-/// It is constructed with an expanded graph, primitive catalog, registries, and adapter provides.
+/// Shared runtime execution dependencies used by both public handle types.
 #[derive(Clone)]
-pub struct RuntimeHandle {
+struct RuntimeState {
     graph: Arc<ExpandedGraph>,
     catalog: Arc<CorePrimitiveCatalog>,
     registries: Arc<CoreRegistries>,
     adapter_provides: AdapterProvides,
 }
 
-impl RuntimeHandle {
-    pub fn new(
+impl RuntimeState {
+    fn new(
         graph: Arc<ExpandedGraph>,
         catalog: Arc<CorePrimitiveCatalog>,
         registries: Arc<CoreRegistries>,
@@ -444,80 +443,7 @@ impl RuntimeHandle {
         }
     }
 
-    pub fn run(
-        &self,
-        graph_id: &GraphId,
-        event_id: &EventId,
-        ctx: &ExecutionContext,
-        deadline: Option<Duration>,
-    ) -> RunResult {
-        let _ = graph_id;
-        let _ = event_id;
-
-        if matches!(deadline, Some(d) if d.is_zero()) {
-            return RunResult {
-                termination: RunTermination::Aborted,
-                effects: vec![],
-            };
-        }
-
-        let validated = match runtime_validate(&self.graph, &*self.catalog) {
-            Ok(graph) => graph,
-            Err(_) => {
-                return RunResult {
-                    termination: RunTermination::Failed(ErrKind::ValidationFailed),
-                    effects: vec![],
-                }
-            }
-        };
-
-        if self.validate_composition(&validated).is_err() {
-            return RunResult {
-                termination: RunTermination::Failed(ErrKind::ValidationFailed),
-                effects: vec![],
-            };
-        }
-
-        // Create temporary Registries reference from owned CoreRegistries
-        let registries = Registries {
-            sources: &self.registries.sources,
-            computes: &self.registries.computes,
-            triggers: &self.registries.triggers,
-            actions: &self.registries.actions,
-        };
-
-        // Call runtime::execute, surface effects through the boundary
-        match execute_with_metadata(
-            &validated,
-            &registries,
-            ctx.inner(),
-            graph_id.as_str(),
-            event_id.as_str(),
-        ) {
-            Ok(report) => RunResult {
-                termination: RunTermination::Completed,
-                effects: report.effects,
-            },
-            Err(exec_err) => {
-                let termination = match exec_err {
-                    ExecError::ComputeFailed { .. }
-                    | ExecError::NonFiniteOutput { .. }
-                    | ExecError::MissingRequiredContextKey { .. }
-                    | ExecError::ContextKeyTypeMismatch { .. } => {
-                        RunTermination::Failed(ErrKind::SemanticError)
-                    }
-                    _ => RunTermination::Failed(ErrKind::RuntimeError),
-                };
-                RunResult {
-                    termination,
-                    effects: vec![],
-                }
-            }
-        }
-    }
-
-    /// Derive effect kinds that this composed graph can emit based on registered action manifests.
-    pub fn graph_emittable_effect_kinds(&self) -> HashSet<String> {
+    fn graph_emittable_effect_kinds(&self) -> HashSet<String> {
         let mut kinds = HashSet::new();
 
         for node in self.graph.nodes.values() {
@@ -603,6 +529,146 @@ impl RuntimeHandle {
     }
 }
 
+/// RuntimeHandle holds the execution dependencies needed to invoke the runtime.
+/// It is constructed with an expanded graph, primitive catalog, registries, and adapter provides.
+#[derive(Clone)]
+pub struct RuntimeHandle {
+    state: RuntimeState,
+}
+
+impl RuntimeHandle {
+    pub fn new(
+        graph: Arc<ExpandedGraph>,
+        catalog: Arc<CorePrimitiveCatalog>,
+        registries: Arc<CoreRegistries>,
+        adapter_provides: AdapterProvides,
+    ) -> Self {
+        Self {
+            state: RuntimeState::new(graph, catalog, registries, adapter_provides),
+        }
+    }
+
+    pub fn run(
+        &self,
+        graph_id: &GraphId,
+        event_id: &EventId,
+        ctx: &ExecutionContext,
+        deadline: Option<Duration>,
+    ) -> RunTermination {
+        execute_once(&self.state, graph_id, event_id, ctx, deadline).termination
+    }
+
+    /// Derive effect kinds that this composed graph can emit based on registered action manifests.
+    pub fn graph_emittable_effect_kinds(&self) -> HashSet<String> {
+        self.state.graph_emittable_effect_kinds()
+    }
+}
+
+/// ReportingRuntimeHandle holds the same execution dependencies as
+/// `RuntimeHandle`, but exposes the low-level reporting seam used by the host
+/// buffering wrapper.
+#[derive(Clone)]
+pub struct ReportingRuntimeHandle {
+    state: RuntimeState,
+}
+
+impl ReportingRuntimeHandle {
+    pub fn new(
+        graph: Arc<ExpandedGraph>,
+        catalog: Arc<CorePrimitiveCatalog>,
+        registries: Arc<CoreRegistries>,
+        adapter_provides: AdapterProvides,
+    ) -> Self {
+        Self {
+            state: RuntimeState::new(graph, catalog, registries, adapter_provides),
+        }
+    }
+
+    pub fn run_reporting(
+        &self,
+        graph_id: &GraphId,
+        event_id: &EventId,
+        ctx: &ExecutionContext,
+        deadline: Option<Duration>,
+        effects_out: &mut Vec<ActionEffect>,
+    ) -> RunTermination {
+        let result = execute_once(&self.state, graph_id, event_id, ctx, deadline);
+        *effects_out = result.effects;
+        result.termination
+    }
+
+    pub fn graph_emittable_effect_kinds(&self) -> HashSet<String> {
+        self.state.graph_emittable_effect_kinds()
+    }
+}
+
+fn execute_once(
+    state: &RuntimeState,
+    graph_id: &GraphId,
+    event_id: &EventId,
+    ctx: &ExecutionContext,
+    deadline: Option<Duration>,
+) -> RunResult {
+    if matches!(deadline, Some(d) if d.is_zero()) {
+        return RunResult {
+            termination: RunTermination::Aborted,
+            effects: vec![],
+        };
+    }
+
+    let validated = match runtime_validate(&state.graph, &*state.catalog) {
+        Ok(graph) => graph,
+        Err(_) => {
+            return RunResult {
+                termination: RunTermination::Failed(ErrKind::ValidationFailed),
+                effects: vec![],
+            }
+        }
+    };
+
+    if state.validate_composition(&validated).is_err() {
+        return RunResult {
+            termination: RunTermination::Failed(ErrKind::ValidationFailed),
+            effects: vec![],
+        };
+    }
+
+    let registries = Registries {
+        sources: &state.registries.sources,
+        computes: &state.registries.computes,
+        triggers: &state.registries.triggers,
+        actions: &state.registries.actions,
+    };
+
+    match execute_with_metadata(
+        &validated,
+        &registries,
+        ctx.inner(),
+        graph_id.as_str(),
+        event_id.as_str(),
+    ) {
+        Ok(report) => RunResult {
+            termination: RunTermination::Completed,
+            effects: report.effects,
+        },
+        Err(exec_err) => {
+            let termination = match exec_err {
+                ExecError::ComputeFailed { .. }
+                | ExecError::NonFiniteOutput { .. }
+                | ExecError::MissingRequiredContextKey { .. }
+                | ExecError::ContextKeyTypeMismatch { .. } => {
+                    RunTermination::Failed(ErrKind::SemanticError)
+                }
+                _ => RunTermination::Failed(ErrKind::RuntimeError),
+            };
+            RunResult {
+                termination,
+                effects: vec![],
+            }
+        }
+    }
+}
+
 fn source_parameters_with_manifest_defaults(
     manifest: &ergo_runtime::source::SourcePrimitiveManifest,
     node_parameters: &HashMap<String, ergo_runtime::cluster::ParameterValue>,
@@ -658,7 +724,7 @@ impl RuntimeInvoker for RuntimeHandle {
         ctx: &ExecutionContext,
         deadline: Option<Duration>,
     ) -> RunTermination {
-        RuntimeHandle::run(self, graph_id, event_id, ctx, deadline).termination
+        RuntimeHandle::run(self, graph_id, event_id, ctx, deadline)
     }
 }
 

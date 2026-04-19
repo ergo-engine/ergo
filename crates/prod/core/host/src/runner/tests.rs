@@ -9,7 +9,7 @@
 //!   downstream CLI/SDK suites.
 
 use super::*;
-use ergo_adapter::{ContextKeyProvision, RuntimeHandle};
+use ergo_adapter::{ContextKeyProvision, ReportingRuntimeHandle};
 use ergo_adapter::{EventBindingError, ExternalEventPayloadError};
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
 use ergo_runtime::cluster::{
@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use crate::egress::{EgressChannelConfig, EgressConfig, EgressRoute};
 use crate::error::{HostedEgressValidationError, HostedEventBuildError};
-use crate::host::{EffectApplyError, HandlerCoverageError};
+use crate::host::{BufferingRuntimeInvoker, EffectApplyError, HandlerCoverageError};
 
 fn build_context_set_bool_graph() -> ExpandedGraph {
     let mut nodes = HashMap::new();
@@ -413,13 +413,20 @@ fn build_merge_precedence_graph() -> ExpandedGraph {
 
 // Allow non-Send/Sync in Arc: CoreRegistries and CorePrimitiveCatalog contain non-Send/Sync types.
 #[allow(clippy::arc_with_non_send_sync)]
-fn runtime_for_graph(graph: ExpandedGraph, provides: AdapterProvides) -> RuntimeHandle {
-    RuntimeHandle::new(
+fn reporting_runtime_for_graph(
+    graph: ExpandedGraph,
+    provides: AdapterProvides,
+) -> ReportingRuntimeHandle {
+    ReportingRuntimeHandle::new(
         Arc::new(graph),
         Arc::new(build_core_catalog()),
         Arc::new(core_registries().expect("core registries must initialize for host tests")),
         provides,
     )
+}
+
+fn runtime_for_graph(graph: ExpandedGraph, provides: AdapterProvides) -> BufferingRuntimeInvoker {
+    BufferingRuntimeInvoker::new(reporting_runtime_for_graph(graph, provides))
 }
 
 fn adapter_provides_with_effects(extra_effects: &[&str]) -> AdapterProvides {
@@ -943,7 +950,10 @@ fn replay_step_threads_replay_mode_into_execute_step() {
 #[test]
 fn replay_mode_does_not_start_egress_channels() {
     let provides = adapter_provides_with_effects(&["place_order"]);
-    let runtime = runtime_for_graph(build_number_source_graph(), provides.clone());
+    let runtime = BufferingRuntimeInvoker::new(reporting_runtime_for_graph(
+        build_number_source_graph(),
+        provides.clone(),
+    ));
     let adapter = adapter_config(provides);
     let egress_config = EgressConfig::builder(Duration::from_millis(50))
         .channel(
