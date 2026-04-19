@@ -31,8 +31,7 @@ use ergo_adapter::capture::ExternalEventRecord;
 use ergo_adapter::{ExternalEvent, GraphId, RuntimeInvoker};
 
 use crate::{
-    CaptureBundle, CapturedActionEffect, Constraints, DecisionLog, DecisionLogEntry,
-    EpisodeInvocationRecord, Supervisor,
+    CaptureBundle, Constraints, DecisionLog, DecisionLogEntry, EpisodeInvocationRecord, Supervisor,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,17 +188,7 @@ impl<L: DecisionLog> DecisionLog for CapturingDecisionLog<L> {
     fn log(&self, entry: DecisionLogEntry) {
         self.inner.log(entry.clone());
 
-        let captured_effects: Vec<CapturedActionEffect> = entry
-            .effects
-            .iter()
-            .map(|effect| CapturedActionEffect {
-                effect_hash: crate::compute_effect_hash(effect),
-                effect: effect.clone(),
-            })
-            .collect();
-
-        let mut record = EpisodeInvocationRecord::from(&entry);
-        record.effects = captured_effects;
+        let record = EpisodeInvocationRecord::from(&entry);
 
         let mut guard = self.bundle.lock().expect("capture bundle poisoned");
         guard.decisions.push(record);

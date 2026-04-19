@@ -27,8 +27,8 @@
 //! Safety notes:
 //! - Enrichment is by decision index, not `event_id`, per the host/supervisor
 //!   orchestration contract.
-//! - Host-enriched `effects` overwrite supervisor-populated `record.effects`
-//!   and are the authoritative canonical effect records for host captures.
+//! - Host-enriched `effects` are the authoritative canonical effect records for
+//!   host captures.
 //! - If a sidecar slice has no entry for a decision index, enrichment leaves
 //!   the existing bundle field untouched.
 //! - Sparse `record(...)` calls materialize explicit default gap entries

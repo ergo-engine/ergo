@@ -150,7 +150,6 @@ pub struct DecisionLogEntry {
     pub deadline: Option<Duration>,
     pub termination: Option<RunTermination>,
     pub retry_count: usize,
-    pub effects: Vec<ActionEffect>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -279,15 +278,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
 
         if self.is_concurrency_saturated() {
             self.enqueue_deferred(now, episode_id, &event);
-            self.log_decision(
-                &event,
-                Decision::Defer,
-                Some(now),
-                episode_id,
-                None,
-                0,
-                vec![],
-            );
+            self.log_decision(&event, Decision::Defer, Some(now), episode_id, None, 0);
             return;
         }
 
@@ -301,7 +292,6 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
                 episode_id,
                 None,
                 0,
-                vec![],
             );
             return;
         }
@@ -323,7 +313,6 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
             episode_id,
             Some(termination),
             retry_count,
-            vec![],
         );
     }
 
@@ -364,15 +353,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
         // CASE 1: Nothing due — log no-op
         let Some(key) = due_key else {
             let episode_id = self.next_episode_id();
-            self.log_decision(
-                tick_event,
-                Decision::Defer,
-                None,
-                episode_id,
-                None,
-                0,
-                vec![],
-            );
+            self.log_decision(tick_event, Decision::Defer, None, episode_id, None, 0);
             return;
         };
 
@@ -383,15 +364,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
         if self.is_concurrency_saturated() {
             item.defer_count += 1;
             self.deferred_queue.insert((now, episode_id), item);
-            self.log_decision(
-                tick_event,
-                Decision::Defer,
-                Some(now),
-                episode_id,
-                None,
-                0,
-                vec![],
-            );
+            self.log_decision(tick_event, Decision::Defer, Some(now), episode_id, None, 0);
             return;
         }
 
@@ -407,7 +380,6 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
                 episode_id,
                 None,
                 0,
-                vec![],
             );
             return;
         }
@@ -429,7 +401,6 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
             episode_id,
             Some(termination),
             retry_count,
-            vec![],
         );
     }
 
@@ -490,8 +461,7 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
         }
     }
 
-    // Supervisor decision logging intentionally passes full context
-    #[allow(clippy::too_many_arguments)]
+    // Supervisor decision logging records the scheduling outcome for a single event.
     fn log_decision(
         &self,
         event: &ExternalEvent,
@@ -500,7 +470,6 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
         episode_id: EpisodeId,
         termination: Option<RunTermination>,
         retry_count: usize,
-        effects: Vec<ActionEffect>,
     ) {
         let entry = DecisionLogEntry {
             graph_id: self.graph_id.clone(),
@@ -512,7 +481,6 @@ impl<L: DecisionLog, R: RuntimeInvoker> Supervisor<L, R> {
             deadline: self.constraints.deadline,
             termination,
             retry_count,
-            effects,
         };
         self.decision_log.log(entry);
     }
