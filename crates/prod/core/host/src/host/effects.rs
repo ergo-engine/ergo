@@ -1,5 +1,29 @@
-use crate::host::ContextStore;
-use crate::AdapterProvides;
+//! host::effects
+//!
+//! Purpose:
+//! - Define the host-owned effect-handler seam and the default
+//!   `set_context` handler used by the canonical runner.
+//!
+//! Owns:
+//! - `EffectHandler`, `SetContextHandler`, `AppliedWrite`, and
+//!   `EffectApplyError`.
+//!
+//! Does not own:
+//! - Runtime effect production or the accepted effect contract itself; those
+//!   come from the runtime and adapter layers.
+//! - Hosted-runner orchestration, capture enrichment, or egress dispatch.
+//!
+//! Connects to:
+//! - `runner.rs`, which dispatches handler-owned effects through these types.
+//! - `context_store.rs`, which stores applied writes.
+//!
+//! Safety notes:
+//! - `SetContextHandler` validates declared key, writable, and type before
+//!   mutating `ContextStore`.
+//! - Partial writes are not rolled back when a later write fails.
+
+use super::context_store::ContextStore;
+use ergo_adapter::AdapterProvides;
 use ergo_runtime::common::{ActionEffect, Value};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -169,7 +193,7 @@ fn runtime_value_to_json(value: &Value) -> Option<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provides::ContextKeyProvision;
+    use ergo_adapter::ContextKeyProvision;
     use ergo_runtime::common::EffectWrite;
     use std::collections::HashMap;
 

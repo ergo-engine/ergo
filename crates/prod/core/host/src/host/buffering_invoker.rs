@@ -1,11 +1,36 @@
+//! host::buffering_invoker
+//!
+//! Purpose:
+//! - Hold the host-owned runtime buffer shim that captures `RunResult.effects`
+//!   from `RuntimeHandle::run(...)` while presenting a termination-only
+//!   `RuntimeInvoker` surface to the supervisor.
+//!
+//! Owns:
+//! - `BufferingRuntimeInvoker` and its replace-and-drain buffer lifecycle.
+//! - The private `RuntimeResultProvider` helper seam used by local tests.
+//!
+//! Does not own:
+//! - The public `RuntimeInvoker` contract or `RuntimeHandle` semantics; those
+//!   remain in `ergo_adapter`.
+//! - Effect application or capture enrichment; `runner.rs` owns those later
+//!   host steps.
+//!
+//! Connects to:
+//! - `runner.rs`, which drains pending effects after each supervisor step.
+//! - `ergo_adapter::RuntimeHandle`, which remains the engine behind the shim.
+//!
+//! Safety notes:
+//! - Each `run(...)` call replaces the pending-effect buffer rather than
+//!   extending it, so retries preserve the latest attempt only.
+//! - `drain_pending_effects()` is single-use and clears the buffer.
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use ergo_runtime::common::ActionEffect;
-
-use crate::{
+use ergo_adapter::{
     EventId, ExecutionContext, GraphId, RunResult, RunTermination, RuntimeHandle, RuntimeInvoker,
 };
+use ergo_runtime::common::ActionEffect;
 
 trait RuntimeResultProvider {
     fn run_result(
@@ -92,8 +117,8 @@ impl RuntimeInvoker for BufferingRuntimeInvoker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ergo_adapter::{ErrKind, EventTime, ExternalEvent, ExternalEventKind};
     use ergo_runtime::common::{EffectWrite, Value};
-    use ergo_runtime::runtime::ExecutionContext as RuntimeExecutionContext;
 
     struct ScriptedProvider {
         queue: Mutex<Vec<RunResult>>,
@@ -141,7 +166,7 @@ mod tests {
     fn replaces_pending_effects_on_retry_attempt() {
         let provider = Arc::new(ScriptedProvider::new(vec![
             RunResult {
-                termination: RunTermination::Failed(crate::ErrKind::NetworkTimeout),
+                termination: RunTermination::Failed(ErrKind::NetworkTimeout),
                 effects: vec![effect_for_key("first", 1.0)],
             },
             RunResult {
@@ -150,14 +175,20 @@ mod tests {
             },
         ]));
         let invoker = BufferingRuntimeInvoker::new_with_provider(provider);
-        let ctx = ExecutionContext::new(RuntimeExecutionContext::default());
+        let ctx = ExternalEvent::mechanical_at(
+            EventId::new("seed"),
+            ExternalEventKind::Command,
+            EventTime::default(),
+        )
+        .context()
+        .clone();
         let graph_id = GraphId::new("g");
         let event_id = EventId::new("e");
 
         let first = invoker.run(&graph_id, &event_id, &ctx, None);
         assert_eq!(
             first,
-            RunTermination::Failed(crate::ErrKind::NetworkTimeout)
+            RunTermination::Failed(ErrKind::NetworkTimeout)
         );
         assert_eq!(invoker.pending_effect_count(), 1);
 
@@ -178,7 +209,13 @@ mod tests {
             effects: vec![effect_for_key("k", 42.0)],
         }]));
         let invoker = BufferingRuntimeInvoker::new_with_provider(provider);
-        let ctx = ExecutionContext::new(RuntimeExecutionContext::default());
+        let ctx = ExternalEvent::mechanical_at(
+            EventId::new("seed"),
+            ExternalEventKind::Command,
+            EventTime::default(),
+        )
+        .context()
+        .clone();
 
         let _ = invoker.run(&GraphId::new("g"), &EventId::new("e"), &ctx, None);
         assert_eq!(invoker.pending_effect_count(), 1);

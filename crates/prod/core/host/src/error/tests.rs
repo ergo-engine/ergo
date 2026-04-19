@@ -8,10 +8,11 @@
 use super::*;
 
 use crate::egress::{EgressProcessError, EgressValidationError};
-use ergo_adapter::host::{EffectApplyError, HandlerCoverageError};
 use ergo_adapter::{EventBindingError, ExternalEventPayloadError};
 use std::error::Error as _;
 use std::time::Duration;
+
+use crate::host::{EffectApplyError, HandlerCoverageError};
 
 #[test]
 fn egress_dispatch_failure_channel_accessor_and_display_are_stable() {

@@ -9,7 +9,6 @@
 //!   downstream CLI/SDK suites.
 
 use super::*;
-use ergo_adapter::host::{EffectApplyError, HandlerCoverageError};
 use ergo_adapter::{ContextKeyProvision, RuntimeHandle};
 use ergo_adapter::{EventBindingError, ExternalEventPayloadError};
 use ergo_runtime::catalog::{build_core_catalog, core_registries};
@@ -24,6 +23,7 @@ use std::time::Duration;
 
 use crate::egress::{EgressChannelConfig, EgressConfig, EgressRoute};
 use crate::error::{HostedEgressValidationError, HostedEventBuildError};
+use crate::host::{EffectApplyError, HandlerCoverageError};
 
 fn build_context_set_bool_graph() -> ExpandedGraph {
     let mut nodes = HashMap::new();

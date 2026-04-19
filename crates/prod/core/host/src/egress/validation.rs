@@ -20,7 +20,7 @@
 //! Connects to:
 //! - `runner::validate_hosted_runner_configuration(...)`, which uses this module as
 //!   the canonical live-egress validation seam.
-//! - `ergo_adapter::host::ensure_handler_coverage(...)` for HST-5 ownership checks.
+//! - `crate::host::ensure_handler_coverage(...)` for HST-5 ownership checks.
 //!
 //! Safety notes:
 //! - Warning order is deterministic because `EgressConfig.routes` is a `BTreeMap`.
@@ -33,10 +33,10 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use ergo_adapter::host::{ensure_handler_coverage, HandlerCoverageError};
 use ergo_adapter::AdapterProvides;
 
 use super::EgressConfig;
+use crate::host::{ensure_handler_coverage, HandlerCoverageError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EgressValidationWarning {

@@ -1,6 +1,29 @@
+//! host::coverage
+//!
+//! Purpose:
+//! - Enforce host ownership coverage for graph-emittable effect kinds accepted
+//!   by the adapter contract.
+//!
+//! Owns:
+//! - `ensure_handler_coverage(...)` and the typed
+//!   `HandlerCoverageError` failure surface.
+//!
+//! Does not own:
+//! - Adapter acceptance semantics; it consumes an already-materialized
+//!   `AdapterProvides`.
+//! - Egress routing config parsing or handler implementation details.
+//!
+//! Connects to:
+//! - `runner.rs` and `egress/validation.rs`, which use this as the canonical
+//!   HST-5 ownership gate.
+//!
+//! Safety notes:
+//! - Coverage is checked only for graph-emittable kinds that the adapter
+//!   contract accepts.
+
 use std::collections::{BTreeSet, HashSet};
 
-use crate::AdapterProvides;
+use ergo_adapter::AdapterProvides;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandlerCoverageError {

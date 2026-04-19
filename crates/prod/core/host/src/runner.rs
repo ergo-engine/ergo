@@ -17,7 +17,8 @@
 //!   live in `usecases/live_prep.rs` and `usecases/live_run.rs`.
 //! - Ingress process protocol behavior, which lives in `usecases/process_driver.rs`.
 //! - Replay comparison semantics, which live in `replay.rs` and `ergo_supervisor`.
-//! - `set_context` key/writable/type enforcement, which belongs to the adapter host effect layer.
+//! - `set_context` key/writable/type enforcement, which belongs to the host
+//!   effect layer.
 //!
 //! Connects to:
 //! - `capture_enrichment.rs` for persisted host capture sidecars.
@@ -53,10 +54,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Arc, Mutex};
 
-use ergo_adapter::host::{
-    ensure_handler_coverage, AppliedWrite, BufferingRuntimeInvoker, ContextStore, EffectHandler,
-    SetContextHandler,
-};
 use ergo_adapter::{
     bind_semantic_event_with_binder, compile_event_binder, AdapterProvides, EventId, EventTime,
     ExternalEvent, ExternalEventKind, GraphId, RunTermination, RuntimeHandle,
@@ -79,6 +76,10 @@ use crate::egress::{
 };
 use crate::error::{
     EgressDispatchFailure, HostedEgressValidationError, HostedEventBuildError, HostedStepError,
+};
+use crate::host::{
+    ensure_handler_coverage, AppliedWrite, BufferingRuntimeInvoker, ContextStore, EffectApplyError,
+    EffectHandler, SetContextHandler,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -856,7 +857,7 @@ impl HostedRunner {
                 }
                 (None, false) => {
                     return Err(HostedStepError::from(
-                        ergo_adapter::host::EffectApplyError::UnhandledEffectKind {
+                        EffectApplyError::UnhandledEffectKind {
                             kind: effect.kind.clone(),
                         },
                     ));

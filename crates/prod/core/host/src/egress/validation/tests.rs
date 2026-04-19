@@ -24,11 +24,12 @@
 use super::*;
 
 use crate::egress::{EgressChannelConfig, EgressRoute};
-use ergo_adapter::host::HandlerCoverageError;
 use ergo_adapter::ContextKeyProvision;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::error::Error as _;
 use std::time::Duration;
+
+use crate::host::HandlerCoverageError;
 
 fn adapter_with_effects(effects: &[&str]) -> AdapterProvides {
     AdapterProvides {

@@ -35,6 +35,7 @@ mod error;
 mod expand_diagnostics;
 mod gen_docs_usecase;
 mod graph_dot_usecase;
+pub mod host;
 mod manifest_usecases;
 mod protocol;
 #[allow(clippy::result_large_err)]
