@@ -37,10 +37,10 @@
 //! - Variant names and field shapes are live public API because `ergo-host` and
 //!   `sdk-rust` both re-export them and downstream code pattern-matches them.
 
-use ergo_adapter::host::{EffectApplyError, HandlerCoverageError};
 use ergo_adapter::{EventBindingError, ExternalEventPayloadError};
 
 use crate::egress::{EgressProcessError, EgressValidationError};
+use crate::host::{EffectApplyError, HandlerCoverageError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EgressDispatchFailure {

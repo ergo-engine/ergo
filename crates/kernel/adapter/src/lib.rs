@@ -42,7 +42,6 @@ pub mod composition;
 pub mod errors;
 pub mod event_binding;
 pub mod fixture;
-pub mod host;
 pub mod manifest;
 pub mod provenance;
 pub mod provides;
