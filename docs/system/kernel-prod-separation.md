@@ -139,6 +139,8 @@ If any answer is ambiguous, escalate before merge.
 
 - [Current Architecture](current-architecture.md)
 - [Kernel Closure and v1 Workstream Declaration](kernel.md)
+- [v1 Host Boundary — Invariants and Enforcement](host-boundary.md)
+- [v1 Architecture Freeze Declaration](freeze-v1.md)
 - [Orchestration Phase Invariants](../invariants/07-orchestration.md)
 - [Replay Phase Invariants](../invariants/08-replay.md)
 - [Rule Registry](../invariants/rule-registry.md)

@@ -125,6 +125,11 @@ New semantics are allowed, but must be:
 - Regression-tested
 - Tagged/recorded as new obligations
 
+The v1 host-boundary architecture (supervisor termination-only
+contract, host-owned effect loop, provenance trinity) is specified in
+[`host-boundary.md`](host-boundary.md) and committed at the symbol
+level by [`freeze-v1.md`](freeze-v1.md).
+
 ---
 
 ## Compatibility Posture
@@ -166,6 +171,7 @@ Tracks semantic changes that exceed v0 scope.
 | Item | PR  | Tag            | Description                                                                                                                  |
 |------|-----|----------------|------------------------------------------------------------------------------------------------------------------------------|
 | B.2  | #35 | v1.0.0-alpha.1 | Divide-by-zero semantics: strict divide errors, safe_divide with fallback, NUM-FINITE-1 guard, SemanticError classification |
+| C.1  | —   | (pre-S2.x)     | v1 host-boundary architecture frozen: supervisor termination-only, host-owned effect loop, provenance trinity. Invariant spec in `host-boundary.md`; symbol-level commitment in `freeze-v1.md`. Pre-authorizes S2.1/S2.2/S2.3. |
 
 ---
 

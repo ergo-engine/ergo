@@ -7,6 +7,13 @@ Verified Against Tag: v1.0.0-alpha.1
 Change Rule: v1 only
 ---
 
+> **Version-tag note (2026-04-20).** The frontmatter above is the
+> pre-migration tag; the body of this document describes v1 adapter
+> contract behavior as committed by
+> [`../system/freeze-v1.md`](../system/freeze-v1.md) and specified by
+> [`../system/host-boundary.md`](../system/host-boundary.md).
+> Frontmatter re-anchoring is deferred to the Session 3 doc rewrite.
+
 # Adapter Contract — v0
 
 This document defines the minimal compliance requirements for adapter
