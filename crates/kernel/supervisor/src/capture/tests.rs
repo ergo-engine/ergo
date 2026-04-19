@@ -1,10 +1,12 @@
 //! capture tests
 //!
 //! Purpose:
-//! - Lock the supervisor capture write seam and capture-log hashing behavior.
+//! - Lock the supervisor capture write seam and kernel-side decision-record
+//!   materialization behavior.
 //!
 //! Owns:
-//! - Scenario-heavy tests for atomic file writing and captured effect hashing.
+//! - Scenario-heavy tests for atomic file writing and default-empty decision
+//!   record effects before host enrichment.
 //!
 //! Does not own:
 //! - Production capture/write implementation logic in `capture.rs`.
@@ -171,19 +173,7 @@ fn failed_write_leaves_existing_destination_untouched() {
 }
 
 #[test]
-fn capturing_log_hashes_non_empty_effects_correctly() {
-    use ergo_runtime::common::{ActionEffect, EffectWrite, Value};
-    use sha2::{Digest, Sha256};
-
-    let effect = ActionEffect {
-        kind: "set_context".to_string(),
-        writes: vec![EffectWrite {
-            key: "price".to_string(),
-            value: Value::Number(42.0),
-        }],
-        intents: vec![],
-    };
-
+fn capturing_log_leaves_effects_empty_without_host_enrichment() {
     let bundle = Arc::new(Mutex::new(CaptureBundle {
         capture_version: crate::CAPTURE_FORMAT_VERSION.to_string(),
         graph_id: GraphId::new("hash_test"),
@@ -211,7 +201,6 @@ fn capturing_log_hashes_non_empty_effects_correctly() {
         deadline: None,
         termination: Some(ergo_adapter::RunTermination::Completed),
         retry_count: 0,
-        effects: vec![effect.clone()],
     };
 
     capturing_log.log(entry);
@@ -219,16 +208,8 @@ fn capturing_log_hashes_non_empty_effects_correctly() {
     let guard = bundle.lock().expect("bundle poisoned");
     assert_eq!(guard.decisions.len(), 1);
     let record = &guard.decisions[0];
-    let captured_effects = &record.effects;
-    assert_eq!(captured_effects.len(), 1, "one effect expected");
-    assert_eq!(captured_effects[0].effect, effect);
-
-    let expected_bytes = serde_json::to_vec(&effect).unwrap();
-    let mut hasher = Sha256::new();
-    hasher.update(&expected_bytes);
-    let expected_hash = hex::encode(hasher.finalize());
-    assert_eq!(
-        captured_effects[0].effect_hash, expected_hash,
-        "effect_hash must equal SHA-256 of serde_json::to_vec(&effect)"
+    assert!(
+        record.effects.is_empty(),
+        "kernel capture should leave effects empty until host enrichment runs"
     );
 }

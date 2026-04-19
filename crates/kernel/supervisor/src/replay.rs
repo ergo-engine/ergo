@@ -48,23 +48,7 @@ impl DecisionLog for MemoryDecisionLog {
 impl MemoryDecisionLog {
     pub fn records(&self) -> Vec<EpisodeInvocationRecord> {
         let guard = self.entries.lock().expect("decision log poisoned");
-        guard
-            .iter()
-            .map(|entry| {
-                let mut record = EpisodeInvocationRecord::from(entry);
-                // Hash effects for comparison with captured data.
-                let captured: Vec<CapturedActionEffect> = entry
-                    .effects
-                    .iter()
-                    .map(|effect| CapturedActionEffect {
-                        effect_hash: hash_effect(effect),
-                        effect: effect.clone(),
-                    })
-                    .collect();
-                record.effects = captured;
-                record
-            })
-            .collect()
+        guard.iter().map(EpisodeInvocationRecord::from).collect()
     }
 }
 
