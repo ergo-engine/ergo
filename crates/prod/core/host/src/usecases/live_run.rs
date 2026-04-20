@@ -39,12 +39,13 @@
 //!   `process_driver.rs` via `pub(super)` function parameter. This module
 //!   owns the lifecycle policy (bounded-run limits, host stop); the process
 //!   driver consumes it to decide when to stop reading events.
-//! - The fixture step loop (`run_fixture_items_driver`) and the process driver
-//!   step loop (`process_driver.rs`) share the same commit/interrupt outcome
-//!   routing pattern but are structurally different ingress protocols (nested
-//!   episode→event iteration vs. streaming message parsing). Unifying them
-//!   would require a trait/callback abstraction that adds indirection without
-//!   reducing meaningful risk. The duplication is structural, not accidental.
+//! - The fixture step loop (`run_prepared_fixture_driver`) and the process
+//!   driver step loop (`process_driver.rs`) share the same commit/interrupt
+//!   outcome routing pattern but are structurally different ingress protocols
+//!   (nested episode→event iteration vs. streaming message parsing). Unifying
+//!   them would require a trait/callback abstraction that adds indirection
+//!   without reducing meaningful risk. The duplication is structural, not
+//!   accidental.
 
 // Allow non-Send/Sync in Arc: CoreRegistries and CorePrimitiveCatalog contain non-Send/Sync types.
 #![allow(clippy::arc_with_non_send_sync)]
