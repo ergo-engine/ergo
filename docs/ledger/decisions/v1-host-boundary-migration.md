@@ -25,24 +25,28 @@ valid for what it tracked.
 A forensic audit of post-closure state on 2026-04-19 discovered three
 residual v0 shapes the closure gate did not catch:
 
-- `DecisionLogEntry.effects: Vec<ActionEffect>` still exists in
+- `DecisionLogEntry.effects: Vec<ActionEffect>` still existed in
   `crates/kernel/supervisor/src/lib.rs`. Every production call site
-  writes `vec![]`, so the field is vestigial v0 residue.
-- `RunResult` is still publicly importable from the kernel adapter
-  crate. Any holder of a `RuntimeHandle` can observe effects directly
-  off the return value, so `SUP-2` is preserved by the buffering
-  shim's existence rather than enforced at the type level.
+  wrote `vec![]`, making the field vestigial v0 residue.
+- `RunResult` was still publicly importable from the kernel adapter
+  crate. Any holder of a `RuntimeHandle` could observe effects
+  directly off the return value, so `SUP-2` was preserved by the
+  buffering shim's existence rather than enforced at the type level.
 - At the time of the Session 1 audit, host-behavior modules
   (`BufferingRuntimeInvoker`, `ContextStore`, `ensure_handler_coverage`,
   the effect-handler module) still lived under
   `crates/kernel/adapter/src/host/` rather than
   `crates/prod/core/host/`. That file path was a v0 migration artifact.
-  Session 2 S2.3 relocates them into `crates/prod/core/host/src/host/`.
 
-These are code-shape residuals, not semantic drift. Runtime behavior
-at HEAD `7784f46f` matches the v1 boundary described in
-[`host-boundary.md`](../../system/host-boundary.md); the types and
-module layout encoding that behavior still carry v0 shapes in places.
+All three were discharged in Session 2 at HEAD `0218a5f` via the
+pre-authorized transformations recorded in `freeze-v1.md §4`.
+
+These were code-shape residuals, not semantic drift. Runtime behavior
+at the original authoring HEAD `7784f46f` already matched the v1
+boundary described in
+[`host-boundary.md`](../../system/host-boundary.md); Session 2
+brought the types and module layout encoding that behavior into
+alignment as well.
 
 The audit also surfaced a process finding: the v0 freeze
 ([`freeze.md`](../../system/freeze.md)) referenced a joint-escalation
@@ -69,17 +73,19 @@ this pass.
    symbols in its §3 follow the freeze-v1.md §6 change protocol
    (commit-body acknowledgment naming which symbol changed and why).
 
-3. **Residual debt schedule.** Session 2 removes the three residual
-   v0 shapes via pre-authorized transformations recorded in
-   [`freeze-v1.md §4`](../../system/freeze-v1.md):
+3. **Residual debt schedule (discharged).** Session 2 removed the
+   three residual v0 shapes via the pre-authorized transformations
+   recorded in [`freeze-v1.md §4`](../../system/freeze-v1.md). All
+   three landed at HEAD `0218a5f`:
 
-   - S2.1 removes `DecisionLogEntry.effects`
-   - S2.2 redesigns the runtime seam so `RuntimeHandle::run`'s public
-     API returns `RunTermination` only (effect-observation mechanism
-     chosen during S2.2 planning)
-   - S2.3 relocates host-behavior modules to `crates/prod/core/host/`
+   - S2.1 removed `DecisionLogEntry.effects`
+   - S2.2 redesigned the runtime seam so `RuntimeHandle::run`'s
+     public API returns `RunTermination` only; the reporting seam
+     `ReportingRuntimeHandle::run_reporting(..., &mut Vec<ActionEffect>)`
+     carries effects to the host-owned `BufferingRuntimeInvoker`
+   - S2.3 relocated host-behavior modules to `crates/prod/core/host/`
 
-   Executing these transformations during Session 2 does not require
+   Executing these transformations during Session 2 did not require
    re-escalation.
 
 4. **Escalation-protocol lightening.** The v0 freeze's notional
@@ -141,7 +147,8 @@ rediscovering the method.
    semantic drift.
 
 Outputs of this audit are `host-boundary.md §11` (26-row
-claim-verification pass at HEAD `7784f46f`), `freeze-v1.md §3`
+claim-verification pass, originally authored against HEAD `7784f46f`
+and re-anchored to HEAD `0218a5f` post-Session 2), `freeze-v1.md §3`
 (symbol list verified via grep against current paths), and
 `freeze-v1.md §4` / the §Context of this record (the three residual
 shapes and their Session 2 disposition).

@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-04-19
+Last Updated: 2026-04-20
 Owner: Sebastian (Architect)
 Scope: v1 host boundary — effect loop, context store, capture enrichment, provenance trinity
 Change Rule: Operational log
@@ -11,33 +11,36 @@ Change Rule: Operational log
 
 ## 0. Anchor
 
-HEAD: `7784f46f034798de70ab24f8f3dfb31c9e5142ad`
+HEAD: `0218a5fd01f90649de8da8d3924d694aecec7dae`
 
 This document describes the v1 host boundary as it exists at the HEAD
 above. Every §3–§8 claim cites a file path and line range in the code
-tree at this commit. Downstream rewrites of `07-orchestration.md`,
-`08-replay.md`, `supervisor.md`, and `adapter.md` are deferred to
-Session 3 and must reconcile against §9.
+tree at this commit. The re-anchor from original authoring HEAD
+`7784f46f` to `0218a5f` reflects Session 2's three executed
+transformations (S2.1 `DecisionLogEntry.effects` removal, S2.2 runtime
+seam redesign, S2.3 host-module relocation). Downstream rewrites of
+`07-orchestration.md`, `08-replay.md`, `supervisor.md`, and
+`adapter.md` are deferred to Session 3 and must reconcile against §9.
 
 Files described (short blob hash, path, line count at HEAD):
 
 | hash | path | lines |
 |---|---|---:|
-| `f14eb7b6d4d5` | `crates/kernel/supervisor/src/lib.rs` | 562 |
-| `357cbd4296bd` | `crates/kernel/supervisor/src/capture.rs` | 472 |
-| `40887f188608` | `crates/kernel/supervisor/src/replay.rs` | 371 |
-| `79d84f7d9634` | `crates/kernel/adapter/src/lib.rs` | 728 |
+| `88a261cf7364` | `crates/kernel/supervisor/src/lib.rs` | 530 |
+| `59b4db69ef8e` | `crates/kernel/supervisor/src/capture.rs` | 461 |
+| `882943fd5ab9` | `crates/kernel/supervisor/src/replay.rs` | 355 |
+| `ccd3a6b80c9c` | `crates/kernel/adapter/src/lib.rs` | 793 |
 | `6dc42bd9f215` | `crates/kernel/adapter/src/provenance.rs` | 107 |
-| `0ecf96723dbe` | `crates/prod/core/host/src/host/buffering_invoker.rs` | 219 |
+| `bf160dbd5a09` | `crates/prod/core/host/src/host/buffering_invoker.rs` | 260 |
 | `496cdab95622` | `crates/prod/core/host/src/host/context_store.rs` | 44 |
 | `b499c9b41eec` | `crates/prod/core/host/src/host/coverage.rs` | 194 |
 | `36ea02697c3d` | `crates/kernel/runtime/src/provenance.rs` | 397 |
-| `e53ef463a1e3` | `crates/prod/core/host/src/runner.rs` | 929 |
+| `6f734a45a193` | `crates/prod/core/host/src/runner.rs` | 929 |
 | `5e4c45dfc69f` | `docs/invariants/07-orchestration.md` | 122 |
-| `40e5364b99fc` | `docs/invariants/08-replay.md` | 106 |
-| `e0b3fb797542` | `docs/orchestration/supervisor.md` | 524 |
-| `968e3c6d3e13` | `docs/orchestration/adapter.md` | 120 |
-| `90c6ce047541` | `docs/system/kernel-prod-separation.md` | 144 |
+| `1ef3df307553` | `docs/invariants/08-replay.md` | 117 |
+| `e5c1717abd4a` | `docs/orchestration/supervisor.md` | 531 |
+| `84e6c31f1325` | `docs/orchestration/adapter.md` | 127 |
+| `3e91dfd3f6c8` | `docs/system/kernel-prod-separation.md` | 146 |
 
 The claim-verification pass (§11) re-checks these anchors as the final
 step.
@@ -133,8 +136,8 @@ Non-responsibilities:
 
 Evidence:
 
-- `crates/kernel/supervisor/src/lib.rs:213` — `Supervisor` struct
-- `EpisodeInvocationRecord::from(&DecisionLogEntry)` in `crates/kernel/supervisor/src/lib.rs:173-188` hardcodes `effects: vec![]`, so kernel capture remains termination-only even after `DecisionLogEntry.effects` was removed.
+- `crates/kernel/supervisor/src/lib.rs:212` — `Supervisor` struct
+- `EpisodeInvocationRecord::from(&DecisionLogEntry)` in `crates/kernel/supervisor/src/lib.rs:172-187` hardcodes `effects: vec![]`, so kernel capture remains termination-only even after `DecisionLogEntry.effects` was removed.
 
 ### 3.2 Host (prod) — effect loop + context + enrichment
 
@@ -183,7 +186,7 @@ by a distinct layer and bounds a distinct failure domain.
 - Produced by: `fingerprint(manifest)` — `crates/kernel/adapter/src/provenance.rs:10`
 - Input: recursively key-sorted (canonicalized) `AdapterManifest` JSON
 - Absent-adapter fallback: the constant string `"none"` (`NO_ADAPTER_PROVENANCE` in `crates/kernel/supervisor/src/lib.rs:50`)
-- Matched on strict replay (`REP-7`): `validate_replay_provenance` — `crates/kernel/supervisor/src/replay.rs:245`
+- Matched on strict replay (`REP-7`): `validate_replay_provenance` — `crates/kernel/supervisor/src/replay.rs:229`
 
 ### 4.2 `runtime_provenance`
 
@@ -196,7 +199,7 @@ by a distinct layer and bounds a distinct failure domain.
 
 - Produced by: host (post-step) — `crates/prod/core/host/src/runner.rs:649`
 - Records the egress runtime configuration used during live dispatch
-- Field shape: `CaptureBundle.egress_provenance: Option<String>` — `crates/kernel/supervisor/src/lib.rs:201`; `None` for fixture/adapterless runs
+- Field shape: `CaptureBundle.egress_provenance: Option<String>` — `crates/kernel/supervisor/src/lib.rs:200`; `None` for fixture/adapterless runs
 - Decision record: [`docs/ledger/decisions/egress-provenance.md`](../ledger/decisions/egress-provenance.md)
 
 Replay semantics:
@@ -227,7 +230,7 @@ For every `on_event(...)`:
 1. Host reads `ContextStore.snapshot()` — `runner.rs:722`
 2. Host merges adapter-declared, schema-allowed store keys into a candidate payload
 3. Host overlays incoming event payload fields on top — `runner.rs:728-730`
-4. Final merged payload is passed to the adapter binder at `runner.rs:731-740`
+4. Final merged payload is passed to the adapter binder at `runner.rs:732-740`
 
 Overlay rule: **keys present in the incoming event replace any same-named keys from the store.**
 
@@ -262,8 +265,8 @@ The runtime does not call back into the supervisor with effects. It
 writes effects into a host-owned buffer held by
 `BufferingRuntimeInvoker`:
 
-- Each `run(...)` **replaces** `pending_effects` with the latest invocation's effects — `crates/prod/core/host/src/host/buffering_invoker.rs:112` (`guard.pending_effects = result.effects` inside `impl RuntimeInvoker for BufferingRuntimeInvoker`, lines 100-115)
-- Each host step **drains** via `std::mem::take(...)` — `buffering_invoker.rs:86`
+- Each `run(...)` **replaces** `pending_effects` with the latest invocation's effects — `crates/prod/core/host/src/host/buffering_invoker.rs:132` (`guard.pending_effects = effects;` inside `impl RuntimeInvoker for BufferingRuntimeInvoker`, lines 117-136; the sink `Vec` is populated by `self.engine.run_reporting(..., &mut effects)` at lines 126-128)
+- Each host step **drains** via `std::mem::take(...)` — `buffering_invoker.rs:99`
 - Before the next `on_event`, host asserts `pending_effect_count() == 0` — `runner.rs:547-551`
 
 Replace (not append) semantics are why `HST-4` holds: a retry that
@@ -278,7 +281,7 @@ Once the host drains and dispatches effects, no rollback is possible:
 - Egress dispatch is irreversible by construction (external I/O is committed when the channel acks)
 - If the outcome terminates abnormally, prior effects from this decision are still committed (`SUP-6` — invocation-scoped atomicity)
 
-Evidence: `runner.rs:794` — comment `"SUP-6 alignment: no rollback on handler failure."`
+Evidence: `runner.rs:793` — comment `"SUP-6 alignment: no rollback on handler failure."`
 
 ### 6.3 Buffer shim location
 
@@ -295,16 +298,16 @@ which matches the v1 ownership contract.
 
 | `CaptureBundle` field | Author | Site |
 |---|---|---|
-| `capture_version` | kernel capture | `crates/kernel/supervisor/src/capture.rs:241` |
-| `graph_id` | kernel capture | `capture.rs:242` |
-| `config` | kernel capture | `capture.rs:243` |
-| `events` | kernel capture (`CapturingSession::on_event`) | `capture.rs:260` (`guard.events.push(...)`) |
-| `decisions` (non-effect fields) | kernel capture (`CapturingDecisionLog`) | `capture.rs:189-206` (`CapturingDecisionLog::log` body; `EpisodeInvocationRecord::from(&entry)` at line 201, push at line 205) |
+| `capture_version` | kernel capture | `crates/kernel/supervisor/src/capture.rs:230` |
+| `graph_id` | kernel capture | `capture.rs:231` |
+| `config` | kernel capture | `capture.rs:232` |
+| `events` | kernel capture (`CapturingSession::on_event`) | `capture.rs:249` (`guard.events.push(...)`) |
+| `decisions` (non-effect fields) | kernel capture (`CapturingDecisionLog`) | `capture.rs:187-196` (`CapturingDecisionLog::log` body; `EpisodeInvocationRecord::from(&entry)` at line 191, push at line 194) |
 | `decisions[i].effects` | **host** (authoritative writer; kernel capture initializes empty defaults first, see §7.3) | `runner.rs:650-655` via `enrich_bundle_with_host_artifacts` |
 | `decisions[i].intent_acks` | host | same |
 | `decisions[i].interruptions` | host | same |
-| `adapter_provenance` | host seed → kernel capture | `runner.rs:455-465` (host seed) / `capture.rs:246` (kernel store in `CaptureBundle` literal at `capture.rs:240-248`) |
-| `runtime_provenance` | host seed → kernel capture | `runner.rs:465-466` (host seed, passed into `CapturingSession::new_with_provenance`) / `capture.rs:247` (kernel store) |
+| `adapter_provenance` | host seed → kernel capture | `runner.rs:455-465` (host seed) / `capture.rs:235` (kernel store in `CaptureBundle` literal at `capture.rs:229-238`) |
+| `runtime_provenance` | host seed → kernel capture | `runner.rs:465-466` (host seed, passed into `CapturingSession::new_with_provenance`) / `capture.rs:236` (kernel store) |
 | `egress_provenance` | host (post-step) | `runner.rs:649` |
 
 ### 7.2 Association by decision index, not `event_id`
@@ -345,23 +348,23 @@ effect content on the bundle comes from host enrichment.
 
 ### 8.1 Entry
 
-`replay_checked_strict(bundle, runtime, expectations)` — `crates/kernel/supervisor/src/replay.rs:200`.
+`replay_checked_strict(bundle, runtime, expectations)` — `crates/kernel/supervisor/src/replay.rs:184`.
 
 ### 8.2 Preflight (`validate_bundle_strict`)
 
-1. Capture version match (`REP-1` — self-validating form) — `replay.rs:175-179`
-2. All event records pass `validate_hash()` (`REP-1` — rehydration integrity) — `replay.rs:181-187`
-3. No duplicate `event_id`s (`REP-8`) — `replay.rs:273-284`
-4. Provenance match (`REP-7`) — `replay.rs:245-271`:
+1. Capture version match (`REP-1` — self-validating form) — `replay.rs:159-163`
+2. All event records pass `validate_hash()` (`REP-1` — rehydration integrity) — `replay.rs:165-171`
+3. No duplicate `event_id`s (`REP-8`) — `replay.rs:257-268`
+4. Provenance match (`REP-7`) — `replay.rs:229-255`:
    - `adapter_provenance == expected_adapter_provenance`, with the `"none"` bidirectional guard (`AdapterRequiredForProvenancedCapture` / `UnexpectedAdapterProvidedForNoAdapterCapture`)
    - `runtime_provenance == expected_runtime_provenance`
 
 ### 8.3 Decision comparison
 
-`compare_decisions(captured, replayed)` — `replay.rs:290`:
+`compare_decisions(captured, replayed)` — `replay.rs:274`:
 
-- Non-effect decision fields compared positionally (`event_id`, `decision`, `schedule_at`, `episode_id`, `deadline`, `termination`, `retry_count`) — `replay.rs:299-309`
-- `decisions[i].effects` compared by `(effect, effect_hash)` pair equality — `replay.rs:328-345`
+- Non-effect decision fields compared positionally (`event_id`, `decision`, `schedule_at`, `episode_id`, `deadline`, `termination`, `retry_count`) — `replay.rs:284-293`
+- `decisions[i].effects` compared by `(effect, effect_hash)` pair equality — `replay.rs:312-329`
 - Mismatch in effect count or content returns `ReplayError::EffectMismatch`
 
 ### 8.4 What replay does not verify
@@ -393,10 +396,10 @@ Status values:
 | `CXT-1` | clarified | `runner.rs:714-744` enforces adapter-governed context keys; spec prose in `supervisor.md §3` still correctly says "externally supplied and adapter-governed" but should name the host-side enforcement locus |
 | `SUP-1` | applies | `crates/kernel/supervisor/src/lib.rs` — `Supervisor::graph_id` is private with no setter; set only at construction |
 | `SUP-2` | applies | `RuntimeInvoker::run()` returns `RunTermination` only (`crates/kernel/adapter/src/lib.rs`); no kernel supervisor path observes `RunResult`. The rule holds verbatim at HEAD. Adjacent technical debt — `RunResult`'s current adapter-crate visibility while the shim now lives in `ergo-host` — is tracked in §10 S2.2 and is a belt-and-braces hardening, not a rule change. |
-| `SUP-3` | applies | Replay harness in `crates/kernel/supervisor/tests/replay_harness.rs`; strict entry at `replay.rs:200` |
+| `SUP-3` | applies | Replay harness in `crates/kernel/supervisor/tests/replay_harness.rs`; strict entry at `replay.rs:184` |
 | `SUP-4` | applies | `should_retry()` matches only `NetworkTimeout | AdapterUnavailable | RuntimeError | TimedOut` — `supervisor/src/lib.rs` |
 | `SUP-5` | applies | `ErrKind` enum in `supervisor/src/lib.rs` has only mechanical variants |
-| `SUP-6` | applies | Invocation-scoped atomicity preserved by host non-rollback posture — §6.2; `runner.rs:794` |
+| `SUP-6` | applies | Invocation-scoped atomicity preserved by host non-rollback posture — §6.2; `runner.rs:793` |
 | `SUP-7` | applies | `DecisionLog` trait declares only `fn log()` in `crates/kernel/supervisor/src/lib.rs`; `records()` is on the concrete `MemoryDecisionLog`/`CapturingDecisionLog` impls, not on the trait. The write-only property holds verbatim at HEAD. |
 | `SUP-TICK-1` | applies | `supervisor/src/lib.rs` — Pump scheduling; legacy `Tick` alias in serde `#[serde(alias = "Tick")]` |
 | `RTHANDLE-META-1` | applies | `crates/kernel/adapter/src/lib.rs` — `RuntimeHandle::run()` forwards `graph_id` and `event_id` into `execute_with_metadata(...)` |
@@ -405,7 +408,7 @@ Status values:
 | `HST-1` | applies | Host applies effects at the boundary; not read back from `DecisionLog` — `runner.rs:576` (drain), `runner.rs:746` (dispatch) |
 | `HST-2` | applies | `SetContextHandler::apply` in `crates/prod/core/host/src/host/effects.rs` validates declared key, writable, type |
 | `HST-3` | applies | `runner.rs:599-603` — non-invoke decisions must produce zero effects |
-| `HST-4` | applies | Replace semantics — `buffering_invoker.rs:112` — §6.1 |
+| `HST-4` | applies | Replace semantics — `buffering_invoker.rs:132` — §6.1 |
 | `HST-5` | applies | `ensure_handler_coverage` — `crates/prod/core/host/src/host/coverage.rs:50-78` |
 | `HST-6` | applies | Incoming > store overlay — `runner.rs:721-730` — §5.1 |
 | `HST-7` | applies | Replace-only, drain-once, commit-non-empty, no rollback — §6 |
@@ -417,14 +420,14 @@ Status values:
 | `SDK-CANON-1` | out-of-scope | SDK-layer delegation; see `docs/system/kernel-prod-separation.md §3` |
 | `SDK-CANON-2` | out-of-scope | Same |
 | `SDK-CANON-3` | out-of-scope | Same |
-| `REP-1` | applies | `ExternalEventRecord::validate_hash()` — `replay.rs:181-187` |
-| `REP-2` | applies | `rehydrate_event` — `replay.rs:356` |
+| `REP-1` | applies | `ExternalEventRecord::validate_hash()` — `replay.rs:165-171` |
+| `REP-2` | applies | `rehydrate_event` — `replay.rs:340` |
 | `REP-3` | applies | Fault injection keys on `EventId` — `RTHANDLE-ID-1` mirror |
 | `REP-4` | applies | Capture types are in `kernel/supervisor/src/capture.rs`; runtime types are in `kernel/runtime`; the two are distinct |
 | `REP-5` | applies | Supervisor does not read wall-clock time; `schedule_at` is externally supplied |
 | `REP-6` | closed | `08-replay.md` lines 58–62: "Prior documentation suggesting 'triggers may hold internal state' was a semantic error that conflated execution-local bookkeeping with ontological state. Triggers are stateless (see `TRG-STATE-1`). There is no trigger state to capture. Temporal patterns requiring memory (once, count, latch, debounce) must be implemented as clusters." Closed by clarification 2025-12-28. |
-| `REP-7` | applies | `validate_replay_provenance` — `replay.rs:245-271` — §8.2 |
-| `REP-8` | applies | `validate_unique_event_ids` — `replay.rs:273-284` — §8.2 |
+| `REP-7` | applies | `validate_replay_provenance` — `replay.rs:229-255` — §8.2 |
+| `REP-8` | applies | `validate_unique_event_ids` — `replay.rs:257-268` — §8.2 |
 | `REP-SCOPE` | applies | Scope A (supervisor scheduling + host-owned effect integrity, same-ingestion path) |
 | `SOURCE-TRUST` | applies | Trust-based; `docs/orchestration/supervisor.md §2.3` |
 | `INGEST-TIME-1` | deferred | Cross-ingestion normalization parity — explicitly deferred in `08-replay.md` |
@@ -438,33 +441,39 @@ declaration and composition, not the host boundary).
 
 ---
 
-## 10. Known v1 technical debt (non-normative)
+## 10. Known v1 technical debt (historical)
 
-The remaining item below is the last Session 2 migration artifact. It
-does not change v1 semantics; it codifies the boundary by tightening
-the runtime seam now that S2.1 and S2.3 have landed.
+At the original authoring HEAD `7784f46f`, this section listed a
+single residual item — S2.2, a public-seam tightening that
+`RunResult` remained publicly importable from the kernel adapter
+crate while `BufferingRuntimeInvoker` had moved under
+`ergo-host::host`. That item was discharged in Session 2 at HEAD
+`0218a5f`:
 
-| ID | What | Where | Session 2 work |
-|---|---|---|---|
-| S2.2 | `RunResult` is publicly importable from the kernel adapter crate while `BufferingRuntimeInvoker` now lives in `ergo-host::host` | `crates/kernel/adapter/src/lib.rs` and `crates/prod/core/host/src/host/buffering_invoker.rs` | Narrowing `RunResult` to `pub(crate)` is no longer viable after S2.3. Remaining options are a no-op (`pub` stays) or a seam redesign. Candidate redesign direction at current HEAD: have `RuntimeHandle::run(...)` return `RunTermination` directly and route effects to the shim through a shim-owned sink (e.g. `&mut dyn EffectSink` or a closure), eliminating `RunResult` as a shared return type. A second direction raised during review — collapsing `RunResult` into a variant on `RunTermination` — is flagged rather than listed. The load-bearing concern is persisted-format surface: `RunTermination` derives `Serialize, Deserialize` and is persisted on `EpisodeInvocationRecord.termination`, so any effect-bearing variant widens the capture bundle's on-disk shape and breaks forward-compatibility for existing captures, regardless of how the supervisor reads the value. The secondary, `SUP-2`-adjacent concern is that any supervisor code pattern-matching with a payload binding would observe effects — avoidable in code but not enforced by the type. Neither remaining direction is fully audited against `RuntimeHandle::run`'s five `RunResult`-producing sites in `adapter/src/lib.rs`; that audit is S2.2's step zero. |
+- `RuntimeHandle::run`'s public signature now returns `RunTermination` only.
+- A separate adapter-layer type `ReportingRuntimeHandle` carries the low-level reporting seam `run_reporting(..., effects_out: &mut Vec<ActionEffect>) -> RunTermination`, consumed only by `BufferingRuntimeInvoker` in `ergo-host`.
+- `RunResult` is internal to `ergo-adapter` and no longer part of the public or freeze surface.
 
-The item above is **non-semantic**. It brings the remaining public seam
-into alignment with the boundary that this document establishes.
+§3.2 of this document reflects the post-execution shape. This section
+is retained as a historical anchor; no outstanding v1 debt is tracked
+here at current HEAD.
 
 ---
 
 ## 11. Claim verification (read-back pass)
 
-Each row below is a semantic claim made in §§3–8. Every claim must
-resolve to the stated file and line range at HEAD
-`7784f46f034798de70ab24f8f3dfb31c9e5142ad`. This section is the
-final pre-merge gate for Artifact B; if any row does not resolve, the
-claim is retracted or rewritten before merge.
+Each row below is a semantic claim made in §§3–8. Every claim resolves
+to the stated file and line range at HEAD
+`0218a5fd01f90649de8da8d3924d694aecec7dae`. This section was the
+pre-merge gate at original authoring (HEAD `7784f46f`); it was
+re-anchored post-Session 2 at HEAD `0218a5f` to reflect the three
+executed transformations (S2.1, S2.2, S2.3). If any row does not
+resolve at current HEAD, the claim is retracted or rewritten.
 
 | # | Claim (section) | Stated source | Verified |
 |---|---|---|:---:|
 | 1 | Supervisor observes only `RunTermination` (§3.1) | `crates/kernel/supervisor/src/lib.rs` — `Supervisor` + `RuntimeInvoker::run` signature in `crates/kernel/adapter/src/lib.rs` | ✓ |
-| 2 | Kernel capture initializes `EpisodeInvocationRecord.effects` to `vec![]` before host enrichment (§3.1, §7.3) | `supervisor/src/lib.rs:173-188` — `impl From<&DecisionLogEntry> for EpisodeInvocationRecord` hardcodes `effects: vec![]`; `capture.rs:189-205` pushes that record directly | ✓ |
+| 2 | Kernel capture initializes `EpisodeInvocationRecord.effects` to `vec![]` before host enrichment (§3.1, §7.3) | `supervisor/src/lib.rs:172-187` — `impl From<&DecisionLogEntry> for EpisodeInvocationRecord` hardcodes `effects: vec![]`; `capture.rs:187-196` pushes that record directly | ✓ |
 | 3 | Host builds `ExternalEvent` with context merge (§3.2, §5) | `runner.rs:714-744` `build_external_event` | ✓ |
 | 4 | Host drains the per-step effect buffer (§3.2, §6.1) | `runner.rs:576` `self.runtime.drain_pending_effects()` | ✓ |
 | 5 | Host dispatches handler-owned effects into `ContextStore` (§3.2) | `runner.rs:794-796` — `handler.apply(effect, &mut self.context_store, ...)` | ✓ |
@@ -476,19 +485,19 @@ claim is retracted or rewritten before merge.
 | 11 | `runtime_provenance` scheme is `rpv1:sha256:{hex}` (§4.2) | `crates/kernel/runtime/src/provenance.rs:74-78` `format!("{}:sha256:{}", RuntimeProvenanceScheme::Rpv1.prefix(), to_hex(&digest))` with `prefix() == "rpv1"` | ✓ |
 | 12 | Context merge overlays incoming > store (§5.1) | `runner.rs:721-730` — store keys inserted first (lines 722-726), incoming keys inserted after (lines 728-730) | ✓ |
 | 13 | Store gate requires manifest declaration + schema-allowed + present in snapshot (§5.2) | `runner.rs:722-726` — conditional on `adapter.provides.context.contains_key(key) && allowed_store_keys.contains(key)`, iterating over `self.context_store.snapshot()` | ✓ |
-| 14 | Effect buffer replace on `run()` (§6.1) | `buffering_invoker.rs:112` `guard.pending_effects = result.effects` assignment (not extend), inside `impl RuntimeInvoker for BufferingRuntimeInvoker` at lines 100-115 | ✓ |
-| 15 | Effect buffer drain uses `std::mem::take` (§6.1) | `buffering_invoker.rs:86` `std::mem::take(&mut guard.pending_effects)` | ✓ |
+| 14 | Effect buffer replace on `run()` (§6.1) | `buffering_invoker.rs:132` `guard.pending_effects = effects;` assignment (not extend), inside `impl RuntimeInvoker for BufferingRuntimeInvoker` at lines 117-136; the sink `Vec` is populated by `self.engine.run_reporting(..., &mut effects)` at lines 126-128 | ✓ |
+| 15 | Effect buffer drain uses `std::mem::take` (§6.1) | `buffering_invoker.rs:99` `std::mem::take(&mut guard.pending_effects)` | ✓ |
 | 16 | Host asserts empty buffer before next `on_event` (§6.1) | `runner.rs:547-551` `if self.runtime.pending_effect_count() != 0 { return Err(HostedStepError::LifecycleViolation { ... }); }` | ✓ |
-| 17 | No rollback on handler failure (§6.2) | `runner.rs:794` comment `// SUP-6 alignment: no rollback on handler failure.` | ✓ |
+| 17 | No rollback on handler failure (§6.2) | `runner.rs:793` comment `// SUP-6 alignment: no rollback on handler failure.` | ✓ |
 | 18 | Host enrichment is by decision index (§7.2) | `runner.rs:759-761` — `self.applied_effects.record(decision_index, drained_effects.to_vec())` guarded by `if !drained_effects.is_empty()` | ✓ |
-| 19 | Kernel capture writes only the empty `record.effects` placeholder; non-empty effects come from host enrichment (§7.3) | `crates/kernel/supervisor/src/capture.rs:189-205` — `CapturingDecisionLog::log` pushes `EpisodeInvocationRecord::from(&entry)` directly; `runner.rs:650-655` later enriches authoritative host effects | ✓ |
-| 20 | Strict replay entrypoint (§8.1) | `replay.rs:200-207` `pub fn replay_checked_strict<R: RuntimeInvoker + Clone>(...) -> Result<Vec<EpisodeInvocationRecord>, ReplayError>` | ✓ |
-| 21 | Preflight version match (§8.2) | `replay.rs:175-179` `if bundle.capture_version != crate::CAPTURE_FORMAT_VERSION` | ✓ |
-| 22 | Preflight event hash validation (§8.2) | `replay.rs:181-187` `for record in &bundle.events { if !record.validate_hash() { ... } }` | ✓ |
-| 23 | Preflight duplicate `event_id` rejection (§8.2) | `replay.rs:273-284` `validate_unique_event_ids` | ✓ |
-| 24 | Provenance match with `"none"` bidirectional guard (§8.2) | `replay.rs:249-261` — `AdapterRequiredForProvenancedCapture` and `UnexpectedAdapterProvidedForNoAdapterCapture` variants | ✓ |
-| 25 | Decision comparison covers non-effect fields positionally (§8.3) | `replay.rs:299-309` — `cap.event_id != rep.event_id || cap.decision != rep.decision || ...` | ✓ |
-| 26 | Effect comparison uses `(effect, effect_hash)` equality (§8.3) | `replay.rs:328-345` `if cap_eff.effect != rep_eff.effect || cap_eff.effect_hash != rep_eff.effect_hash` | ✓ |
+| 19 | Kernel capture writes only the empty `record.effects` placeholder; non-empty effects come from host enrichment (§7.3) | `crates/kernel/supervisor/src/capture.rs:187-196` — `CapturingDecisionLog::log` pushes `EpisodeInvocationRecord::from(&entry)` directly; `runner.rs:650-655` later enriches authoritative host effects | ✓ |
+| 20 | Strict replay entrypoint (§8.1) | `replay.rs:184-191` `pub fn replay_checked_strict<R: RuntimeInvoker + Clone>(...) -> Result<Vec<EpisodeInvocationRecord>, ReplayError>` | ✓ |
+| 21 | Preflight version match (§8.2) | `replay.rs:159-163` `if bundle.capture_version != crate::CAPTURE_FORMAT_VERSION` | ✓ |
+| 22 | Preflight event hash validation (§8.2) | `replay.rs:165-171` `for record in &bundle.events { if !record.validate_hash() { ... } }` | ✓ |
+| 23 | Preflight duplicate `event_id` rejection (§8.2) | `replay.rs:257-268` `validate_unique_event_ids` | ✓ |
+| 24 | Provenance match with `"none"` bidirectional guard (§8.2) | `replay.rs:234-239` — `AdapterRequiredForProvenancedCapture` and `UnexpectedAdapterProvidedForNoAdapterCapture` variants | ✓ |
+| 25 | Decision comparison covers non-effect fields positionally (§8.3) | `replay.rs:284-293` — `cap.event_id != rep.event_id || cap.decision != rep.decision || ...` | ✓ |
+| 26 | Effect comparison uses `(effect, effect_hash)` equality (§8.3) | `replay.rs:312-329` `if cap_eff.effect != rep_eff.effect || cap_eff.effect_hash != rep_eff.effect_hash` | ✓ |
 
 Footnote on scope: `INGEST-TIME-1` (cross-ingestion normalization
 parity) is not verified here because it is explicitly deferred in
