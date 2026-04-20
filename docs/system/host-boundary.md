@@ -395,7 +395,7 @@ Status values:
 |---|---|---|
 | `CXT-1` | clarified | `runner.rs:714-744` enforces adapter-governed context keys; spec prose in `supervisor.md §3` still correctly says "externally supplied and adapter-governed" but should name the host-side enforcement locus |
 | `SUP-1` | applies | `crates/kernel/supervisor/src/lib.rs` — `Supervisor::graph_id` is private with no setter; set only at construction |
-| `SUP-2` | applies | `RuntimeInvoker::run()` returns `RunTermination` only (`crates/kernel/adapter/src/lib.rs`); no kernel supervisor path observes `RunResult`. The rule holds verbatim at HEAD. Adjacent technical debt — `RunResult`'s current adapter-crate visibility while the shim now lives in `ergo-host` — is tracked in §10 S2.2 and is a belt-and-braces hardening, not a rule change. |
+| `SUP-2` | applies | `RuntimeInvoker::run()` returns `RunTermination` only (`crates/kernel/adapter/src/lib.rs`); no kernel supervisor path observes `RunResult`. The rule holds verbatim at HEAD. Post-S2.2, `RunResult` is private to `ergo-adapter` (`crates/kernel/adapter/src/lib.rs:182`) and `RuntimeHandle::run`'s public signature returns `RunTermination` only, so `SUP-2` is type-enforced at the public seam rather than preserved by the shim's existence. |
 | `SUP-3` | applies | Replay harness in `crates/kernel/supervisor/tests/replay_harness.rs`; strict entry at `replay.rs:184` |
 | `SUP-4` | applies | `should_retry()` matches only `NetworkTimeout | AdapterUnavailable | RuntimeError | TimedOut` — `supervisor/src/lib.rs` |
 | `SUP-5` | applies | `ErrKind` enum in `supervisor/src/lib.rs` has only mechanical variants |

@@ -164,7 +164,7 @@ That is the entire protocol.
 
 **Rationale note:** The v0 freeze (`freeze.md`) referenced a joint-escalation workflow that was not defined in any reachable doc and was not honored in practice. Lighter discipline that will be followed beats heavier discipline that won't. This is a solo-dev-plus-AI codebase; protocol weight has to be proportionate to enforcement capacity.
 
-The symbol-specific scope of §3 keeps the surface narrow enough that drift on it is notable. When drift does happen, `host-boundary.md` (invariant spec) and the Session 1 retrospective (Artifact A, forthcoming) provide the working memory for cheap reconstruction.
+The symbol-specific scope of §3 keeps the surface narrow enough that drift on it is notable. When drift does happen, [`host-boundary.md`](host-boundary.md) (invariant spec) and the Session 1 retrospective at [`v1-host-boundary-migration.md`](../ledger/decisions/v1-host-boundary-migration.md) provide the working memory for cheap reconstruction.
 
 ---
 
