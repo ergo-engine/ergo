@@ -11,18 +11,17 @@ Change Rule: Commit-body acknowledgment (see §6)
 
 ## 0. Anchor
 
-HEAD: `7784f46f034798de70ab24f8f3dfb31c9e5142ad`
+HEAD: `0218a5fd01f90649de8da8d3924d694aecec7dae`
 
 This declaration freezes the v1 host-boundary architecture surface as
 observed at the HEAD above. Each symbol in §3 is named with its crate
 path at this commit. The invariant specification this declaration
 commits to is [`host-boundary.md`](host-boundary.md) (CANONICAL v1).
 
-One pre-authorized code change remains scheduled after this freeze
-landed and is recorded in §4 so that executing it does not read as a
-breach:
-
-- Session 2 S2.2 — redesign the runtime seam to enforce termination-only on `RuntimeHandle::run`'s public API (effect-observation mechanism chosen during S2.2 planning; see §4.1)
+The re-anchor from the original authoring HEAD `7784f46f` to
+`0218a5f` reflects Session 2's three executed transformations (S2.1,
+S2.2, S2.3). §4 retains the pre-authorization language as a
+historical note so the execution chain is replayable.
 
 ---
 
@@ -61,7 +60,7 @@ that.
 
 ## 3. Frozen Surface
 
-Every entry names a symbol, its crate path at HEAD `7784f46f`, and the
+Every entry names a symbol, its crate path at HEAD `0218a5f`, and the
 behavior it commits to. Files may move; symbols and contracts do not,
 except under §4 pre-authorized transformations.
 
@@ -82,7 +81,8 @@ except under §4 pre-authorized transformations.
 |---|---|---|
 | `RuntimeInvoker` (trait) | `crates/kernel/adapter/src/lib.rs` | Kernel-owned contract for invoking a runtime; termination-only observable surface to the supervisor |
 | `RuntimeHandle` (struct) | `crates/kernel/adapter/src/lib.rs` | Adapter-layer handle used by the supervisor to drive runtime execution |
-| `RuntimeHandle::run` | `crates/kernel/adapter/src/lib.rs` | Signature change pre-authorized; see §4.1 carve-out |
+| `RuntimeHandle::run` | `crates/kernel/adapter/src/lib.rs` | Public signature returns `RunTermination` only; no public path observes effects. `SUP-2` is type-enforced by this seam (post-S2.2). |
+| `ReportingRuntimeHandle` (struct) | `crates/kernel/adapter/src/lib.rs` | Adapter-layer handle exposing the low-level reporting seam `run_reporting(graph_id, event_id, ctx, deadline, &mut Vec<ActionEffect>) -> RunTermination`. Consumed only by `BufferingRuntimeInvoker` in `ergo-host`. Effect observation lives on this type rather than on `RuntimeHandle`. |
 
 ### 3.3 Provenance Trinity
 
@@ -119,28 +119,27 @@ bump or alias path).
 | `CaptureBundle` | `crates/kernel/supervisor/src/lib.rs` | Current `capture_version` is `v3`; kernel replay enforces strict match |
 | `EpisodeInvocationRecord` | `crates/kernel/supervisor/src/lib.rs` | See §3.1 |
 | `ExternalEventRecord` | `crates/kernel/adapter/src/capture.rs` | SHA-256 hash contract (`REP-1`); re-exported into supervisor via `use ergo_adapter::capture::ExternalEventRecord` |
-| `CapturedActionEffect` | `crates/kernel/supervisor/src/lib.rs` | `(effect, effect_hash)` comparison pair used by strict replay (`replay.rs:328-345`) |
+| `CapturedActionEffect` | `crates/kernel/supervisor/src/lib.rs` | `(effect, effect_hash)` comparison pair used by strict replay (`replay.rs:312-329`) |
 | `RunTermination` | `crates/kernel/adapter/src/lib.rs` | See §3.1 |
 
 ---
 
-## 4. Pre-Authorized Transformations
+## 4. Pre-Authorized Transformations (historical)
 
-The following code changes are pre-authorized by this freeze.
-Executing them during Session 2 is not a breach and does not require
-re-escalation. This document is re-anchored once each lands.
+The carve-out below was pre-authorized by this freeze and executed
+during Session 2. It is retained as a historical note so the
+pre-authorization chain is replayable; §3.2 above reflects the
+post-execution shape.
 
-### 4.1 S2.2 — `RuntimeHandle::run` seam redesign
+### 4.1 S2.2 — `RuntimeHandle::run` seam redesign (discharged)
 
-**Current signature at HEAD `7784f46f`:** `RuntimeHandle::run(...) -> RunResult { termination, effects }`. Any holder of a `RuntimeHandle` — including prod-side callers outside the buffering shim — can observe effects directly off the return value, so `SUP-2` is preserved by the shim's existence rather than enforced by the type.
+**Status:** Executed. Landed at HEAD `0218a5f` (Session 2 S2.2).
 
-**Approved transformation:** `RuntimeHandle::run`'s public signature returns `RunTermination` only. Effects are observable through a host-facing seam whose concrete mechanism — a sink parameter on a separate method, a kernel-defined observation trait implemented only by the buffering shim, or an equivalent construction — is chosen during S2.2 planning. The mechanism must prevent any caller holding a public `RuntimeHandle` from observing effects through the public API; placing a sink parameter on `run` itself is not pre-authorized, because it would recreate the current trust gap in a new shape. After S2.2 lands, `SUP-2` is type-enforced by the public seam rather than preserved by the shim's existence.
+**Prior signature (HEAD `7784f46f`):** `RuntimeHandle::run(...) -> RunResult { termination, effects }`. Any holder of a `RuntimeHandle` — including prod-side callers outside the buffering shim — could observe effects directly off the return value, so `SUP-2` was preserved by the shim's existence rather than enforced by the type.
 
-**Concrete sink shape:** Deferred to S2.2 planning. Candidate shapes under consideration for the sink itself (orthogonal to where the sink lives): mutable `Vec`, kernel-defined trait, caller closure. A prod-defined type is ruled out (it would invert the crate dependency).
+**Executed transformation:** `RuntimeHandle::run`'s public signature now returns `RunTermination` only. A separate adapter-layer type `ReportingRuntimeHandle` carries the low-level reporting seam `run_reporting(..., effects_out: &mut Vec<ActionEffect>) -> RunTermination`, which is consumed only by `BufferingRuntimeInvoker` in `ergo-host`. `RunResult` remains inside the adapter crate as a private type; it is no longer part of the freeze surface. Post-S2.2, `SUP-2` is type-enforced by the public seam rather than preserved by the shim's existence.
 
-**Pre-authorized:** Executing this transformation during S2.2 does not require re-escalation. Codex's five-site audit of the current `RunResult`-producing sites in `adapter/src/lib.rs` (lines 459, 468, 476, 498, 512) is the step-zero input to S2.2 planning.
-
-**Re-anchor:** Once S2.2 lands, §3.2 of this document is updated to reflect the final signature shape, and this §4.1 row is removed.
+**Step-zero audit (historical):** Codex's five-site audit of the original `RunResult`-producing sites in `adapter/src/lib.rs` at HEAD `7784f46f` (lines 459, 468, 476, 498, 512) fed S2.2 planning. Post-execution those sites live inside the private `execute_once` helper in `adapter/src/lib.rs`.
 
 ---
 
@@ -150,7 +149,6 @@ This freeze does not cover:
 
 - Physical module/file locations (covered by S2.3; layout is free to move)
 - Function-internal implementation details where no symbol or serde shape is involved
-- `RunResult` (transitional; subsumed by the S2.2 transformation in §4.1)
 - v0 primitive ontology (covered by `freeze.md`)
 - Authoring layer (covered by `freeze.md` §7)
 - Workflow/process rules (`DOC-GATE-1` and similar)
