@@ -16,8 +16,9 @@
 //! - Process-driver-only types (`process_driver.rs` imports directly).
 //!
 //! Safety notes:
-//! - `process_driver.rs` imports all its dependencies explicitly and does NOT
-//!   use this prelude. Only `live_prep.rs` and `live_run.rs` consume it.
+//! - This prelude is consumed by `live_prep.rs`, `live_run.rs`, and the
+//!   `usecases.rs` facade. `process_driver.rs` imports all its dependencies
+//!   explicitly and does NOT use this prelude.
 //! - Keep imports here narrowly aligned with real multi-consumer needs; do not
 //!   add items used by only one sibling.
 
