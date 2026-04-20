@@ -7,4 +7,5 @@ tools/ralph/
 /sandbox/
 /fixtures/
 .agents/
+.claude/
 __pycache__/
