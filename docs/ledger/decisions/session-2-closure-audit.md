@@ -2,14 +2,14 @@
 
 ## Scope and methodology applied
 
-Audit target: the post-Session-2 tree at HEAD `62738f9`, checked
+Audit target: the post-Session-2 tree at HEAD `6976c62`, checked
 against the v1 canonical boundary in
 `docs/system/host-boundary.md` and the frozen symbol surface in
 `docs/system/freeze-v1.md`.
 
 Method applied:
 
-1. Post-`0218a5f` commit audit: enumerate every commit after the S2.2
+1. Post-`dbd376f` commit audit: enumerate every commit after the S2.2
    seam-redesign commit and classify whether it changed architecture or
    only docs / hygiene / tooling.
 2. Symbol-level diff: re-check every symbol family named in
@@ -58,20 +58,20 @@ Parallel reviewer passes:
 
 ### Informational
 
-#### 1. Post-`0218a5f` commit lane is clean
+#### 1. Post-`dbd376f` commit lane is clean
 
-The five commits after `0218a5f` are doc / hygiene / tooling only:
+The five commits after `dbd376f` are doc / hygiene / tooling only:
 
-- `5f5c7dc` — Session 1 companion doc-edits; docs only
-- `3fbbe2c` — `shared.rs` header clarification; comment only
-- `07f29dc` — `live_run.rs` stale-name header fix; comment only
-- `d340846` — `.gitignore` update for `.claude/`; tooling only
-- `62738f9` — re-anchor of v1 docs; docs only
+- `74fcbdb` — Session 1 companion doc-edits; docs only
+- `61cd96a` — `shared.rs` header clarification; comment only
+- `529dfd5` — `live_run.rs` stale-name header fix; comment only
+- `f16fe69` — `.gitignore` update for `.claude/`; tooling only
+- `6976c62` — re-anchor of v1 docs; docs only
 
-No post-`0218a5f` commit introduced a new architectural change or
+No post-`dbd376f` commit introduced a new architectural change or
 quietly modified a frozen symbol without a `freeze-v1.md §6`
 acknowledgment. The actual architecture-changing commit in scope,
-`0218a5f`, does carry the required acknowledgment for
+`dbd376f`, does carry the required acknowledgment for
 `RuntimeHandle::run`.
 
 #### 2. Frozen surface still resolves at current HEAD
@@ -98,7 +98,7 @@ Symbol/path/shape spot-checks all came back consistent with
 I found no frozen symbol renamed or moved without an explicit record.
 The only Session-2 symbol change in scope was the pre-authorized S2.2
 seam redesign, and that is acknowledged in the body of commit
-`0218a5f`.
+`dbd376f`.
 
 #### 3. No live stale-code references remain
 

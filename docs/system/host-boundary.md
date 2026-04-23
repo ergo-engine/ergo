@@ -11,12 +11,12 @@ Change Rule: Operational log
 
 ## 0. Anchor
 
-HEAD: `0218a5fd01f90649de8da8d3924d694aecec7dae`
+HEAD: `dbd376fe25eb45ea067285400fc362ef70c97694`
 
 This document describes the v1 host boundary as it exists at the HEAD
 above. Every §3–§8 claim cites a file path and line range in the code
 tree at this commit. The re-anchor from original authoring HEAD
-`7784f46f` to `0218a5f` reflects Session 2's three executed
+`7784f46f` to `dbd376f` reflects Session 2's three executed
 transformations (S2.1 `DecisionLogEntry.effects` removal, S2.2 runtime
 seam redesign, S2.3 host-module relocation). Downstream rewrites of
 `07-orchestration.md`, `08-replay.md`, `supervisor.md`, and
@@ -448,7 +448,7 @@ single residual item — S2.2, a public-seam tightening that
 `RunResult` remained publicly importable from the kernel adapter
 crate while `BufferingRuntimeInvoker` had moved under
 `ergo-host::host`. That item was discharged in Session 2 at HEAD
-`0218a5f`:
+`dbd376f`:
 
 - `RuntimeHandle::run`'s public signature now returns `RunTermination` only.
 - A separate adapter-layer type `ReportingRuntimeHandle` carries the low-level reporting seam `run_reporting(..., effects_out: &mut Vec<ActionEffect>) -> RunTermination`, consumed only by `BufferingRuntimeInvoker` in `ergo-host`.
@@ -464,9 +464,9 @@ here at current HEAD.
 
 Each row below is a semantic claim made in §§3–8. Every claim resolves
 to the stated file and line range at HEAD
-`0218a5fd01f90649de8da8d3924d694aecec7dae`. This section was the
+`dbd376fe25eb45ea067285400fc362ef70c97694`. This section was the
 pre-merge gate at original authoring (HEAD `7784f46f`); it was
-re-anchored post-Session 2 at HEAD `0218a5f` to reflect the three
+re-anchored post-Session 2 at HEAD `dbd376f` to reflect the three
 executed transformations (S2.1, S2.2, S2.3). If any row does not
 resolve at current HEAD, the claim is retracted or rewritten.
 

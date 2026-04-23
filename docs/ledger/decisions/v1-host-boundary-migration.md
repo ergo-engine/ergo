@@ -38,7 +38,7 @@ residual v0 shapes the closure gate did not catch:
   `crates/kernel/adapter/src/host/` rather than
   `crates/prod/core/host/`. That file path was a v0 migration artifact.
 
-All three were discharged in Session 2 at HEAD `0218a5f` via the
+All three were discharged in Session 2 at HEAD `dbd376f` via the
 pre-authorized transformations recorded in `freeze-v1.md §4`.
 
 These were code-shape residuals, not semantic drift. Runtime behavior
@@ -76,7 +76,7 @@ this pass.
 3. **Residual debt schedule (discharged).** Session 2 removed the
    three residual v0 shapes via the pre-authorized transformations
    recorded in [`freeze-v1.md §4`](../../system/freeze-v1.md). All
-   three landed at HEAD `0218a5f`:
+   three landed at HEAD `dbd376f`:
 
    - S2.1 removed `DecisionLogEntry.effects`
    - S2.2 redesigned the runtime seam so `RuntimeHandle::run`'s
@@ -148,7 +148,7 @@ rediscovering the method.
 
 Outputs of this audit are `host-boundary.md §11` (26-row
 claim-verification pass, originally authored against HEAD `7784f46f`
-and re-anchored to HEAD `0218a5f` post-Session 2), `freeze-v1.md §3`
+and re-anchored to HEAD `dbd376f` post-Session 2), `freeze-v1.md §3`
 (symbol list verified via grep against current paths), and
 `freeze-v1.md §4` / the §Context of this record (the three residual
 shapes and their Session 2 disposition).

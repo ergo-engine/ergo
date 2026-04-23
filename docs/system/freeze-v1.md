@@ -11,7 +11,7 @@ Change Rule: Commit-body acknowledgment (see §6)
 
 ## 0. Anchor
 
-HEAD: `0218a5fd01f90649de8da8d3924d694aecec7dae`
+HEAD: `dbd376fe25eb45ea067285400fc362ef70c97694`
 
 This declaration freezes the v1 host-boundary architecture surface as
 observed at the HEAD above. Each symbol in §3 is named with its crate
@@ -19,7 +19,7 @@ path at this commit. The invariant specification this declaration
 commits to is [`host-boundary.md`](host-boundary.md) (CANONICAL v1).
 
 The re-anchor from the original authoring HEAD `7784f46f` to
-`0218a5f` reflects Session 2's three executed transformations (S2.1,
+`dbd376f` reflects Session 2's three executed transformations (S2.1,
 S2.2, S2.3). §4 retains the pre-authorization language as a
 historical note so the execution chain is replayable.
 
@@ -60,7 +60,7 @@ that.
 
 ## 3. Frozen Surface
 
-Every entry names a symbol, its crate path at HEAD `0218a5f`, and the
+Every entry names a symbol, its crate path at HEAD `dbd376f`, and the
 behavior it commits to. Files may move; symbols and contracts do not,
 except under §4 pre-authorized transformations.
 
@@ -133,7 +133,7 @@ post-execution shape.
 
 ### 4.1 S2.2 — `RuntimeHandle::run` seam redesign (discharged)
 
-**Status:** Executed. Landed at HEAD `0218a5f` (Session 2 S2.2).
+**Status:** Executed. Landed at HEAD `dbd376f` (Session 2 S2.2).
 
 **Prior signature (HEAD `7784f46f`):** `RuntimeHandle::run(...) -> RunResult { termination, effects }`. Any holder of a `RuntimeHandle` — including prod-side callers outside the buffering shim — could observe effects directly off the return value, so `SUP-2` was preserved by the shim's existence rather than enforced by the type.
 
