@@ -1,29 +1,22 @@
 ---
-Authority: FROZEN
-Version: v0
-Last Amended: 2026-04-12
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-04-24
+Owner: Documentation
 Scope: Orchestration layer, episode semantics, replay
-Verified Against Tag: v1.0.0-alpha.1
-Change Rule: v1 only
+Change Rule: Operational log
 ---
 
-> **Version-tag note (2026-04-20).** The frontmatter above is the
-> pre-migration tag; the body of this document describes v1 supervisor
-> behavior as committed by
-> [`../system/freeze-v1.md`](../system/freeze-v1.md) and specified by
-> [`../system/host-boundary.md`](../system/host-boundary.md).
-> Frontmatter re-anchoring is deferred to the Session 3 doc rewrite.
-
-# Execution Supervisor — v0
+# Execution Supervisor — v1
 
 This document defines the Execution Supervisor: the minimal orchestration layer that governs
 *when* episodes execute, without influencing *what* they compute.
 
-This specification defines Execution Supervisor v0: single-graph, strategy-neutral, non-adaptive.
+This specification defines Execution Supervisor v1: single-graph, strategy-neutral, non-adaptive.
 
 The Supervisor exists to introduce agency over time without violating ontology.
 
-This is a freeze-candidate specification. Treat it as law.
+This specification is canonical for the Execution Supervisor. Changes follow the Operational-log change rule in the frontmatter.
 
 ---
 
@@ -141,9 +134,14 @@ RunTermination is mechanical. It describes *how* the episode ended, not
 enforcement is minimal: `deadline == 0` aborts immediately, but there
 is no general wall-clock timeout/backoff subsystem in the Supervisor.
 
-The Supervisor does not receive **RunResult**. The host-facing
-`RunResult` surface contains final termination plus derived effects; it
-does not carry ActionOutcomes or generic semantic payloads.
+The Supervisor does not receive adapter-private effect data. Post-S2.2,
+`RuntimeInvoker::run()` returns `RunTermination` only; the internal
+`RunResult` carrier is private to `ergo-adapter` and does not cross the
+Supervisor seam. Effect observation flows through the adapter-layer
+`ReportingRuntimeHandle::run_reporting(...)` seam; in the production
+path, the host-side `BufferingRuntimeInvoker` consumes that stream. The
+effect stream does not carry `ActionOutcome`s or generic semantic
+payloads.
 
 This boundary is load-bearing. It structurally prevents the Supervisor from being strategy-aware.
 
@@ -170,7 +168,7 @@ Forbidden variants:
 
 **Test**: ErrKind must be interpretable without knowing what graph ran.
 
-If a failure is domain-flavored, it belongs in RunResult (as data), not ErrKind (as termination).
+If a failure is domain-flavored, it belongs in the runtime's effect stream (as data), not in `ErrKind` (as termination).
 
 ### 2.5 DecisionLog
 
@@ -244,8 +242,8 @@ event streams must produce identical run schedules (modulo mechanical config).
 
 | Aspect | Specification |
 |--------|---------------|
-| **Invariant** | Supervisor does not receive RunResult; only RunTermination |
-| **Enforcement** | API: run() returns RunTermination, not RunResult |
+| **Invariant** | `RuntimeInvoker::run()` returns `RunTermination` only; `RunResult` is private to `ergo-adapter` and does not cross the Supervisor seam |
+| **Enforcement** | API: Supervisor's `RuntimeInvoker` seam returns `RunTermination`; no adapter-private types cross the seam |
 | **Violation** | Policy creep: Supervisor interprets domain outcomes |
 
 ### SUP-3: Supervisor decisions are replayable
@@ -268,7 +266,7 @@ Supervisor may retry only on transport/infrastructure failures, not on semantic 
 | Aspect | Specification |
 |--------|---------------|
 | **Invariant** | Retry state machine keys only on Err/Timeout; semantic results inaccessible |
-| **Enforcement** | API: Supervisor cannot access RunResult; retry logic in mechanical constraint module |
+| **Enforcement** | API: Supervisor's `RuntimeInvoker` seam returns `RunTermination` only; no adapter-private types reach Supervisor; retry logic in mechanical constraint module |
 | **Violation** | Retry becomes strategy |
 
 Allowed retry triggers:
@@ -280,7 +278,7 @@ Allowed retry triggers:
 Forbidden retry triggers:
 
 - `RunTermination::Completed` with undesirable ActionOutcome
-- Any condition requiring inspection of RunResult
+- Any condition requiring inspection of adapter-private effect data
 
 ### SUP-5: ErrKind is mechanical only
 
@@ -341,7 +339,7 @@ Policy retry: "try again with smaller size if rejected."
 
 The latter requires semantic interpretation and is forbidden.
 
-**Prevention**: SUP-4 (retry on mechanical failure only) + SUP-2 (no RunResult access).
+**Prevention**: SUP-4 (retry on mechanical failure only) + SUP-2 (no adapter-private-type access).
 
 ### 4.3 Replay Divergence
 
@@ -483,11 +481,9 @@ Anything not on this list is out of scope.
 
 ---
 
-## 9. Freeze Status
+## 9. Authority Status
 
-This document is **FROZEN**.
-
-Changes require joint escalation per repository collaboration protocol (`.agents/COLLABORATION_PROTOCOLS.md`).
+This document is **CANONICAL v1** under the Operational-log change rule. Prior to 2026-04-24 it was `Version: v0` `Authority: FROZEN`; re-tagged as part of Session 3 per [`docs/ledger/decisions/session-3-plan.md`](../ledger/decisions/session-3-plan.md) §5.1. The v0 FROZEN state is preserved as a historical artifact in the Revision History (§10) and Signatures (§11).
 
 ---
 
@@ -503,6 +499,7 @@ Changes require joint escalation per repository collaboration protocol (`.agents
 | v0.6 | 2026-03-04 | Claude (Structural Auditor) | §2.1 corrected: replaced "Trigger state is episode-scoped" with TRG-STATE-1-aligned language (triggers are stateless). Prior wording conflated ExecutionContext freshness with trigger state. Sebastian override authorization. |
 | v0.7 | 2026-03-26 | Codex (Docs) | Corrected current-prod retry/attempt semantics, context-store continuity path, DecisionLog/capture enrichment boundary, synchronous concurrency posture, and the host-vs-adapter boundary description. |
 | v0.8 | 2026-04-12 | Claude (Structural Auditor) | Production Closure doctrine: CXT-1 title changed from "externally supplied only" to "externally supplied and adapter-governed"; production execution paths now require adapter contracts; fixture execution remains the sole adapter-exempt path. Host preparation APIs hardened with `pub(crate)` session_intent fields and specialized `for_production`/`for_fixture` constructors that structurally enforce the adapter invariant. |
+| v0.9 | 2026-04-24 | Auggie (Docs) | Session 3 reconciliation: re-tag to `Version: v1` `Authority: CANONICAL` per session-3-plan.md §5.1 Option (a). Body `RunResult` framing updated to reflect post-S2.2 private-type boundary + `ReportingRuntimeHandle::run_reporting(...)` seam. |
 
 ---
 
