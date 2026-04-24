@@ -1,20 +1,13 @@
 ---
-Authority: FROZEN
-Version: v0
-Last Updated: 2026-03-26
+Authority: CANONICAL
+Version: v1
+Last Updated: 2026-04-24
+Owner: Documentation
 Scope: Trust boundary, replay guarantees, capture requirements
-Verified Against Tag: v1.0.0-alpha.1
-Change Rule: v1 only
+Change Rule: Operational log
 ---
 
-> **Version-tag note (2026-04-20).** The frontmatter above is the
-> pre-migration tag; the body of this document describes v1 adapter
-> contract behavior as committed by
-> [`../system/freeze-v1.md`](../system/freeze-v1.md) and specified by
-> [`../system/host-boundary.md`](../system/host-boundary.md).
-> Frontmatter re-anchoring is deferred to the Session 3 doc rewrite.
-
-# Adapter Contract — v0
+# Adapter Contract — v1
 
 This document defines the minimal compliance requirements for adapter
 manifests used by adapter-bound runs.
@@ -124,4 +117,4 @@ This contract does not define:
 - Capture/adapter migration strategy across incompatible versions
 - Custom discovery/plugin systems beyond the current project/profile loading model
 
-These concerns are deferred beyond v0.
+These concerns remain deferred beyond the current contract scope.
