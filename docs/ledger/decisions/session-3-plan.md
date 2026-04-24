@@ -40,7 +40,7 @@ Six drift patterns run across `docs/**/*.md`. Historical / closed / planning art
 
 v0 FROZEN frontmatter; body carries pre-S2.2 `RunResult` framing at 8 sites. Rewrite is targeted, not a full-document rewrite:
 
-- **§2.3 lines 144-146:** replace the "Supervisor does not receive RunResult" paragraph with v1 framing: *`RuntimeInvoker::run()` returns `RunTermination` only; `RunResult` is private to `ergo-adapter` post-S2.2; effect observation lives off `ReportingRuntimeHandle` in the adapter layer and is consumed only by `BufferingRuntimeInvoker` in `ergo-host`*.
+- **§2.3 lines 144-146:** replace the "Supervisor does not receive RunResult" paragraph with v1 framing: *`RuntimeInvoker::run()` returns `RunTermination` only; `RunResult` is private to `ergo-adapter` post-S2.2; effect observation flows through `ReportingRuntimeHandle::run_reporting(...)` in the adapter layer and is consumed by `BufferingRuntimeInvoker` in `ergo-host`*. **Wording caution (per Codex finding 6):** phrase effect-observation flow as going *through the `run_reporting(...)` seam* rather than "consumed only by `BufferingRuntimeInvoker`" — the latter reads as a type-level constructability claim, which is false (the type can be constructed in tests / preparation code; only the seam is host-boundary-enforced).
 - **§2.4 line 173:** replace "belongs in RunResult (as data)" with language that does not cite a private type. Proposal: "belongs in the runtime's effect stream (as data), not in `ErrKind` (as termination)."
 - **§3 SUP-2 table rows 247-248:** "Invariant" and "Enforcement" cells rewritten to match v1: `RuntimeInvoker::run()` returns `RunTermination`; `RunResult` is private to `ergo-adapter`.
 - **§3 SUP-4 row 271:** "Enforcement" cell replaced: "API: Supervisor's `RuntimeInvoker` seam returns `RunTermination` only; no adapter-private types reach Supervisor."
@@ -61,31 +61,50 @@ Planned scope:
 - Cross-reference the "host dispatches egress-owned effects through configured egress channels" claim against `runner.rs:837`.
 - **Frontmatter version-tag and body pre-migration note:** see §5.1. If Option (a) lands, same treatment as supervisor.md — drop the 2026-04-20 note and `Verified Against Tag` field.
 
-### 2.3 `docs/invariants/07-orchestration.md` — **citation folding**
+### 2.3 `docs/invariants/07-orchestration.md` — **citation folding (row-by-row)**
 
-Canonical v1 already. Fold `host-boundary.md §9` source citations into the Notes block for each `SUP-*`/`HST-*`/`RTHANDLE-*` row. Concretely:
+Canonical v1 already. The verification bar (per §6, tightened) is: every `SUP-*`/`HST-*`/`CXT-*`/`RTHANDLE-*` row's Notes entry carries at least one filepath-anchored citation, except rows explicitly CLOSED or closed-by-clarification, whose existing Notes are preserved as-is.
 
-- SUP-2 note: add `crates/kernel/adapter/src/lib.rs:182` (private `RunResult`) and the `RuntimeHandle::run` public-seam citation.
-- SUP-3 note: add `replay.rs:184` (strict entry).
-- SUP-6 note: add `runner.rs:793` (no-rollback comment).
-- SUP-7 note: trait-only `log()` citation against `supervisor/src/lib.rs`.
-- HST-1 note: add `runner.rs:576` (drain) and `runner.rs:746` (dispatch).
-- HST-3 note: add `runner.rs:599-603`.
-- HST-4 note: `buffering_invoker.rs:132`.
-- HST-5 note: `coverage.rs:50-78`.
-- HST-6 note: `runner.rs:721-730`.
-- HST-8 note: `runner.rs:556-566`.
-- HST-9 note: `runner.rs:542-545`.
+Row-by-row audit against the current Notes section and `host-boundary.md §9`:
 
-### 2.4 `docs/invariants/08-replay.md` — **citation folding**
+- **CXT-1** — Notes exists; no filepath. Add `crates/prod/core/host/src/runner.rs:714-744` (host-side `build_external_event` enforcement locus, per §9).
+- **SUP-1** — Notes: *"Private `graph_id` field with no setters; set only at construction."* Add filepath anchor `crates/kernel/supervisor/src/lib.rs`.
+- **SUP-2** — Notes: *"`RuntimeInvoker::run()` returns `RunTermination` only; no `RunResult` exposure."* Add `crates/kernel/adapter/src/lib.rs` (RuntimeInvoker::run public seam) and `:182` (private `RunResult`). Tighten to match §9 SUP-2 row prose.
+- **SUP-3** — add `crates/kernel/supervisor/src/replay.rs:184` (strict replay entry).
+- **SUP-4** — Notes carries `should_retry()` logic. Add filepath anchor `crates/kernel/supervisor/src/lib.rs`.
+- **SUP-5** — Notes carries enum-variant logic. Add filepath anchor `crates/kernel/supervisor/src/lib.rs`.
+- **SUP-6** — add `crates/prod/core/host/src/runner.rs:793` (no-rollback comment).
+- **SUP-7** — Notes: *"`DecisionLog` trait has only `fn log()`."* Add filepath anchor `crates/kernel/supervisor/src/lib.rs`.
+- **SUP-TICK-1** — Notes already comprehensive (deferred-retry behavior, `Tick`→`Pump` serde alias, `replay_harness.rs` test). Add filepath anchor(s) for the deferred-retry path.
+- **RTHANDLE-META-1** — Notes describes `execute_with_metadata(...)` behavior. Add filepath anchor `crates/kernel/adapter/src/lib.rs`.
+- **RTHANDLE-ID-1** — Notes describes `FaultRuntimeHandle` behavior. Add filepath anchor `crates/kernel/adapter/src/lib.rs`.
+- **RTHANDLE-ERRKIND-1** — CLOSED (2026-02-06). Notes are already extensive with prior-bug analysis. **No citation-fold.** Audit the existing `runtime_validate` / `validate_composition` path descriptions still resolve against HEAD; if they do, leave alone.
+- **HST-1** — Notes exists but no filepath. Add `runner.rs:576` (drain), `runner.rs:746` (dispatch).
+- **HST-2** — **Notes entry does not currently exist.** §9 cites `crates/prod/core/host/src/host/effects.rs`. Add a Notes entry citing it (set_context validates declared key / writable / type).
+- **HST-3** — add `runner.rs:599-603` (non-invoke-decisions-produce-zero-effects enforcement).
+- **HST-4** — Notes: *"Enforced by `BufferingRuntimeInvoker` replace semantics."* Add `buffering_invoker.rs:132`.
+- **HST-5** — add `crates/prod/core/host/src/host/coverage.rs:50-78` (`ensure_handler_coverage`).
+- **HST-6** — add `runner.rs:721-730` (store-first-then-incoming overlay).
+- **HST-7** — Notes distributed across multiple bullets in the section. Fold `buffering_invoker.rs:132` (replace) and `:99` (drain via `std::mem::take`) anchors per §9 HST-7 row.
+- **HST-8** — add `runner.rs:556-566` (one `on_event` lifecycle per step).
+- **HST-9** — add `runner.rs:542-545` (duplicate `event_id` rejection).
 
-Canonical v1 already. Fold `host-boundary.md §9` source citations into Notes for each `REP-*` row:
+### 2.4 `docs/invariants/08-replay.md` — **citation folding (row-by-row)**
 
-- REP-1: `replay.rs:159-163`, `:165-171`.
-- REP-2: `replay.rs:340` (`rehydrate_event`).
-- REP-7: `replay.rs:229-255` (`validate_replay_provenance`).
-- REP-8: `replay.rs:257-268` (`validate_unique_event_ids`).
-- Decision/effect comparison (REP-SCOPE Scope A): `replay.rs:274`, `:284-293`, `:312-329`.
+Canonical v1 already. Same verification bar: every `REP-*` row's Notes entry carries at least one filepath-anchored citation, except rows explicitly CLOSED or closed-by-clarification, whose existing Notes are preserved as-is.
+
+Row-by-row audit:
+
+- **REP-1** — Notes comprehensive with anchor tests. Add `crates/kernel/supervisor/src/replay.rs:159-163` and `:165-171`.
+- **REP-2** — Notes: *"`rehydrate()` uses only record fields."* Add filepath anchor `crates/kernel/supervisor/src/replay.rs:340` (`rehydrate_event`).
+- **REP-3** — Notes describes `FaultRuntimeHandle` discard behavior. Add filepath anchor `crates/kernel/adapter/src/lib.rs`.
+- **REP-4** — Notes describes capture/runtime type separation. Add filepath anchors for both families: `crates/kernel/supervisor/src/capture.rs` (`ExternalEventRecord`, `EpisodeInvocationRecord`) and `crates/kernel/adapter/src/lib.rs` (`ExternalEvent`) / `crates/kernel/supervisor/src/lib.rs` (`DecisionLogEntry`).
+- **REP-5** — Notes cites `replay_harness::no_wall_clock_usage`. Tighten to full filepath anchor (`crates/kernel/supervisor/tests/replay_harness.rs`).
+- **REP-6** — CLOSED BY CLARIFICATION (2025-12-28). **Do not touch.**
+- **REP-7** — Notes comprehensive with anchor tests. Add `crates/kernel/supervisor/src/replay.rs:229-255` (`validate_replay_provenance`).
+- **REP-8** — Notes comprehensive. Add `crates/kernel/supervisor/src/replay.rs:257-268` (`validate_unique_event_ids`).
+- **REP-SCOPE** — Notes narrative paragraph on Scope A. No additional fold needed; already narrative / non-rule shape.
+- **SOURCE-TRUST** — Notes cites `source/registry.rs::validate_manifest()`. Citation present; optional tightening to line range if the function's lines are stable.
 
 Lines 110-115 freeze-declaration block listing frozen files: verify each path still resolves; no paths moved post-S2.3 for kernel files.
 
@@ -97,9 +116,21 @@ Line 174: "Pre-authorizes S2.1/S2.2/S2.3" → "Pre-authorized S2.1/S2.2/S2.3" (p
 
 Conditional: only if §5.1 Option (a) lands. The version-tag reviewer notes that `docs/INDEX.md` catalogues documents by authority level; `supervisor.md` and `adapter.md` currently appear in the FROZEN list. Re-tagging them to CANONICAL v1 requires moving them out of that list.
 
-### 2.7 `docs/system/host-boundary.md` §9 — **contingent on §5.2**
+### 2.7 `docs/system/host-boundary.md` §9 — **archival reframe + drive-by past-tensing**
 
-Contingent on §5.2 arbitration. If Option (b) (archival framing) is chosen, §9's header prose is rewritten to explicitly mark the table as a dated "v1 freeze-point inventory" and point readers to 07-orchestration.md / 08-replay.md for live citations. The table body is preserved. §11 (claim-verification pass) is not touched.
+Per §5.2 Option (b) arbitration: §9's header prose is rewritten to explicitly mark the table as a dated "v1 freeze-point inventory" and point readers to `07-orchestration.md` / `08-replay.md` for live citations. The table body is preserved. §11 (claim-verification pass) is not touched.
+
+**Drive-by past-tensing (bundled into the same commit as the §9 archival reframe; not split):** the document currently refers to Session 3 as pending at several sites. Since the commit containing the archival reframe *is* the landing moment of the Session 3 rewrites, past-tense the following sites in the same commit:
+
+- **line 23** (§0 header prose) — "`adapter.md` are deferred to Session 3 and must reconcile against §9" → past-tense, naming the Session 3 plan artifact / commits as the reconciliation moment.
+- **line 72** — "Session 3 rewrite of `supervisor.md`, `adapter.md`, `07-orchestration.md`, or `08-replay.md`. Those are deferred; §9 is the working table for that rewrite." → past-tense; §9 was the working table.
+- **line 380** — "This table is the working document for the deferred Session 3 rewrite" → past-tense; frame as the inventory that drove the rewrite.
+- **line 388** — "**clarified** — rule holds but prose needs tightening in the Session 3 rewrite…" → past-tense ("…was tightened in the Session 3 rewrite…").
+- **line 511** — "canonical v1 reference that the Session 3 rewrite will reconcile" → past-tense.
+- **line 517** — supervisor.md line: remove "Re-anchoring the authority line is the subject of Artifact C (v1 freeze declaration), not this doc." The re-tag landed in Session 3 commit 1; replace with a past-tense note pointing at the Session 3 plan.
+- **line 518** — adapter.md line: same treatment as 517; re-tag landed in Session 3 commit 2.
+
+All past-tense rewrites are editorial; no `§9` row content, no §11 claims, and no cited line numbers change.
 
 ---
 
@@ -111,8 +142,8 @@ Recommended sequence, with rationale:
 2. **`adapter.md` minimal pass** — second. Peer to supervisor.md in the v0-FROZEN frontmatter group; easiest to batch with the supervisor.md review context still fresh.
 3. **`07-orchestration.md` citation folding** — third. Depends on supervisor.md being final because SUP-2 wording updates may inform the note phrasing.
 4. **`08-replay.md` citation folding** — fourth. Independent of 07; deferred by convention to run after its sibling.
-5. **`host-boundary.md §9` archival** — fifth (if §5.2 Option b lands). After 07/08 absorb the citations, §9 is re-framed as historical. Conditional on arbitration.
-6. **`kernel.md:174` + `INDEX.md` drive-by** — last. Smallest; bundled at the end. INDEX.md touch only if §5.1 Option (a) lands.
+5. **`host-boundary.md §9` archival + past-tensing drive-by** — fifth. After 07/08 absorb the citations, §9 is re-framed as historical and the seven past-tense sites (per §2.7) land in the same commit.
+6. **`kernel.md:174` + `INDEX.md` drive-by** — last. Smallest; bundled at the end.
 
 No file ordering constraint is load-bearing aside from 1→3 and 3,4→5.
 
@@ -133,7 +164,7 @@ Resolved commit slate (post-arbitration):
 2. adapter.md v1 framing pass — **atomic**: same rule as supervisor.md. Frontmatter re-tag, `Verified Against Tag` removal, in-body pre-migration note removal, and any body tightening land together.
 3. 07-orchestration.md citation fold
 4. 08-replay.md citation fold
-5. host-boundary.md §9 archival reframe
+5. host-boundary.md §9 archival reframe **+ bundled past-tensing drive-by** (per §2.7 — lines 23, 72, 380, 388, 511, 517, 518 past-tensed in the same commit; no split).
 6. kernel.md tense fix + INDEX.md authority-list update (bundled as one drive-by commit covering the small cross-doc cleanup)
 
 Non-recommendation: grouping by edit-type (rewrites vs. citation folds) loses the per-doc commit-body review surface and makes `§9` reconciliation harder to trace.
@@ -198,9 +229,10 @@ All three reports returned clean; no new findings change scope. Awaiting your ar
 
 Per-doc "correct" criterion:
 
-- **supervisor.md:** `git grep -nE "RunResult" docs/orchestration/supervisor.md` → 0 hits. Every rewritten section reads consistently with `host-boundary.md §3` and `freeze-v1.md §3.1 / §4.1`.
+- **supervisor.md:** `git grep -nE "RunResult" docs/orchestration/supervisor.md` → 0 hits. Every rewritten section reads consistently with `host-boundary.md §3` and `freeze-v1.md §3.1 / §4.1`. The `ReportingRuntimeHandle` wording caution (per §2.1) holds: effect observation phrased as flowing *through the `run_reporting(...)` seam*, not as type-level constructability.
 - **adapter.md:** every sentence cross-references a `host-boundary.md §§3-4` claim or a `freeze-v1.md §3` symbol without introducing adapter-owned-host-behavior framing.
-- **07-orchestration.md / 08-replay.md:** every SUP-*/HST-*/REP-* row in the table has at least one source citation in its Notes entry. Cited line numbers resolve against HEAD.
+- **07-orchestration.md / 08-replay.md:** every `SUP-*`/`HST-*`/`CXT-*`/`RTHANDLE-*`/`REP-*` row's Notes entry carries at least one filepath-anchored source citation, **except** rows explicitly marked CLOSED or closed-by-clarification (`RTHANDLE-ERRKIND-1`, `REP-6`), whose existing Notes content is preserved as-is. Cited line numbers resolve against HEAD.
+- **host-boundary.md:** no residual "deferred to Session 3" / "Session 3 rewrite will" / "subject of Artifact C" prose at the seven sites listed in §2.7. `§9` header prose explicitly frames the table as a dated v1 freeze-point inventory. `§11` untouched.
 - **kernel.md:** grep confirms no "Pre-authorizes" residual.
 
 Tooling:
