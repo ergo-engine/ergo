@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-23
+Last Updated: 2026-04-28
 Owner: Documentation Index
 Scope: Documentation map and authority taxonomy
 Change Rule: Tracks implementation
@@ -91,9 +91,7 @@ The active levels and their change rules:
 - **FROZEN**
   Change rule: v1 required to change.
   Documents: [ontology](system/ontology.md),
-  [execution](system/execution.md), [freeze](system/freeze.md),
-  [supervisor](orchestration/supervisor.md), and
-  [adapter](orchestration/adapter.md).
+  [execution](system/execution.md), and [freeze](system/freeze.md).
 - **STABLE**
   Change rule: additive changes only.
   Documents: [concepts](authoring/concepts.md),
@@ -107,6 +105,8 @@ The active levels and their change rules:
   [current-architecture](system/current-architecture.md),
   [kernel-prod-separation](system/kernel-prod-separation.md),
   [terminology](system/terminology.md),
+  [supervisor](orchestration/supervisor.md),
+  [adapter](orchestration/adapter.md),
   [project-convention](authoring/project-convention.md),
   [getting-started-sdk](authoring/getting-started-sdk.md),
   [loader](authoring/loader.md),
