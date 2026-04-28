@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-04-20
+Last Updated: 2026-04-28
 Owner: Sebastian (Architect)
 Scope: v1 host boundary — effect loop, context store, capture enrichment, provenance trinity
 Change Rule: Operational log
@@ -20,7 +20,8 @@ tree at this commit. The re-anchor from original authoring HEAD
 transformations (S2.1 `DecisionLogEntry.effects` removal, S2.2 runtime
 seam redesign, S2.3 host-module relocation). Downstream rewrites of
 `07-orchestration.md`, `08-replay.md`, `supervisor.md`, and
-`adapter.md` are deferred to Session 3 and must reconcile against §9.
+`adapter.md` were completed in Session 3 and reconciled against §9 as
+it stood at the 2026-04-20 freeze point.
 
 Files described (short blob hash, path, line count at HEAD):
 
@@ -69,7 +70,7 @@ What this doc does not establish:
 
 - New rule IDs. All referenced rules already exist in `07-orchestration.md` and `08-replay.md`.
 - New kernel semantics. Kernel meaning is frozen (see [`kernel.md`](kernel.md)).
-- Session 3 rewrite of `supervisor.md`, `adapter.md`, `07-orchestration.md`, or `08-replay.md`. Those are deferred; §9 is the working table for that rewrite.
+- Session 3 rewrite of `supervisor.md`, `adapter.md`, `07-orchestration.md`, or `08-replay.md`. Those rewrites were completed in Session 3 against §9 as it stood at the 2026-04-20 freeze point; §9 is preserved here as a historical inventory.
 
 ---
 
@@ -375,18 +376,31 @@ effect content on the bundle comes from host enrichment.
 
 ---
 
-## 9. Rule-ID reconciliation (working table)
+## 9. Rule-ID reconciliation (historical — v1 freeze-point inventory at 2026-04-20)
 
-This table is the working document for the deferred Session 3 rewrite
-of `supervisor.md`, `adapter.md`, `07-orchestration.md`, and
-`08-replay.md`. It enumerates every rule currently declared in those
-docs that touches the v1 host boundary and states its v1 disposition.
+This table was the working document driving the Session 3 rewrite of
+`supervisor.md`, `adapter.md`, `07-orchestration.md`, and
+`08-replay.md`. It enumerated every rule declared in those docs that
+touched the v1 host boundary and stated its v1 disposition at the
+2026-04-20 freeze point. The Session 3 rewrites consumed this table;
+it is preserved here as a dated inventory of the freeze-point state,
+not as an active working table. Rule dispositions and status values
+are preserved verbatim — every rule held at the 2026-04-20 freeze
+point still holds at HEAD. Two evidence-cell corrections are folded
+into the table body under the same SUP-5-class content-match
+protocol that produced the corrections to `07-orchestration.md`
+(commit `12464f7`) and `08-replay.md` (commit `a0eb703`): the
+`SUP-5` row's `ErrKind` citation now points to its actual definition
+site in the adapter crate, and the `REP-4` row's capture/runtime-type
+citations name the four definition sites instead of containing-crate
+references. These corrections change the WHO/WHERE of evidence
+anchors; they do not change the WHAT (the rule still applies at HEAD).
 
-Status values:
+Status values (as used at the 2026-04-20 freeze point):
 
-- **applies** — rule holds verbatim at HEAD; no rewrite needed beyond source citations
-- **clarified** — rule holds but prose needs tightening in the Session 3 rewrite (e.g. to name the correct enforcement locus under v1)
-- **relocated** — rule's enforcement locus moved between layers during the v0 → v1 migration; prose still reads correctly but the authority line in the spec doc should change
+- **applies** — rule held verbatim at HEAD; no rewrite needed beyond source citations
+- **clarified** — rule held but prose needed tightening in the Session 3 rewrite (e.g. to name the correct enforcement locus under v1)
+- **relocated** — rule's enforcement locus moved between layers during the v0 → v1 migration; prose still read correctly but the authority line in the spec doc should change
 - **closed** — rule is retired and retained only as a historical anchor
 - **process** — rule governs workflow rather than runtime behavior; out of semantic scope for this doc
 - **out-of-scope** — rule belongs to a layer this doc does not address (tracked for completeness)
@@ -398,7 +412,7 @@ Status values:
 | `SUP-2` | applies | `RuntimeInvoker::run()` returns `RunTermination` only (`crates/kernel/adapter/src/lib.rs`); no kernel supervisor path observes `RunResult`. The rule holds verbatim at HEAD. Post-S2.2, `RunResult` is private to `ergo-adapter` (`crates/kernel/adapter/src/lib.rs:182`) and `RuntimeHandle::run`'s public signature returns `RunTermination` only, so `SUP-2` is type-enforced at the public seam rather than preserved by the shim's existence. |
 | `SUP-3` | applies | Replay harness in `crates/kernel/supervisor/tests/replay_harness.rs`; strict entry at `replay.rs:184` |
 | `SUP-4` | applies | `should_retry()` matches only `NetworkTimeout | AdapterUnavailable | RuntimeError | TimedOut` — `supervisor/src/lib.rs` |
-| `SUP-5` | applies | `ErrKind` enum in `supervisor/src/lib.rs` has only mechanical variants |
+| `SUP-5` | applies | `ErrKind` enum at `crates/kernel/adapter/src/lib.rs:164` has only mechanical variants |
 | `SUP-6` | applies | Invocation-scoped atomicity preserved by host non-rollback posture — §6.2; `runner.rs:793` |
 | `SUP-7` | applies | `DecisionLog` trait declares only `fn log()` in `crates/kernel/supervisor/src/lib.rs`; `records()` is on the concrete `MemoryDecisionLog`/`CapturingDecisionLog` impls, not on the trait. The write-only property holds verbatim at HEAD. |
 | `SUP-TICK-1` | applies | `supervisor/src/lib.rs` — Pump scheduling; legacy `Tick` alias in serde `#[serde(alias = "Tick")]` |
@@ -423,7 +437,7 @@ Status values:
 | `REP-1` | applies | `ExternalEventRecord::validate_hash()` — `replay.rs:165-171` |
 | `REP-2` | applies | `rehydrate_event` — `replay.rs:340` |
 | `REP-3` | applies | Fault injection keys on `EventId` — `RTHANDLE-ID-1` mirror |
-| `REP-4` | applies | Capture types are in `kernel/supervisor/src/capture.rs`; runtime types are in `kernel/runtime`; the two are distinct |
+| `REP-4` | applies | Capture types and runtime types are defined separately: `ExternalEventRecord` at `crates/kernel/adapter/src/capture.rs:63`, `EpisodeInvocationRecord` at `crates/kernel/supervisor/src/lib.rs:156` (capture); `ExternalEvent` at `crates/kernel/adapter/src/lib.rs:292`, `DecisionLogEntry` at `crates/kernel/supervisor/src/lib.rs:143` (runtime) |
 | `REP-5` | applies | Supervisor does not read wall-clock time; `schedule_at` is externally supplied |
 | `REP-6` | closed | `08-replay.md` lines 58–62: "Prior documentation suggesting 'triggers may hold internal state' was a semantic error that conflated execution-local bookkeeping with ontological state. Triggers are stateless (see `TRG-STATE-1`). There is no trigger state to capture. Temporal patterns requiring memory (once, count, latch, debounce) must be implemented as clusters." Closed by clarification 2025-12-28. |
 | `REP-7` | applies | `validate_replay_provenance` — `replay.rs:229-255` — §8.2 |
@@ -507,15 +521,15 @@ parity) is not verified here because it is explicitly deferred in
 
 ## 12. Supersession notes (non-normative)
 
-This doc does not rewrite any existing spec. It establishes a
-canonical v1 reference that the Session 3 rewrite will reconcile
+This doc does not rewrite any existing spec. It established a
+canonical v1 reference that the Session 3 rewrite reconciled
 against.
 
 - [`docs/system/kernel-prod-separation.md`](kernel-prod-separation.md) (CANONICAL v1) — compatible. This doc is strictly more specific about the host boundary. No rewrite of kernel-prod-separation is implied.
-- [`docs/invariants/07-orchestration.md`](../invariants/07-orchestration.md) (CANONICAL v1) — compatible rule table. Session 3 may add source citations to the `HST-*` and `SUP-*` rows by referencing §9 of this doc.
+- [`docs/invariants/07-orchestration.md`](../invariants/07-orchestration.md) (CANONICAL v1) — compatible rule table. Session 3 added source citations to the `HST-*` and `SUP-*` rows by referencing §9 of this doc.
 - [`docs/invariants/08-replay.md`](../invariants/08-replay.md) (CANONICAL v1) — compatible. §§4 and §8 of this doc provide the rationale that `08-replay.md` intentionally omits.
-- [`docs/orchestration/supervisor.md`](../orchestration/supervisor.md) (FROZEN, marked `Version: v0`) — semantically correct for v1 supervisor behavior. The `v0` version tag predates the 2026-02-16 migration. Re-anchoring the authority line is the subject of Artifact C (v1 freeze declaration), not this doc.
-- [`docs/orchestration/adapter.md`](../orchestration/adapter.md) (FROZEN, marked `Version: v0`) — same posture; re-anchored by Artifact C.
+- [`docs/orchestration/supervisor.md`](../orchestration/supervisor.md) (CANONICAL v1) — semantically correct for v1 supervisor behavior. Re-anchored to v1 CANONICAL in Session 3 (commit `f55fda2`).
+- [`docs/orchestration/adapter.md`](../orchestration/adapter.md) (CANONICAL v1) — same posture; re-anchored to v1 CANONICAL in Session 3 (commit `273293e`).
 - [`docs/ledger/gap-work/closed/sup2-alignment.md`](../ledger/gap-work/closed/sup2-alignment.md) (CLOSED retrospective) — this doc is its forward-facing companion. The ledger retrospectively tracked the v0 → v1 migration; this doc states the resulting v1 boundary as a living reference.
 
 ---
@@ -527,8 +541,8 @@ against.
 - [Kernel/Prod Separation and Host Intent](kernel-prod-separation.md)
 - [Orchestration Phase Invariants](../invariants/07-orchestration.md)
 - [Replay Phase Invariants](../invariants/08-replay.md)
-- [Execution Supervisor (frozen)](../orchestration/supervisor.md)
-- [Adapter Contract (frozen)](../orchestration/adapter.md)
+- [Execution Supervisor](../orchestration/supervisor.md)
+- [Adapter Contract](../orchestration/adapter.md)
 - [v1 External Effect Intent Model](../ledger/decisions/v1-external-effect-intent-model.md)
 - [Egress Provenance](../ledger/decisions/egress-provenance.md)
 - [SUP-2 Alignment (closed retrospective)](../ledger/gap-work/closed/sup2-alignment.md)
