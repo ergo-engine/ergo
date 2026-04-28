@@ -1,7 +1,7 @@
 ---
 Authority: CANONICAL
 Version: v1
-Last Updated: 2026-03-26
+Last Updated: 2026-04-24
 Owner: Documentation
 Scope: Replay-phase invariants for capture integrity and deterministic verification
 Change Rule: Operational log
@@ -55,16 +55,16 @@ Change Rule: Operational log
 
 ### Notes
 
-- **REP-1:** `validate_hash()` in capture.rs uses SHA256 to verify payload integrity. **ENFORCED** at `replay.rs` via `validate_bundle()` (called by `replay_checked()`). Legacy `replay()` panics on invalid bundle; `replay_checked()` returns `Result<_, ReplayError>` for graceful handling.
+- **REP-1:** `validate_hash()` in capture.rs uses SHA256 to verify payload integrity. **ENFORCED** at `replay.rs` via `validate_bundle()` (called by `replay_checked()`). Legacy `replay()` panics on invalid bundle; `replay_checked()` returns `Result<_, ReplayError>` for graceful handling. Sources: `crates/kernel/supervisor/src/replay.rs:158` (`validate_bundle` entry), `:159-163` (capture-version preflight), `:165-171` (per-event `validate_hash()` loop).
   - **Anchor tests:** `replay_rejects_corrupted_bundle`, `replay_rejects_unknown_version`
   - **v0.18:** Enforcement strengthened — `rehydrate_checked()` now called at point-of-use in supervisor replay path (`replay_inner()`). See REP-1b in closure register.
-- **REP-2:** `rehydrate()` uses only record fields; no external state dependency.
-- **REP-3:** `FaultRuntimeHandle` explicitly discards `graph_id` and `ctx.inner()`; keys on `EventId` only.
-- **REP-4:** `ExecutionContext` has no serde derives. Capture types (`ExternalEventRecord`, `EpisodeInvocationRecord`) are separate from runtime types (`ExternalEvent`, `DecisionLogEntry`).
-- **REP-5:** `replay_harness::no_wall_clock_usage` enforces no `SystemTime::now`/`Instant::now` usage in supervisor sources.
+- **REP-2:** `rehydrate()` uses only record fields; no external state dependency. Source: `crates/kernel/supervisor/src/replay.rs:340` (`fn rehydrate_event(record: &ExternalEventRecord) -> Result<ExternalEvent, ReplayError>` — record-only signature enforces the no-external-state property).
+- **REP-3:** `FaultRuntimeHandle` explicitly discards `graph_id` and `ctx.inner()`; keys on `EventId` only. Source: `crates/kernel/adapter/src/lib.rs:732` (`pub struct FaultRuntimeHandle { schedule: Arc<Mutex<HashMap<EventId, Vec<RunTermination>>>>, ... }`); `:767-790` (`impl RuntimeInvoker for FaultRuntimeHandle::run` — `let _ = graph_id;` and `let _ = ctx.inner();` discards, then `guard.entry(event_id.clone())` keys on `EventId`).
+- **REP-4:** `ExecutionContext` has no serde derives. Capture types (`ExternalEventRecord`, `EpisodeInvocationRecord`) are separate from runtime types (`ExternalEvent`, `DecisionLogEntry`). Sources: `crates/kernel/adapter/src/capture.rs:63` (`pub struct ExternalEventRecord`); `crates/kernel/supervisor/src/lib.rs:156` (`pub struct EpisodeInvocationRecord`); `crates/kernel/adapter/src/lib.rs:292` (`pub struct ExternalEvent` runtime type); `crates/kernel/supervisor/src/lib.rs:143` (`pub struct DecisionLogEntry` runtime type).
+- **REP-5:** `replay_harness::no_wall_clock_usage` enforces no `SystemTime::now`/`Instant::now` usage in supervisor sources. Source: `crates/kernel/supervisor/tests/replay_harness.rs:185` (`fn no_wall_clock_usage()`).
 - **REP-6:** CLOSED BY CLARIFICATION (2025-12-28)
-- **REP-7:** `replay_checked_strict(...)` calls `validate_bundle_strict(...)`, which enforces the strict replay provenance contract before replay begins. Adapter-provenanced bundles require matching adapter provenance; no-adapter bundles require the `none` sentinel; runtime provenance must match exactly. Anchor tests: `strict_replay_requires_adapter_for_provenanced_capture`, `strict_replay_rejects_provenance_mismatch`, `strict_replay_accepts_matching_provenance`, `strict_replay_rejects_adapter_for_no_adapter_capture`, `strict_replay_accepts_none_provenance_without_adapter`, `strict_replay_rejects_runtime_provenance_mismatch`.
-- **REP-8:** `validate_bundle_strict(...)` rejects duplicate capture `events[].event_id` values during strict replay preflight via `validate_unique_event_ids(...)`. Anchor test: `strict_replay_rejects_duplicate_event_ids`.
+- **REP-7:** `replay_checked_strict(...)` calls `validate_bundle_strict(...)`, which enforces the strict replay provenance contract before replay begins. Adapter-provenanced bundles require matching adapter provenance; no-adapter bundles require the `none` sentinel; runtime provenance must match exactly. Source: `crates/kernel/supervisor/src/replay.rs:229-255` (`fn validate_replay_provenance`). Anchor tests: `strict_replay_requires_adapter_for_provenanced_capture`, `strict_replay_rejects_provenance_mismatch`, `strict_replay_accepts_matching_provenance`, `strict_replay_rejects_adapter_for_no_adapter_capture`, `strict_replay_accepts_none_provenance_without_adapter`, `strict_replay_rejects_runtime_provenance_mismatch`.
+- **REP-8:** `validate_bundle_strict(...)` rejects duplicate capture `events[].event_id` values during strict replay preflight via `validate_unique_event_ids(...)`. Source: `crates/kernel/supervisor/src/replay.rs:257-268` (`fn validate_unique_event_ids`). Anchor test: `strict_replay_rejects_duplicate_event_ids`.
 
 **Resolution:** Prior documentation suggesting "triggers may hold internal state" was a
 semantic error that conflated execution-local bookkeeping with ontological state.
@@ -79,7 +79,7 @@ additional capture mechanism is required.
 **Authority:** Sebastian (Freeze Authority), 2025-12-28
 
 - **REP-SCOPE:** Canonical replay for D3 is **Scope A (self-consistency)**. It enforces strict capture preflight (version + provenance), rehydrates events with hash checks, re-executes through `ergo-host`, and verifies decision/effect integrity against host-owned captured effects. Runtime provenance uses the format `rpv1:sha256:<hex>`. Within this scope, host-internal effects may be replay-realized when needed for deterministic reconstruction. Truly external effects are re-derived and verified against captured intent/effect integrity; they must not be re-executed against live external systems. It still does not guarantee cross-ingestion normalization parity; that is tracked as `INGEST-TIME-1`.
-- **SOURCE-TRUST:** Source primitive determinism is trust-based, not enforced. The `SourcePrimitiveManifest` declares `execution.deterministic = true`, but the trait has no compile-time restrictions preventing non-deterministic implementations. Enforcement is by convention and code review. See `source/registry.rs::validate_manifest()`.
+- **SOURCE-TRUST:** Source primitive determinism is trust-based, not enforced. The `SourcePrimitiveManifest` declares `execution.deterministic = true`, but the trait has no compile-time restrictions preventing non-deterministic implementations. Enforcement is by convention and code review. Source: `crates/kernel/runtime/src/source/registry.rs:19` (`pub fn validate_manifest`).
 
 ### UI-REF-CLIENT-1: Client Authoring is Non-Canonical
 
