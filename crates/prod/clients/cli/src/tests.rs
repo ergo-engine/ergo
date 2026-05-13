@@ -4,55 +4,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
-fn fixture_run_creates_capture_via_host_runner() -> Result<(), String> {
-    let index = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let temp_dir = std::env::temp_dir().join(format!(
-        "ergo-cli-fixture-test-{}-{}",
-        std::process::id(),
-        index
-    ));
-    fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
-
-    let fixture_path = temp_dir.join("fixture.jsonl");
-    let output_path = temp_dir.join("fixture-capture.json");
-    let fixture_data = "\
-{\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
-{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n\
-{\"kind\":\"episode_start\",\"id\":\"E2\"}\n\
-{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n";
-
-    fs::write(&fixture_path, fixture_data).map_err(|err| format!("write fixture: {err}"))?;
-
-    let summary = run_fixture(&fixture_path, Some(&output_path), false)?;
-    assert_eq!(summary.capture_path, output_path);
-    assert!(
-        summary.capture_path.exists(),
-        "expected capture artifact to exist"
-    );
-    let raw =
-        fs::read_to_string(&summary.capture_path).map_err(|err| format!("read capture: {err}"))?;
-    let value: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|err| format!("parse capture json: {err}"))?;
-    let decisions = value
-        .get("decisions")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| "capture decisions missing".to_string())?;
-    assert!(
-        decisions
-            .iter()
-            .all(|record| record.get("effects").is_some()),
-        "serialized capture decisions must include effects field"
-    );
-    let bundle = load_bundle(&summary.capture_path)?;
-    assert_eq!(bundle.graph_id.as_str(), DEMO_GRAPH_ID);
-    assert_eq!(bundle.events.len(), 2, "two events expected");
-    assert_eq!(bundle.decisions.len(), 2, "two decisions expected");
-
-    let _ = fs::remove_dir_all(&temp_dir);
-    Ok(())
-}
-
-#[test]
 fn replay_graph_replays_yaml_capture() -> Result<(), String> {
     let index = COUNTER.fetch_add(1, Ordering::SeqCst);
     let temp_dir = std::env::temp_dir().join(format!(
@@ -446,74 +397,19 @@ fn parse_replay_options_rejects_pretty_capture_flag() {
 }
 
 #[test]
-fn parse_run_artifact_options_supports_short_flags_and_capture_alias() -> Result<(), String> {
-    let opts = parse_run_artifact_options(
-        &[
-            "-p".to_string(),
-            "-o".to_string(),
-            "demo-short.json".to_string(),
-        ],
-        "fixture",
-    )?;
-    assert!(opts.pretty_capture);
-    assert_eq!(
-        opts.capture_output.as_deref(),
-        Some(Path::new("demo-short.json"))
-    );
-
-    let alias_opts = parse_run_artifact_options(
-        &[
-            "--capture".to_string(),
-            "demo-alias.json".to_string(),
-            "--pretty-capture".to_string(),
-        ],
-        "fixture",
-    )?;
-    assert!(alias_opts.pretty_capture);
-    assert_eq!(
-        alias_opts.capture_output.as_deref(),
-        Some(Path::new("demo-alias.json"))
-    );
-
-    Ok(())
-}
-
-#[test]
-fn parse_run_artifact_options_keeps_long_flag_compatibility() -> Result<(), String> {
-    let opts = parse_run_artifact_options(
-        &[
-            "--capture-output".to_string(),
-            "demo-long.json".to_string(),
-            "--pretty-capture".to_string(),
-        ],
-        "fixture",
-    )?;
-    assert!(opts.pretty_capture);
-    assert_eq!(
-        opts.capture_output.as_deref(),
-        Some(Path::new("demo-long.json"))
-    );
-    Ok(())
-}
-
-#[test]
-fn parse_run_artifact_options_unknown_flag_is_actionable() {
-    let err = parse_run_artifact_options(&["--wat".to_string()], "fixture")
-        .expect_err("unknown run option should fail");
-    assert!(
-        err.contains("code: cli.invalid_option")
-            && err.contains("where: arg '--wat'")
-            && err.contains("fix: for 'ergo run fixture'"),
-        "unexpected err: {err}"
-    );
-}
-
-#[test]
 fn usage_moves_fixture_to_top_level_subcommand() {
     let help = usage();
     assert!(
-        help.contains("ergo fixture run <events.jsonl>"),
-        "expected fixture run in top-level help: {help}"
+        help.contains("ergo fixture inspect <events.jsonl>"),
+        "expected fixture inspect in top-level help: {help}"
+    );
+    assert!(
+        help.contains("ergo fixture validate <events.jsonl>"),
+        "expected fixture validate in top-level help: {help}"
+    );
+    assert!(
+        !help.contains("ergo fixture run"),
+        "fixture run should be removed in v1 help: {help}"
     );
     assert!(
         !help.contains("ergo run fixture"),
@@ -626,102 +522,4 @@ fn format_replay_error_effect_mismatch_surfaces_expected_actual() {
     );
 }
 
-#[test]
-fn fixture_run_pretty_capture_writes_multiline_json() -> Result<(), String> {
-    let index = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let temp_dir = std::env::temp_dir().join(format!(
-        "ergo-cli-fixture-pretty-{}-{}",
-        std::process::id(),
-        index
-    ));
-    fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
 
-    let fixture_path = temp_dir.join("fixture.jsonl");
-    let output_path = temp_dir.join("fixture-capture.json");
-    let fixture_data = "\
-{\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
-{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n";
-    fs::write(&fixture_path, fixture_data).map_err(|err| format!("write fixture: {err}"))?;
-
-    let _ = run_fixture(&fixture_path, Some(&output_path), true)?;
-    let raw = fs::read_to_string(&output_path).map_err(|err| format!("read output: {err}"))?;
-    assert!(
-        raw.matches('\n').count() > 1,
-        "pretty capture should be multiline json"
-    );
-
-    let _ = fs::remove_dir_all(&temp_dir);
-    Ok(())
-}
-
-#[test]
-fn fixture_run_short_o_overrides_output_path() -> Result<(), String> {
-    let index = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let temp_dir = std::env::temp_dir().join(format!(
-        "ergo-cli-fixture-short-o-{}-{}",
-        std::process::id(),
-        index
-    ));
-    fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
-
-    let fixture_path = temp_dir.join("fixture.jsonl");
-    let output_path = temp_dir.join("fixture-short-output.json");
-    let fixture_data = "\
-{\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
-{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n";
-    fs::write(&fixture_path, fixture_data).map_err(|err| format!("write fixture: {err}"))?;
-
-    let opts = parse_run_artifact_options(
-        &[
-            "-o".to_string(),
-            output_path.to_string_lossy().to_string(),
-            "-p".to_string(),
-        ],
-        "fixture",
-    )?;
-    let summary = run_fixture(
-        &fixture_path,
-        opts.capture_output.as_deref(),
-        opts.pretty_capture,
-    )?;
-    assert_eq!(summary.capture_path, output_path);
-    assert!(
-        summary.capture_path.exists(),
-        "expected fixture output override to exist"
-    );
-
-    let _ = fs::remove_dir_all(&temp_dir);
-    Ok(())
-}
-
-#[test]
-fn fixture_run_default_output_path_is_capture_named() -> Result<(), String> {
-    let index = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let temp_dir = std::env::temp_dir().join(format!(
-        "ergo-cli-fixture-default-path-{}-{}",
-        std::process::id(),
-        index
-    ));
-    fs::create_dir_all(&temp_dir).map_err(|err| format!("create temp dir: {err}"))?;
-
-    let fixture_name = format!("fixture_{index}.jsonl");
-    let fixture_path = temp_dir.join(fixture_name.clone());
-    let fixture_data = "\
-{\"kind\":\"episode_start\",\"id\":\"E1\"}\n\
-{\"kind\":\"event\",\"event\":{\"type\":\"Command\"}}\n";
-    fs::write(&fixture_path, fixture_data).map_err(|err| format!("write fixture: {err}"))?;
-
-    let expected = PathBuf::from("target").join(format!("fixture_{index}-capture.json"));
-    let summary = run_fixture(&fixture_path, None, false)?;
-    assert_eq!(summary.capture_path, expected);
-    assert!(
-        summary
-            .capture_path
-            .ends_with(format!("fixture_{index}-capture.json")),
-        "expected capture-named fixture artifact path"
-    );
-    let _ = fs::remove_file(&summary.capture_path);
-
-    let _ = fs::remove_dir_all(&temp_dir);
-    Ok(())
-}

@@ -243,7 +243,8 @@ The CLI still matters, but as supporting tooling:
 - `ergo init`
 - validate
 - replay
-- fixture runs
+- fixture-driven `run` (`ergo run <graph.yaml> -f <events.jsonl>`)
+- fixture inspect / validate
 - optional project-mode convenience commands
 
 The CLI may consume the same project-resolution surface as the SDK, but

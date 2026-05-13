@@ -1,15 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use ergo_host::{
-    replay_graph_from_paths as host_replay_graph_from_paths, run_demo_fixture_from_path,
-    HostReplayError, ReplayGraphFromPathsRequest, RunDemoFixtureRequest,
+    replay_graph_from_paths as host_replay_graph_from_paths, HostReplayError,
+    ReplayGraphFromPathsRequest,
 };
-
-#[derive(Debug, Clone)]
-pub struct FixtureRunSummary {
-    pub capture_path: PathBuf,
-    pub episode_event_counts: Vec<(String, usize)>,
-}
 
 #[derive(Debug, Clone)]
 pub struct ReplaySummary {
@@ -18,24 +12,6 @@ pub struct ReplaySummary {
     pub invoked: usize,
     pub deferred: usize,
     pub skipped: usize,
-}
-
-pub fn run_fixture(
-    path: &Path,
-    output_override: Option<&Path>,
-    pretty_capture: bool,
-) -> Result<FixtureRunSummary, String> {
-    let result = run_demo_fixture_from_path(RunDemoFixtureRequest {
-        fixture_path: path.to_path_buf(),
-        capture_output: output_override.map(PathBuf::from),
-        pretty_capture,
-    })
-    .map_err(crate::output::errors::render_host_run_error)?;
-
-    Ok(FixtureRunSummary {
-        capture_path: result.capture_path,
-        episode_event_counts: result.episode_event_counts,
-    })
 }
 
 fn format_host_replay_error(err: &HostReplayError) -> String {

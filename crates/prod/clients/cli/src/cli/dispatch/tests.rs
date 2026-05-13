@@ -194,3 +194,25 @@ fn help_init_dispatch_returns_init_notes() -> Result<(), String> {
     assert!(text.contains("POSIX 'sh'"));
     Ok(())
 }
+
+#[test]
+fn fixture_run_subcommand_returns_redirect_error() {
+    let result = dispatch_with_args(&[
+        "fixture".to_string(),
+        "run".to_string(),
+        "events.jsonl".to_string(),
+    ]);
+    let err = match result {
+        Ok(_) => panic!("fixture run should return redirect error"),
+        Err(err) => err,
+    };
+    assert_eq!(err, crate::output::errors::removed_fixture_run());
+    assert!(
+        err.contains("'ergo fixture run' was removed in v1"),
+        "unexpected err: {err}"
+    );
+    assert!(
+        err.contains("ergo run <graph.yaml> -f <events.jsonl>"),
+        "redirect should point at canonical run path: {err}"
+    );
+}

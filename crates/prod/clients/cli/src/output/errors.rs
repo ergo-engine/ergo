@@ -66,7 +66,18 @@ pub fn removed_run_fixture() -> String {
             "'ergo run fixture' was removed in v1",
         )
         .with_where("command 'run fixture'")
-        .with_fix("use 'ergo fixture run <events.jsonl>'"),
+        .with_fix("use 'ergo run <graph.yaml> -f <events.jsonl>'"),
+    )
+}
+
+pub fn removed_fixture_run() -> String {
+    render_cli_error(
+        &CliErrorInfo::new(
+            "cli.command_removed",
+            "'ergo fixture run' was removed in v1",
+        )
+        .with_where("command 'fixture run'")
+        .with_fix("use 'ergo run <graph.yaml> -f <events.jsonl>'"),
     )
 }
 
@@ -258,4 +269,39 @@ pub fn render_host_run_error(err: HostRunError) -> String {
 
 pub fn render_host_replay_error(err: &HostReplayError) -> String {
     render_host_error_descriptor(describe_host_replay_error(err))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn removed_run_fixture_fix_points_at_canonical_run() {
+        let err = removed_run_fixture();
+        assert!(
+            err.contains("'ergo run fixture' was removed in v1"),
+            "unexpected err: {err}"
+        );
+        assert!(
+            err.contains("fix: use 'ergo run <graph.yaml> -f <events.jsonl>'"),
+            "redirect must point at canonical run path: {err}"
+        );
+        assert!(
+            !err.contains("ergo fixture run"),
+            "redirect must not point at the removed fixture run subcommand: {err}"
+        );
+    }
+
+    #[test]
+    fn removed_fixture_run_fix_points_at_canonical_run() {
+        let err = removed_fixture_run();
+        assert!(
+            err.contains("'ergo fixture run' was removed in v1"),
+            "unexpected err: {err}"
+        );
+        assert!(
+            err.contains("fix: use 'ergo run <graph.yaml> -f <events.jsonl>'"),
+            "redirect must point at canonical run path: {err}"
+        );
+    }
 }

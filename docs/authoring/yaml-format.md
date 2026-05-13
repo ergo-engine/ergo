@@ -12,7 +12,7 @@ Change Rule: Additive only
 **Status:** STABLE — implemented in `ergo-loader` decode/discovery; canonically consumed via `ergo-host` path APIs (`run_graph_from_paths`, `replay_graph_from_paths`, `validate_run_graph_from_paths`, `prepare_hosted_runner_from_paths`) with clients delegating
 **Scope:** How `ClusterDefinition` maps to YAML for hand-authoring and tooling
 **Litmus test:** Demo 1 graph (15 nodes, 16 edges, 4 boundary outputs)
-**Current CLI contract:** `ergo run <graph.yaml> (-f|--fixture <events.jsonl> | --driver-cmd <program> [--driver-arg <value> ...]) [-a|--adapter <adapter.yaml>] [--egress-config <egress.toml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path|--search-path <path> ...]` and `ergo fixture run <events.jsonl> [-o|--capture|--capture-output <path>] [-p|--pretty-capture]` (current flag names retain legacy `driver` terminology)
+**Current CLI contract:** `ergo run <graph.yaml> (-f|--fixture <events.jsonl> | --driver-cmd <program> [--driver-arg <value> ...]) [-a|--adapter <adapter.yaml>] [--egress-config <egress.toml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path|--search-path <path> ...]` (current flag names retain legacy `driver` terminology). For graph-agnostic fixture operability, see `ergo fixture inspect` and `ergo fixture validate`.
 **Related ingress guidance:** [ingress-channel-guide](ingress-channel-guide.md) documents `HostedEvent`, process-channel protocol, and fixture/process authoring expectations.
 **Future work:** Workspace-level project discovery now exists through
 `ergo-loader` + `ergo-sdk-rust` and `ergo init` now scaffolds the

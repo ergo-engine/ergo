@@ -144,10 +144,13 @@ for explicit re-deferral if the earlier groups land first.
   [/Users/sebastian/Projects/ergo/crates/prod/clients/cli/src/render.rs](/Users/sebastian/Projects/ergo/crates/prod/clients/cli/src/render.rs)
   and [/Users/sebastian/Projects/ergo/crates/prod/core/host/src/graph_dot_usecase.rs](/Users/sebastian/Projects/ergo/crates/prod/core/host/src/graph_dot_usecase.rs),
   so there is no in-memory render lane whose default naming contract remains unresolved.
-- `IMT2-10`: demo-fixture remains path-only in
-  [/Users/sebastian/Projects/ergo/crates/prod/core/host/src/demo_fixture_usecase.rs](/Users/sebastian/Projects/ergo/crates/prod/core/host/src/demo_fixture_usecase.rs)
-  and [/Users/sebastian/Projects/ergo/crates/kernel/adapter/src/fixture.rs](/Users/sebastian/Projects/ergo/crates/kernel/adapter/src/fixture.rs),
-  so there is no in-memory demo-fixture lane whose capture naming contract remains unresolved.
+- `IMT2-10`: the demo-fixture lane was removed outright by
+  [/Users/sebastian/Projects/ergo/docs/ledger/decisions/remove-vestigial-fixture-run.md](/Users/sebastian/Projects/ergo/docs/ledger/decisions/remove-vestigial-fixture-run.md),
+  which deleted `crates/prod/core/host/src/demo_fixture_usecase.rs` together with
+  the `ergo fixture run` CLI subcommand; the row's argument ("no in-memory
+  demo-fixture lane to resolve") is preserved by the removal rather than
+  invalidated by it. `crates/kernel/adapter/src/fixture.rs` continues to host
+  the test-only `demo_1` example usage unchanged.
 - `IMT2-11`: explicit fixture-items ingress now exists in
   [/Users/sebastian/Projects/ergo/crates/prod/clients/sdk-rust/src/lib.rs](/Users/sebastian/Projects/ergo/crates/prod/clients/sdk-rust/src/lib.rs)
   and [/Users/sebastian/Projects/ergo/crates/prod/core/host/src/usecases.rs](/Users/sebastian/Projects/ergo/crates/prod/core/host/src/usecases.rs),

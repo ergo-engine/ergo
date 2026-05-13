@@ -45,7 +45,6 @@ struct FixtureReportOptions {
 pub fn fixture_usage() -> String {
     [
         "usage:",
-        "  ergo fixture run <events.jsonl> [-o|--capture|--capture-output <path>] [-p|--pretty-capture]",
         "  ergo fixture inspect <events.jsonl> [--format text|json]",
         "  ergo fixture validate <events.jsonl> [--format text|json]",
     ]

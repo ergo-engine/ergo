@@ -24,9 +24,7 @@ use ergo_supervisor::replay::ReplayError;
 use ergo_supervisor::CaptureBundle;
 
 #[cfg(test)]
-pub(crate) use cli::args::{parse_replay_options, parse_run_artifact_options};
-#[cfg(test)]
-const DEMO_GRAPH_ID: &str = "demo_1";
+pub(crate) use cli::args::parse_replay_options;
 
 fn main() {
     match cli::dispatch::run() {
@@ -68,15 +66,6 @@ fn load_bundle(path: &Path) -> Result<CaptureBundle, String> {
             path.display()
         )
     })
-}
-
-#[cfg(test)]
-fn run_fixture(
-    path: &Path,
-    output_override: Option<&Path>,
-    pretty_capture: bool,
-) -> Result<cli::handlers::FixtureRunSummary, String> {
-    cli::handlers::run_fixture(path, output_override, pretty_capture)
 }
 
 #[cfg(test)]

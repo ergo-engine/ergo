@@ -55,24 +55,7 @@ pub(crate) fn dispatch_with_args(args: &[String]) -> Result<DispatchOutput, Stri
                     .next()
                     .ok_or_else(crate::fixture_ops::fixture_usage)?;
                 match target.as_str() {
-                    "run" => {
-                        let path = args_it
-                            .next()
-                            .ok_or_else(crate::fixture_ops::fixture_usage)?;
-                        let rest: Vec<String> = args_it.collect();
-                        let run_opts = args::parse_run_artifact_options(&rest, "fixture run")?;
-                        let summary = crate::cli::handlers::run_fixture(
-                            Path::new(&path),
-                            run_opts.capture_output.as_deref(),
-                            run_opts.pretty_capture,
-                        )?;
-                        Ok(DispatchOutput::Text(
-                            output::text::render_fixture_run_summary(
-                                &summary.episode_event_counts,
-                                &summary.capture_path,
-                            ),
-                        ))
-                    }
+                    "run" => Err(output::errors::removed_fixture_run()),
                     "inspect" => {
                         let rest: Vec<String> = args_it.collect();
                         let out = crate::fixture_ops::fixture_inspect_command(&rest)?;

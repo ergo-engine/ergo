@@ -15,7 +15,6 @@ pub fn usage() -> String {
         "  ergo replay <capture.json> -g|--graph <graph.yaml> [-a|--adapter <adapter.yaml>] [--cluster-path <path> ...]",
         "",
         "Fixture operability",
-        "  ergo fixture run <events.jsonl> [-o|--capture|--capture-output <path>] [-p|--pretty-capture]",
         "  ergo fixture inspect <events.jsonl> [--format text|json]",
         "  ergo fixture validate <events.jsonl> [--format text|json]",
         "",
@@ -56,7 +55,7 @@ pub fn help_topic(topic: &str, fixture_usage: &str) -> Option<String> {
             ]
             .join("\n"),
         ),
-        "fixture" | "fixture run" | "fixture inspect" | "fixture validate" => {
+        "fixture" | "fixture inspect" | "fixture validate" => {
             Some(fixture_usage.to_string())
         }
         "init" => Some(
@@ -97,18 +96,6 @@ pub fn help_topic(topic: &str, fixture_usage: &str) -> Option<String> {
         "gen-docs" => Some("usage:\n  ergo gen-docs [--check]".to_string()),
         _ => None,
     }
-}
-
-pub fn render_fixture_run_summary(
-    episode_event_counts: &[(String, usize)],
-    capture_path: &Path,
-) -> String {
-    let mut lines = Vec::new();
-    for (label, count) in episode_event_counts {
-        lines.push(format!("episode {label}: events={count}"));
-    }
-    lines.push(format!("capture artifact: {}", capture_path.display()));
-    lines.join("\n")
 }
 
 pub fn render_graph_run_summary(

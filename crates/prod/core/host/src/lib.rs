@@ -28,7 +28,6 @@
 //!   boundary.
 
 mod capture_enrichment;
-mod demo_fixture_usecase;
 mod diagnostics;
 mod egress;
 mod error;
@@ -45,7 +44,6 @@ mod runner;
 #[allow(clippy::result_large_err)]
 mod usecases;
 
-pub use demo_fixture_usecase::{run_demo_fixture_from_path, RunDemoFixtureRequest};
 pub use egress::{
     parse_egress_config_toml, validate_egress_config, EgressChannelConfig, EgressConfig,
     EgressConfigBuilder, EgressConfigError, EgressConfigParseError, EgressProcessError,

@@ -395,14 +395,14 @@ the same blast radius:
 | `replay_graph(request)` | **Already object-based** | Stays — already transport-agnostic |
 | `run_fixture(request)` | Path-based | Stays |
 | `graph_to_dot_from_paths(request)` | Path-based | Stays; may get object-based sibling |
-| `run_demo_fixture_from_path(request)` | Path-based | Stays; demo/fixture utility surface remains separate from graph/cluster transport |
+| ~~`run_demo_fixture_from_path(request)`~~ | ~~Path-based~~ | Removed by [docs/ledger/decisions/remove-vestigial-fixture-run.md](../ledger/decisions/remove-vestigial-fixture-run.md) together with the `ergo fixture run` CLI subcommand; no longer in the blast-radius surface. |
 | `finalize_hosted_runner_capture(runner, stop)` | Object-based | Already transport-agnostic |
 | `scan_adapter_dependencies(expanded, catalog, registries)` | Object-based | Already transport-agnostic |
 | `validate_adapter_composition(expanded, catalog, registries, provides)` | Object-based | Already transport-agnostic |
 | `parse_egress_config_toml(input)` | String/object-based | Already transport-agnostic; host already exposes a public TOML parser |
 | `validate_egress_config(...)` | Object-based | Public validation helper stays transport-agnostic |
 | `validate_manifest_path(...)` / `check_compose_paths(...)` / `ManifestSummary` / `HostManifestError` / `HostRuleViolation` | Path-based | Public manifest/composition surface with its own private adapter-manifest parser; any adapter string/object seam must account for this lane too |
-| `RunDemoFixtureRequest` / `GraphToDotFromPathsRequest` / `RunGraphRequest` / `RunFixtureRequest` / `RunFixtureResult` / `HostedAdapterConfig` / `HostedReplayError` | Mixed | Already public; remain in blast radius anywhere they carry paths or path-derived diagnostics |
+| ~~`RunDemoFixtureRequest`~~ / `GraphToDotFromPathsRequest` / `RunGraphRequest` / `RunFixtureRequest` / `RunFixtureResult` / `HostedAdapterConfig` / `HostedReplayError` | Mixed | `RunDemoFixtureRequest` was removed by [docs/ledger/decisions/remove-vestigial-fixture-run.md](../ledger/decisions/remove-vestigial-fixture-run.md); the remaining types are already public and remain in blast radius anywhere they carry paths or path-derived diagnostics. |
 | `decision_counts(...)` / `replay_bundle_strict(...)` | Object-based | Public replay helpers stay transport-agnostic but remain adjacent to replay boundary docs |
 | `describe_adapter_required(...)` | Object-based | Public error-surface helper stays unchanged but is adjacent to the same validation/reporting area |
 | `AdapterDependencySummary` | Object-based | Public canonical adapter-diagnostic summary stays transport-agnostic but remains adjacent to the same reporting surface |
