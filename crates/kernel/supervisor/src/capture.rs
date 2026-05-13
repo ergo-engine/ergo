@@ -41,6 +41,7 @@ pub enum CaptureJsonStyle {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum CaptureWriteError {
     CreateOutputDirectory {
         path: PathBuf,

@@ -213,6 +213,7 @@ pub struct HostAvailableCluster {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HostExpandContext {
     Filesystem,
     Assets,
@@ -258,6 +259,7 @@ impl std::fmt::Display for HostExpandError {
 impl std::error::Error for HostExpandError {}
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HostGraphPreparationError {
     CoreRegistries(CoreRegistrationError),
     Expansion(HostExpandError),
@@ -287,6 +289,7 @@ impl std::error::Error for HostGraphPreparationError {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HostDependencyScanError {
     MissingCatalogMetadata {
         primitive_id: String,
@@ -324,6 +327,7 @@ impl std::fmt::Display for HostDependencyScanError {
 impl std::error::Error for HostDependencyScanError {}
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HostAdapterCompositionError {
     CaptureFormat(CompositionError),
     Source {
@@ -404,6 +408,7 @@ impl std::error::Error for HostAdapterCompositionError {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HostAdapterSetupError {
     ManifestRead {
         path: PathBuf,
@@ -471,6 +476,7 @@ impl std::error::Error for HostAdapterSetupError {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HostSetupError {
     LoadGraphAssets(LoaderError),
     DependencyScan(HostDependencyScanError),
@@ -513,6 +519,7 @@ impl std::error::Error for HostSetupError {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HostReplaySetupError {
     CaptureRead {
         path: PathBuf,
@@ -559,6 +566,7 @@ impl std::error::Error for HostReplaySetupError {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HostDriverInputError {
     FixtureParse(FixtureParseError),
     DuplicateEventId {
@@ -660,6 +668,7 @@ impl std::error::Error for HostDriverInputError {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HostDriverOutputError {
     StopBeforeFirstCommittedEvent,
     ProducedNoEpisodes,
@@ -832,6 +841,7 @@ impl std::error::Error for HostDriverIoError {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HostDriverError {
     Input(HostDriverInputError),
     Start(HostDriverStartError),
@@ -865,6 +875,7 @@ impl std::error::Error for HostDriverError {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HostRunError {
     AdapterRequired(AdapterDependencySummary),
     ProductionRequiresAdapter,
@@ -909,6 +920,7 @@ impl std::error::Error for HostRunError {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HostReplayError {
     Hosted(HostedReplayError),
     GraphIdMismatch { expected: String, got: String },

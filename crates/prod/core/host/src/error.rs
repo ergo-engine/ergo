@@ -43,6 +43,7 @@ use crate::egress::{EgressProcessError, EgressValidationError};
 use crate::host::{EffectApplyError, HandlerCoverageError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EgressDispatchFailure {
     AckTimeout { channel: String, intent_id: String },
     ProtocolViolation { channel: String, detail: String },
@@ -79,6 +80,7 @@ impl std::fmt::Display for EgressDispatchFailure {
 impl std::error::Error for EgressDispatchFailure {}
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HostedEventBuildError {
     SerializePayload(serde_json::Error),
     InvalidPayload(ExternalEventPayloadError),
@@ -103,6 +105,7 @@ impl std::error::Error for HostedEventBuildError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HostedEgressValidationError {
     ReplayOwnershipWithLiveEgress,
     ReplayOwnedKindConflictsWithHandler { kind: String },
@@ -158,6 +161,7 @@ impl std::error::Error for HostedEgressValidationError {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HostedStepError {
     DuplicateEventId { event_id: String },
     MissingSemanticKind,

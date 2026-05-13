@@ -3,6 +3,10 @@
 //! The SDK is the primary product surface for building an Ergo engine
 //! inside a Rust crate. It wraps the existing canonical host run and
 //! replay paths without introducing a second execution model.
+//!
+//! Errors at the public surface are SDK-branded `Ergo*` types (defined
+//! in `error.rs`). Host taxonomies remain reachable through parent-only
+//! accessors and the `std::error::Error::source()` chain.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -16,31 +20,37 @@ use ergo_host::{
     replay_graph_from_assets_with_surfaces, replay_graph_from_paths_with_surfaces,
     run_graph_from_assets_with_surfaces_and_control,
     run_graph_from_paths_with_surfaces_and_control, validate_run_graph_from_assets_with_surfaces,
-    validate_run_graph_from_paths_with_surfaces, DriverConfig, HostStopHandle, HostedRunner,
-    LivePrepOptions, PrepareHostedRunnerFromPathsRequest, ReplayGraphFromAssetsRequest,
+    validate_run_graph_from_paths_with_surfaces, write_capture_bundle as host_write_capture_bundle,
+    DriverConfig, HostRunError, HostStopHandle, HostedRunner, HostedStepError, LivePrepOptions,
+    PrepareHostedRunnerFromPathsRequest, ReplayGraphFromAssetsRequest,
     ReplayGraphFromPathsRequest, ReplayGraphResult, RunControl, RunGraphFromAssetsRequest,
     RunGraphFromPathsRequest, RunOutcome, RuntimeSurfaces,
 };
 use ergo_loader::{
-    load_project, PreparedGraphAssets, ProjectError as LoaderProjectError, ResolvedProject,
-    ResolvedProjectIngress, ResolvedProjectProfile,
+    load_project, PreparedGraphAssets, ResolvedProject, ResolvedProjectIngress,
+    ResolvedProjectProfile,
 };
-use ergo_runtime::catalog::{CatalogBuilder, CoreRegistrationError};
+use ergo_runtime::catalog::CatalogBuilder;
 
 pub use ergo_host::{
-    is_recoverable_hosted_step_error, parse_egress_config_toml, write_capture_bundle, AdapterInput,
-    CaptureBundle, CaptureJsonStyle, CaptureWriteError, EgressChannelConfig, EgressConfig,
-    EgressConfigBuilder, EgressConfigError, EgressConfigParseError, EgressDispatchFailure,
-    EgressRoute, HostAdapterCompositionError, HostAdapterSetupError, HostAvailableCluster,
-    HostDependencyScanError, HostDriverError, HostDriverInputError, HostDriverIoError,
-    HostDriverOutputError, HostDriverProtocolError, HostDriverStartError, HostExpandContext,
-    HostExpandError, HostGraphPreparationError, HostReplayError, HostReplaySetupError,
-    HostRunError, HostSetupError, HostedEgressValidationError, HostedEvent, HostedEventBuildError,
-    HostedStepError, HostedStepOutcome, InterruptedRun, InterruptionReason, RunSummary,
+    parse_egress_config_toml, AdapterInput, CaptureBundle, CaptureJsonStyle, CaptureWriteError,
+    EgressChannelConfig, EgressConfig, EgressConfigBuilder, EgressConfigError,
+    EgressConfigParseError, EgressRoute, HostReplayError, HostedEvent, HostedEventBuildError,
+    HostedStepOutcome, InterruptedRun, InterruptionReason, RunSummary,
 };
 pub use ergo_runtime::catalog::{build_core, build_core_catalog, core_registries};
 pub use ergo_runtime::runtime::ExecutionContext;
 pub use ergo_runtime::{action, common, compute, source, trigger};
+
+mod error;
+pub use error::{
+    ErgoBuildError, ErgoCaptureError, ErgoConfigError, ErgoProjectConfigError, ErgoProjectError,
+    ErgoReplayError, ErgoRunError, ErgoRunnerError, ErgoStepError, ErgoValidationError,
+};
+use error::{
+    map_host_replay_error, map_host_run_error_to_run, map_host_run_error_to_runner,
+    map_hosted_step_error,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct StopHandle {
@@ -63,337 +73,75 @@ impl StopHandle {
     }
 }
 
+/// Internal union of the two failure modes that profile resolution and
+/// validation can report before a public SDK boundary normalizes them.
+///
+/// `Config` carries SDK-classified configuration mistakes; `HostRun`
+/// carries a host-side preflight or run failure that will be remapped
+/// to the operation-specific `Ergo*` error at the boundary.
 #[derive(Debug)]
-pub enum ErgoBuildError {
-    Registration(CoreRegistrationError),
-    ProjectConfig(ProjectError),
-    ProjectSourceConflict,
+enum InternalProfileError {
+    Config(ErgoConfigError),
+    HostRun(HostRunError),
 }
 
-impl std::fmt::Display for ErgoBuildError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl From<ErgoConfigError> for InternalProfileError {
+    fn from(value: ErgoConfigError) -> Self {
+        Self::Config(value)
+    }
+}
+
+impl From<HostRunError> for InternalProfileError {
+    fn from(value: HostRunError) -> Self {
+        Self::HostRun(value)
+    }
+}
+
+impl InternalProfileError {
+    fn into_run(self) -> ErgoRunError {
         match self {
-            Self::Registration(err) => write!(f, "primitive registration failed: {err}"),
-            Self::ProjectConfig(err) => write!(f, "{err}"),
-            Self::ProjectSourceConflict => {
-                write!(
-                    f,
-                    "project_root and in_memory_project are mutually exclusive"
-                )
+            Self::Config(inner) => ErgoRunError::Config { inner },
+            Self::HostRun(err) => map_host_run_error_to_run(err),
+        }
+    }
+
+    fn into_runner(self) -> ErgoRunnerError {
+        match self {
+            Self::Config(inner) => ErgoRunnerError::Config { inner },
+            Self::HostRun(err) => map_host_run_error_to_runner(err),
+        }
+    }
+
+    fn into_replay(self) -> ErgoReplayError {
+        match self {
+            Self::Config(inner) => ErgoReplayError::Config { inner },
+            Self::HostRun(_) => {
+                // Profile resolution surfaces a `HostRunError` only for the
+                // SDK-side production-adapter check. Replay always rebuilds
+                // prep options as fixture, so this branch is reached only
+                // when a future host invariant changes; report it as a
+                // configuration-class failure rather than synthesising a
+                // bogus `HostReplayError`.
+                ErgoReplayError::Config {
+                    inner: ErgoConfigError::UnsupportedOperation {
+                        operation: "replay_profile_with_production_ingress",
+                        transport: "in-memory",
+                    },
+                }
             }
         }
     }
-}
 
-impl std::error::Error for ErgoBuildError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+    fn into_validation(self, profile: &str) -> ErgoValidationError {
         match self {
-            Self::Registration(err) => Some(err),
-            Self::ProjectConfig(err) => Some(err),
-            Self::ProjectSourceConflict => None,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum ProjectConfigError {
-    InMemoryProjectHasNoProfiles,
-    InMemoryFixtureSourceLabelEmpty {
-        profile: Option<String>,
-    },
-    InMemoryFixtureItemsEmpty {
-        profile: Option<String>,
-    },
-    InMemoryProcessCommandEmpty {
-        profile: Option<String>,
-    },
-    InMemoryProcessExecutableBlank {
-        profile: Option<String>,
-    },
-    ExplicitRunProcessCommandEmpty,
-    EgressConfigRead {
-        path: PathBuf,
-        source: std::io::Error,
-    },
-    EgressConfigParse {
-        path: PathBuf,
-        source: EgressConfigParseError,
-    },
-    FilesystemProfileCannotUseInMemoryCapture {
-        profile: String,
-    },
-    InMemoryAssetsCannotUseDefaultFilesystemCapture,
-}
-
-impl std::fmt::Display for ProjectConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InMemoryProjectHasNoProfiles => {
-                write!(f, "in-memory project snapshot must declare at least one profile")
-            }
-            Self::InMemoryFixtureSourceLabelEmpty {
-                profile: Some(profile),
-            } => write!(
-                f,
-                "in-memory project profile '{profile}' fixture ingress source_label must not be empty"
-            ),
-            Self::InMemoryFixtureSourceLabelEmpty { profile: None } => {
-                write!(f, "fixture ingress source_label must not be empty")
-            }
-            Self::InMemoryFixtureItemsEmpty {
-                profile: Some(profile),
-            } => write!(
-                f,
-                "in-memory project profile '{profile}' fixture ingress must declare at least one item"
-            ),
-            Self::InMemoryFixtureItemsEmpty { profile: None } => {
-                write!(f, "fixture ingress must declare at least one item")
-            }
-            Self::InMemoryProcessCommandEmpty {
-                profile: Some(profile),
-            } => write!(
-                f,
-                "in-memory project profile '{profile}' process ingress command must not be empty"
-            ),
-            Self::InMemoryProcessCommandEmpty { profile: None } => {
-                write!(f, "process ingress command must not be empty")
-            }
-            Self::InMemoryProcessExecutableBlank {
-                profile: Some(profile),
-            } => write!(
-                f,
-                "in-memory project profile '{profile}' process ingress executable must not be empty"
-            ),
-            Self::InMemoryProcessExecutableBlank { profile: None } => {
-                write!(f, "process ingress executable must not be empty")
-            }
-            Self::ExplicitRunProcessCommandEmpty => {
-                write!(
-                    f,
-                    "explicit run configuration is invalid: process ingress command must not be empty"
-                )
-            }
-            Self::EgressConfigRead { path, source } => {
-                write!(
-                    f,
-                    "failed to read egress config '{}': {source}",
-                    path.display()
-                )
-            }
-            Self::EgressConfigParse { path, source } => {
-                write!(
-                    f,
-                    "failed to parse egress config '{}': {source}",
-                    path.display()
-                )
-            }
-            Self::FilesystemProfileCannotUseInMemoryCapture { profile } => write!(
-                f,
-                "filesystem profile '{profile}' cannot use in-memory capture"
-            ),
-            Self::InMemoryAssetsCannotUseDefaultFilesystemCapture => write!(
-                f,
-                "default filesystem capture cannot be applied to in-memory graph assets"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for ProjectConfigError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::EgressConfigRead { source, .. } => Some(source),
-            Self::EgressConfigParse { source, .. } => Some(source),
-            Self::InMemoryProjectHasNoProfiles
-            | Self::InMemoryFixtureSourceLabelEmpty { .. }
-            | Self::InMemoryFixtureItemsEmpty { .. }
-            | Self::InMemoryProcessCommandEmpty { .. }
-            | Self::InMemoryProcessExecutableBlank { .. }
-            | Self::ExplicitRunProcessCommandEmpty
-            | Self::FilesystemProfileCannotUseInMemoryCapture { .. }
-            | Self::InMemoryAssetsCannotUseDefaultFilesystemCapture => None,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum ProjectError {
-    ProjectNotConfigured,
-    ProfileNotFound {
-        name: String,
-    },
-    Config(ProjectConfigError),
-    Load(LoaderProjectError),
-    Host(HostRunError),
-    UnsupportedOperation {
-        operation: &'static str,
-        transport: &'static str,
-    },
-}
-
-impl std::fmt::Display for ProjectError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ProjectNotConfigured => {
-                write!(
-                    f,
-                    "a project source must be configured for project/profile operations"
-                )
-            }
-            Self::ProfileNotFound { name } => write!(f, "project profile '{name}' does not exist"),
-            Self::Config(err) => write!(f, "{err}"),
-            Self::Load(err) => write!(f, "{err}"),
-            Self::Host(err) => write!(f, "{err}"),
-            Self::UnsupportedOperation {
-                operation,
-                transport,
-            } => write!(
-                f,
-                "operation '{operation}' is not supported for {transport} projects"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for ProjectError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Config(err) => Some(err),
-            Self::Load(err) => Some(err),
-            Self::Host(err) => Some(err),
-            Self::ProjectNotConfigured
-            | Self::ProfileNotFound { .. }
-            | Self::UnsupportedOperation { .. } => None,
-        }
-    }
-}
-
-impl From<LoaderProjectError> for ProjectError {
-    fn from(value: LoaderProjectError) -> Self {
-        map_loader_project_error(value)
-    }
-}
-
-#[derive(Debug)]
-pub enum ErgoRunError {
-    Project(ProjectError),
-    Host(HostRunError),
-}
-
-impl std::fmt::Display for ErgoRunError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Project(err) => write!(f, "{err}"),
-            Self::Host(err) => write!(f, "{err}"),
-        }
-    }
-}
-
-impl std::error::Error for ErgoRunError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Project(err) => Some(err),
-            Self::Host(err) => Some(err),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum ErgoReplayError {
-    Project(ProjectError),
-    Host(HostReplayError),
-}
-
-impl std::fmt::Display for ErgoReplayError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Project(err) => write!(f, "{err}"),
-            Self::Host(err) => write!(f, "{err}"),
-        }
-    }
-}
-
-impl std::error::Error for ErgoReplayError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Project(err) => Some(err),
-            Self::Host(err) => Some(err),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum ErgoValidateError {
-    Project(ProjectError),
-    Validation {
-        profile: String,
-        source: ProjectError,
-    },
-}
-
-impl std::fmt::Display for ErgoValidateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Project(err) => write!(f, "{err}"),
-            Self::Validation { profile, source } => {
-                write!(f, "validation failed for profile '{profile}': {source}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ErgoValidateError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Project(err) => Some(err),
-            Self::Validation { source, .. } => Some(source),
-        }
-    }
-}
-
-/// Manual-runner setup currently reports the same project/host error surface as
-/// profile execution. Keep the alias so callers can name the runner-specific
-/// result today; if the surfaces diverge later this can become a distinct type
-/// without renaming the API.
-pub type ErgoRunnerError = ErgoRunError;
-
-#[derive(Debug)]
-pub enum ProfileRunnerCaptureError {
-    Finish(HostedStepError),
-    CaptureOutputNotConfigured,
-    Write {
-        source: CaptureWriteError,
-        bundle: CaptureBundle,
-    },
-}
-
-impl std::fmt::Display for ProfileRunnerCaptureError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Finish(err) => write!(f, "{err}"),
-            Self::CaptureOutputNotConfigured => {
-                write!(f, "profile does not declare a capture file path")
-            }
-            Self::Write { source, .. } => write!(f, "{source}"),
-        }
-    }
-}
-
-impl std::error::Error for ProfileRunnerCaptureError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Finish(err) => Some(err),
-            Self::Write { source, .. } => Some(source),
-            Self::CaptureOutputNotConfigured => None,
-        }
-    }
-}
-
-impl ProfileRunnerCaptureError {
-    pub fn capture_bundle(&self) -> Option<&CaptureBundle> {
-        match self {
-            Self::Write { bundle, .. } => Some(bundle),
-            Self::Finish(_) | Self::CaptureOutputNotConfigured => None,
+            Self::Config(inner) => ErgoValidationError::Profile {
+                profile: profile.to_string(),
+                inner,
+            },
+            Self::HostRun(inner) => ErgoValidationError::HostValidation {
+                profile: profile.to_string(),
+                inner,
+            },
         }
     }
 }
@@ -617,7 +365,7 @@ impl InMemoryProfileConfig {
     pub fn process<I, S>(
         graph_assets: PreparedGraphAssets,
         command: I,
-    ) -> Result<Self, ProjectError>
+    ) -> Result<Self, ErgoProjectConfigError>
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
@@ -633,7 +381,7 @@ impl InMemoryProfileConfig {
             max_duration: None,
             max_events: None,
         };
-        validate_in_memory_profile_config(None, &config).map_err(ProjectError::Config)?;
+        validate_in_memory_profile_config(None, &config)?;
         Ok(config)
     }
 
@@ -641,7 +389,7 @@ impl InMemoryProfileConfig {
         graph_assets: PreparedGraphAssets,
         items: Vec<FixtureItem>,
         source_label: impl Into<String>,
-    ) -> Result<Self, ProjectError> {
+    ) -> Result<Self, ErgoProjectConfigError> {
         let config = Self {
             graph_assets,
             ingress: InMemoryIngress::FixtureItems {
@@ -654,7 +402,7 @@ impl InMemoryProfileConfig {
             max_duration: None,
             max_events: None,
         };
-        validate_in_memory_profile_config(None, &config).map_err(ProjectError::Config)?;
+        validate_in_memory_profile_config(None, &config)?;
         Ok(config)
     }
 
@@ -697,7 +445,7 @@ impl InMemoryProjectSnapshotBuilder {
         self
     }
 
-    pub fn build(self) -> Result<InMemoryProjectSnapshot, ProjectError> {
+    pub fn build(self) -> Result<InMemoryProjectSnapshot, ErgoProjectConfigError> {
         InMemoryProjectSnapshot::from_parts(self.name, self.version, self.profiles)
     }
 }
@@ -718,10 +466,10 @@ impl InMemoryProjectSnapshot {
         self.profiles.keys().cloned().collect()
     }
 
-    fn resolve_profile(&self, name: &str) -> Result<&InMemoryProfileConfig, ProjectError> {
+    fn resolve_profile(&self, name: &str) -> Result<&InMemoryProfileConfig, ErgoConfigError> {
         self.profiles
             .get(name)
-            .ok_or_else(|| ProjectError::ProfileNotFound {
+            .ok_or_else(|| ErgoConfigError::ProfileNotFound {
                 name: name.to_string(),
             })
     }
@@ -730,15 +478,12 @@ impl InMemoryProjectSnapshot {
         name: String,
         version: String,
         profiles: BTreeMap<String, InMemoryProfileConfig>,
-    ) -> Result<Self, ProjectError> {
+    ) -> Result<Self, ErgoProjectConfigError> {
         if profiles.is_empty() {
-            return Err(ProjectError::Config(
-                ProjectConfigError::InMemoryProjectHasNoProfiles,
-            ));
+            return Err(ErgoProjectConfigError::InMemoryProjectHasNoProfiles);
         }
         for (profile_name, profile) in &profiles {
-            validate_in_memory_profile_config(Some(profile_name.as_str()), profile)
-                .map_err(ProjectError::Config)?;
+            validate_in_memory_profile_config(Some(profile_name.as_str()), profile)?;
         }
         Ok(Self {
             name,
@@ -747,7 +492,7 @@ impl InMemoryProjectSnapshot {
         })
     }
 
-    fn validate(&self) -> Result<(), ProjectError> {
+    fn validate(&self) -> Result<(), ErgoProjectConfigError> {
         let _ = Self::from_parts(
             self.name.clone(),
             self.version.clone(),
@@ -872,12 +617,14 @@ impl ErgoBuilder {
             return Err(ErgoBuildError::ProjectSourceConflict);
         }
         if let ProjectSource::InMemory(snapshot) = &self.project_source {
-            snapshot.validate().map_err(ErgoBuildError::ProjectConfig)?;
+            snapshot.validate().map_err(|inner| ErgoBuildError::Project {
+                inner: ErgoProjectError::Config { inner },
+            })?;
         }
         let (registries, catalog) = self
             .catalog_builder
             .build()
-            .map_err(ErgoBuildError::Registration)?;
+            .map_err(|inner| ErgoBuildError::Registration { inner })?;
         Ok(Ergo {
             runtime_surfaces: RuntimeSurfaces::new(registries, catalog),
             project_source: self.project_source,
@@ -935,14 +682,15 @@ impl Ergo {
         config: RunConfig,
         control: RunControl,
     ) -> Result<RunOutcome, ErgoRunError> {
-        let request = run_request_from_config(&config).map_err(ErgoRunError::Project)?;
+        let request = run_request_from_config(&config)
+            .map_err(|inner| ErgoRunError::Config { inner })?;
 
         run_graph_from_paths_with_surfaces_and_control(
             request,
             self.runtime_surfaces.clone(),
             run_control_from_config(&config, control),
         )
-        .map_err(ErgoRunError::Host)
+        .map_err(map_host_run_error_to_run)
     }
 
     pub fn run_profile(&self, profile_name: &str) -> Result<RunOutcome, ErgoRunError> {
@@ -967,7 +715,7 @@ impl Ergo {
     ) -> Result<RunOutcome, ErgoRunError> {
         let plan = self
             .resolve_profile_plan(profile_name)
-            .map_err(ErgoRunError::Project)?;
+            .map_err(InternalProfileError::into_run)?;
         self.run_profile_plan_with_control(plan, control)
     }
 
@@ -981,7 +729,7 @@ impl Ergo {
             },
             self.runtime_surfaces.clone(),
         )
-        .map_err(ErgoReplayError::Host)
+        .map_err(map_host_replay_error)
     }
 
     pub fn replay_bundle(
@@ -989,8 +737,8 @@ impl Ergo {
         config: ReplayBundleConfig,
     ) -> Result<ReplayGraphResult, ErgoReplayError> {
         let assets = load_graph_assets_from_paths(&config.graph_path, &config.cluster_paths)
-            .map_err(ProjectError::Host)
-            .map_err(ErgoReplayError::Project)?;
+            .map_err(InternalProfileError::HostRun)
+            .map_err(InternalProfileError::into_replay)?;
         replay_graph_from_assets_with_surfaces(
             ReplayGraphFromAssetsRequest {
                 bundle: config.bundle,
@@ -999,7 +747,7 @@ impl Ergo {
             },
             self.runtime_surfaces.clone(),
         )
-        .map_err(ErgoReplayError::Host)
+        .map_err(map_host_replay_error)
     }
 
     pub fn replay_profile(
@@ -1009,7 +757,7 @@ impl Ergo {
     ) -> Result<ReplayGraphResult, ErgoReplayError> {
         let plan = self
             .resolve_profile_plan(profile_name)
-            .map_err(ErgoReplayError::Project)?;
+            .map_err(InternalProfileError::into_replay)?;
         match plan.runner_source {
             RunnerSource::Paths(request) => self.replay(ReplayConfig {
                 capture_path: capture_path.as_ref().to_path_buf(),
@@ -1017,12 +765,12 @@ impl Ergo {
                 cluster_paths: request.cluster_paths,
                 adapter_path: request.adapter_path,
             }),
-            RunnerSource::Assets { .. } => Err(ErgoReplayError::Project(
-                ProjectError::UnsupportedOperation {
+            RunnerSource::Assets { .. } => Err(ErgoReplayError::Config {
+                inner: ErgoConfigError::UnsupportedOperation {
                     operation: "replay_profile",
                     transport: "in-memory",
                 },
-            )),
+            }),
         }
     }
 
@@ -1033,27 +781,22 @@ impl Ergo {
     ) -> Result<ReplayGraphResult, ErgoReplayError> {
         let plan = self
             .resolve_profile_plan(profile_name)
-            .map_err(ErgoReplayError::Project)?;
+            .map_err(InternalProfileError::into_replay)?;
         self.replay_profile_bundle_from_plan(plan, bundle)
     }
 
-    pub fn validate_project(&self) -> Result<ProjectSummary, ErgoValidateError> {
+    pub fn validate_project(&self) -> Result<ProjectSummary, ErgoValidationError> {
         match &self.project_source {
             ProjectSource::Filesystem(_) => {
-                let project = self.load_project().map_err(ErgoValidateError::Project)?;
+                let project = self
+                    .load_project()
+                    .map_err(|inner| ErgoValidationError::Config { inner })?;
                 let profiles = project.profile_names();
                 for profile_name in &profiles {
                     let plan = Self::resolve_profile_plan_from_project(&project, profile_name)
-                        .map_err(|source| ErgoValidateError::Validation {
-                            profile: profile_name.clone(),
-                            source,
-                        })?;
-                    self.validate_profile_plan(&plan).map_err(|source| {
-                        ErgoValidateError::Validation {
-                            profile: profile_name.clone(),
-                            source,
-                        }
-                    })?;
+                        .map_err(|err| err.into_validation(profile_name))?;
+                    self.validate_profile_plan(&plan)
+                        .map_err(|err| err.into_validation(profile_name))?;
                 }
 
                 Ok(ProjectSummary {
@@ -1066,18 +809,11 @@ impl Ergo {
             ProjectSource::InMemory(project) => {
                 let profiles = project.profile_names();
                 for profile_name in &profiles {
-                    let plan = self.resolve_profile_plan(profile_name).map_err(|source| {
-                        ErgoValidateError::Validation {
-                            profile: profile_name.clone(),
-                            source,
-                        }
-                    })?;
-                    self.validate_profile_plan(&plan).map_err(|source| {
-                        ErgoValidateError::Validation {
-                            profile: profile_name.clone(),
-                            source,
-                        }
-                    })?;
+                    let plan = self
+                        .resolve_profile_plan(profile_name)
+                        .map_err(|err| err.into_validation(profile_name))?;
+                    self.validate_profile_plan(&plan)
+                        .map_err(|err| err.into_validation(profile_name))?;
                 }
 
                 Ok(ProjectSummary {
@@ -1087,23 +823,23 @@ impl Ergo {
                     profiles,
                 })
             }
-            ProjectSource::None => Err(ErgoValidateError::Project(
-                ProjectError::ProjectNotConfigured,
-            )),
+            ProjectSource::None => Err(ErgoValidationError::Config {
+                inner: ErgoConfigError::ProjectNotConfigured,
+            }),
         }
     }
 
-    fn load_project(&self) -> Result<ResolvedProject, ProjectError> {
+    fn load_project(&self) -> Result<ResolvedProject, ErgoConfigError> {
         let ProjectSource::Filesystem(project_root) = &self.project_source else {
-            return Err(ProjectError::ProjectNotConfigured);
+            return Err(ErgoConfigError::ProjectNotConfigured);
         };
-        load_project(project_root).map_err(ProjectError::from)
+        load_project(project_root).map_err(ErgoConfigError::from)
     }
 
     fn resolve_profile_plan(
         &self,
         profile_name: &str,
-    ) -> Result<ResolvedProfilePlan, ProjectError> {
+    ) -> Result<ResolvedProfilePlan, InternalProfileError> {
         match &self.project_source {
             ProjectSource::Filesystem(_) => {
                 let project = self.load_project()?;
@@ -1113,17 +849,19 @@ impl Ergo {
                 let profile = project.resolve_profile(profile_name)?;
                 resolve_profile_plan_from_in_memory_profile(profile_name, profile)
             }
-            ProjectSource::None => Err(ProjectError::ProjectNotConfigured),
+            ProjectSource::None => Err(InternalProfileError::Config(
+                ErgoConfigError::ProjectNotConfigured,
+            )),
         }
     }
 
     fn resolve_profile_plan_from_project(
         project: &ResolvedProject,
         profile_name: &str,
-    ) -> Result<ResolvedProfilePlan, ProjectError> {
+    ) -> Result<ResolvedProfilePlan, InternalProfileError> {
         let resolved = project
             .resolve_run_profile(profile_name)
-            .map_err(ProjectError::from)?;
+            .map_err(ErgoConfigError::from)?;
         resolve_profile_plan_from_resolved_profile(profile_name, resolved)
     }
 
@@ -1146,11 +884,11 @@ impl Ergo {
                     CapturePlan::DefaultFile { pretty } => (None, pretty),
                     CapturePlan::ExplicitFile { path, pretty } => (Some(path), pretty),
                     CapturePlan::InMemory => {
-                        return Err(ErgoRunError::Project(ProjectError::Config(
-                            ProjectConfigError::FilesystemProfileCannotUseInMemoryCapture {
+                        return Err(ErgoRunError::Config {
+                            inner: ErgoConfigError::FilesystemProfileCannotUseInMemoryCapture {
                                 profile: profile_name,
                             },
-                        )));
+                        });
                     }
                 };
                 run_graph_from_paths_with_surfaces_and_control(
@@ -1166,32 +904,36 @@ impl Ergo {
                     self.runtime_surfaces.clone(),
                     apply_profile_limits(control, max_duration, max_events),
                 )
-                .map_err(ErgoRunError::Host)
+                .map_err(map_host_run_error_to_run)
             }
             RunnerSource::Assets { assets, prep } => {
+                let host_capture = host_capture_policy_from_plan(&capture)
+                    .map_err(|inner| ErgoRunError::Config { inner })?;
                 run_graph_from_assets_with_surfaces_and_control(
                     RunGraphFromAssetsRequest {
                         assets,
                         prep,
                         driver,
-                        capture: host_capture_policy_from_plan(&capture)
-                            .map_err(ErgoRunError::Project)?,
+                        capture: host_capture,
                     },
                     self.runtime_surfaces.clone(),
                     apply_profile_limits(control, max_duration, max_events),
                 )
-                .map_err(ErgoRunError::Host)
+                .map_err(map_host_run_error_to_run)
             }
         }
     }
 
-    fn validate_profile_plan(&self, plan: &ResolvedProfilePlan) -> Result<(), ProjectError> {
+    fn validate_profile_plan(
+        &self,
+        plan: &ResolvedProfilePlan,
+    ) -> Result<(), InternalProfileError> {
         match (&plan.runner_source, &plan.capture) {
-            (RunnerSource::Paths(_request), CapturePlan::InMemory) => Err(ProjectError::Config(
-                ProjectConfigError::FilesystemProfileCannotUseInMemoryCapture {
+            (RunnerSource::Paths(_request), CapturePlan::InMemory) => Err(
+                InternalProfileError::Config(ErgoConfigError::FilesystemProfileCannotUseInMemoryCapture {
                     profile: plan.profile_name.clone(),
-                },
-            )),
+                }),
+            ),
             (RunnerSource::Paths(request), CapturePlan::DefaultFile { pretty }) => {
                 validate_run_graph_from_paths_with_surfaces(
                     RunGraphFromPathsRequest {
@@ -1205,7 +947,7 @@ impl Ergo {
                     },
                     self.runtime_surfaces.clone(),
                 )
-                .map_err(ProjectError::Host)
+                .map_err(InternalProfileError::HostRun)
             }
             (RunnerSource::Paths(request), CapturePlan::ExplicitFile { path, pretty }) => {
                 validate_run_graph_from_paths_with_surfaces(
@@ -1220,19 +962,21 @@ impl Ergo {
                     },
                     self.runtime_surfaces.clone(),
                 )
-                .map_err(ProjectError::Host)
+                .map_err(InternalProfileError::HostRun)
             }
             (RunnerSource::Assets { assets, prep }, capture) => {
+                let host_capture =
+                    host_capture_policy_from_plan(capture).map_err(InternalProfileError::Config)?;
                 validate_run_graph_from_assets_with_surfaces(
                     RunGraphFromAssetsRequest {
                         assets: assets.clone(),
                         prep: prep.clone(),
                         driver: plan.driver.clone(),
-                        capture: host_capture_policy_from_plan(capture)?,
+                        capture: host_capture,
                     },
                     self.runtime_surfaces.clone(),
                 )
-                .map_err(ProjectError::Host)
+                .map_err(InternalProfileError::HostRun)
             }
         }
     }
@@ -1246,8 +990,8 @@ impl Ergo {
             RunnerSource::Paths(request) => {
                 let assets =
                     load_graph_assets_from_paths(&request.graph_path, &request.cluster_paths)
-                        .map_err(ProjectError::Host)
-                        .map_err(ErgoReplayError::Project)?;
+                        .map_err(InternalProfileError::HostRun)
+                        .map_err(InternalProfileError::into_replay)?;
                 replay_graph_from_assets_with_surfaces(
                     ReplayGraphFromAssetsRequest {
                         bundle,
@@ -1259,7 +1003,7 @@ impl Ergo {
                     },
                     self.runtime_surfaces.clone(),
                 )
-                .map_err(ErgoReplayError::Host)
+                .map_err(map_host_replay_error)
             }
             RunnerSource::Assets { assets, prep } => replay_graph_from_assets_with_surfaces(
                 ReplayGraphFromAssetsRequest {
@@ -1269,14 +1013,14 @@ impl Ergo {
                 },
                 self.runtime_surfaces.clone(),
             )
-            .map_err(ErgoReplayError::Host),
+            .map_err(map_host_replay_error),
         }
     }
 
     pub fn runner_for_profile(&self, profile_name: &str) -> Result<ProfileRunner, ErgoRunnerError> {
         let plan = self
             .resolve_profile_plan(profile_name)
-            .map_err(ErgoRunnerError::Project)?;
+            .map_err(InternalProfileError::into_runner)?;
         let ResolvedProfilePlan {
             runner_source,
             capture,
@@ -1288,7 +1032,7 @@ impl Ergo {
                     request,
                     self.runtime_surfaces.clone(),
                 )
-                .map_err(ErgoRunnerError::Host)?;
+                .map_err(map_host_run_error_to_runner)?;
                 Ok(ProfileRunner {
                     runner: Some(runner),
                     capture,
@@ -1302,7 +1046,7 @@ impl Ergo {
                     &prep,
                     self.runtime_surfaces.clone(),
                 )
-                .map_err(ErgoRunnerError::Host)?;
+                .map_err(map_host_run_error_to_runner)?;
                 Ok(ProfileRunner {
                     runner: Some(runner),
                     capture,
@@ -1322,50 +1066,55 @@ pub struct ProfileRunner {
 }
 
 impl ProfileRunner {
-    pub fn step(&mut self, event: HostedEvent) -> Result<HostedStepOutcome, HostedStepError> {
+    pub fn step(&mut self, event: HostedEvent) -> Result<HostedStepOutcome, ErgoStepError> {
         match self.state {
             ProfileRunnerState::Active => {}
             ProfileRunnerState::FinalizableAfterDispatchFailure => {
-                return Err(lifecycle_violation(
+                return Err(map_hosted_step_error(lifecycle_violation(
                     "profile runner must be finalized after egress dispatch failure before stepping again",
-                ));
+                )));
             }
             ProfileRunnerState::Failed => {
-                return Err(lifecycle_violation(
+                return Err(map_hosted_step_error(lifecycle_violation(
                     "profile runner cannot continue after a non-finalizable step error",
-                ));
+                )));
             }
             ProfileRunnerState::Finished => {
-                return Err(lifecycle_violation("profile runner is already finished"));
+                return Err(map_hosted_step_error(lifecycle_violation(
+                    "profile runner is already finished",
+                )));
             }
         }
 
         let runner = self.runner.as_mut().ok_or_else(|| {
-            lifecycle_violation("internal: active profile runner must hold hosted runner")
+            map_hosted_step_error(lifecycle_violation(
+                "internal: active profile runner must hold hosted runner",
+            ))
         })?;
         match runner.step(event) {
             Ok(outcome) => {
                 self.successful_steps += 1;
                 Ok(outcome)
             }
-            Err(HostedStepError::EgressDispatchFailure(failure)) => {
-                self.state = ProfileRunnerState::FinalizableAfterDispatchFailure;
-                Err(HostedStepError::EgressDispatchFailure(failure))
-            }
             Err(err) => {
-                if !is_recoverable_hosted_step_error(&err) {
+                let mapped = map_hosted_step_error(err);
+                if mapped.can_finish() {
+                    self.state = ProfileRunnerState::FinalizableAfterDispatchFailure;
+                } else if !mapped.is_recoverable() {
                     self.state = ProfileRunnerState::Failed;
                 }
-                Err(err)
+                Err(mapped)
             }
         }
     }
 
     pub fn context_snapshot(
         &self,
-    ) -> Result<&std::collections::BTreeMap<String, serde_json::Value>, HostedStepError> {
+    ) -> Result<&std::collections::BTreeMap<String, serde_json::Value>, ErgoStepError> {
         let Some(runner) = self.runner.as_ref() else {
-            return Err(lifecycle_violation("profile runner is already finished"));
+            return Err(map_hosted_step_error(lifecycle_violation(
+                "profile runner is already finished",
+            )));
         };
         Ok(runner.context_snapshot())
     }
@@ -1378,56 +1127,75 @@ impl ProfileRunner {
         self.capture.pretty()
     }
 
-    pub fn finish(&mut self) -> Result<CaptureBundle, HostedStepError> {
+    pub fn finish(&mut self) -> Result<CaptureBundle, ErgoStepError> {
         match self.state {
             ProfileRunnerState::Finished => {
-                return Err(lifecycle_violation("profile runner is already finished"));
+                return Err(map_hosted_step_error(lifecycle_violation(
+                    "profile runner is already finished",
+                )));
             }
             ProfileRunnerState::Failed => {
-                return Err(lifecycle_violation(
+                return Err(map_hosted_step_error(lifecycle_violation(
                     "profile runner cannot finalize after a non-finalizable step error",
-                ));
+                )));
             }
             ProfileRunnerState::Active if self.successful_steps == 0 => {
-                return Err(lifecycle_violation(
+                return Err(map_hosted_step_error(lifecycle_violation(
                     "profile runner cannot finalize before the first successful step",
-                ));
+                )));
             }
             ProfileRunnerState::Active | ProfileRunnerState::FinalizableAfterDispatchFailure => {}
         }
 
         self.state = ProfileRunnerState::Finished;
         let runner = self.runner.take().ok_or_else(|| {
-            lifecycle_violation("internal: unfinished profile runner must hold hosted runner")
+            map_hosted_step_error(lifecycle_violation(
+                "internal: unfinished profile runner must hold hosted runner",
+            ))
         })?;
-        finalize_hosted_runner_capture(runner, false)
+        finalize_hosted_runner_capture(runner, false).map_err(map_hosted_step_error)
     }
 
-    pub fn finish_and_write_capture(&mut self) -> Result<CaptureBundle, ProfileRunnerCaptureError> {
+    pub fn finish_and_write_capture(&mut self) -> Result<CaptureBundle, ErgoCaptureError> {
         let capture_path = match &self.capture {
             CapturePlan::ExplicitFile { path, .. } => path.clone(),
             CapturePlan::DefaultFile { .. } | CapturePlan::InMemory => {
-                return Err(ProfileRunnerCaptureError::CaptureOutputNotConfigured);
+                return Err(ErgoCaptureError::OutputNotConfigured);
             }
         };
-        let bundle = self.finish().map_err(ProfileRunnerCaptureError::Finish)?;
+        let bundle = self
+            .finish()
+            .map_err(|inner| ErgoCaptureError::Finalize { inner })?;
         let style = if self.capture.pretty() {
             CaptureJsonStyle::Pretty
         } else {
             CaptureJsonStyle::Compact
         };
-        match write_capture_bundle(&capture_path, &bundle, style) {
+        match host_write_capture_bundle(&capture_path, &bundle, style) {
             Ok(()) => Ok(bundle),
-            Err(source) => Err(ProfileRunnerCaptureError::Write { source, bundle }),
+            Err(inner) => Err(ErgoCaptureError::Write {
+                inner,
+                bundle: Some(bundle),
+            }),
         }
     }
 }
 
-fn map_loader_project_error(err: LoaderProjectError) -> ProjectError {
-    match err {
-        LoaderProjectError::ProfileNotFound { name } => ProjectError::ProfileNotFound { name },
-        other => ProjectError::Load(other),
-    }
+/// SDK-branded wrapper around the host capture-bundle writer.
+///
+/// Returns `ErgoCaptureError::Write` on filesystem failure with `bundle: None`
+/// (the caller already owns the bundle they passed in).
+pub fn write_capture_bundle(
+    path: impl AsRef<Path>,
+    bundle: &CaptureBundle,
+    style: CaptureJsonStyle,
+) -> Result<(), ErgoCaptureError> {
+    host_write_capture_bundle(path.as_ref(), bundle, style).map_err(|inner| {
+        ErgoCaptureError::Write {
+            inner,
+            bundle: None,
+        }
+    })
 }
 
 fn profile_name_option(profile_name: Option<&str>) -> Option<String> {
@@ -1437,23 +1205,23 @@ fn profile_name_option(profile_name: Option<&str>) -> Option<String> {
 fn validate_in_memory_profile_config(
     profile_name: Option<&str>,
     profile: &InMemoryProfileConfig,
-) -> Result<(), ProjectConfigError> {
+) -> Result<(), ErgoProjectConfigError> {
     match &profile.ingress {
         InMemoryIngress::FixtureItems {
             items: _,
             source_label,
         } if source_label.trim().is_empty() => {
-            return Err(ProjectConfigError::InMemoryFixtureSourceLabelEmpty {
+            return Err(ErgoProjectConfigError::InMemoryFixtureSourceLabelEmpty {
                 profile: profile_name_option(profile_name),
             });
         }
         InMemoryIngress::FixtureItems { items, .. } if items.is_empty() => {
-            return Err(ProjectConfigError::InMemoryFixtureItemsEmpty {
+            return Err(ErgoProjectConfigError::InMemoryFixtureItemsEmpty {
                 profile: profile_name_option(profile_name),
             });
         }
         InMemoryIngress::Process { command } if command.is_empty() => {
-            return Err(ProjectConfigError::InMemoryProcessCommandEmpty {
+            return Err(ErgoProjectConfigError::InMemoryProcessCommandEmpty {
                 profile: profile_name_option(profile_name),
             });
         }
@@ -1463,7 +1231,7 @@ fn validate_in_memory_profile_config(
                 .map(|program| program.trim().is_empty())
                 .unwrap_or(false) =>
         {
-            return Err(ProjectConfigError::InMemoryProcessExecutableBlank {
+            return Err(ErgoProjectConfigError::InMemoryProcessExecutableBlank {
                 profile: profile_name_option(profile_name),
             });
         }
@@ -1475,7 +1243,7 @@ fn validate_in_memory_profile_config(
 
 fn live_prep_options_from_in_memory_profile(
     profile: &InMemoryProfileConfig,
-) -> Result<LivePrepOptions, ProjectError> {
+) -> Result<LivePrepOptions, InternalProfileError> {
     match &profile.ingress {
         InMemoryIngress::FixtureItems { .. } => Ok(LivePrepOptions::for_fixture(
             profile.adapter.clone(),
@@ -1486,25 +1254,25 @@ fn live_prep_options_from_in_memory_profile(
                 adapter,
                 profile.egress_config.clone(),
             )),
-            None => Err(ProjectError::Host(
+            None => Err(InternalProfileError::HostRun(
                 ergo_host::HostRunError::ProductionRequiresAdapter,
             )),
         },
     }
 }
 
-fn driver_from_in_memory_ingress(ingress: &InMemoryIngress) -> Result<DriverConfig, ProjectError> {
+fn driver_from_in_memory_ingress(ingress: &InMemoryIngress) -> DriverConfig {
     match ingress {
-        InMemoryIngress::Process { command } => Ok(DriverConfig::Process {
+        InMemoryIngress::Process { command } => DriverConfig::Process {
             command: command.clone(),
-        }),
+        },
         InMemoryIngress::FixtureItems {
             items,
             source_label,
-        } => Ok(DriverConfig::FixtureItems {
+        } => DriverConfig::FixtureItems {
             items: items.clone(),
             source_label: source_label.clone(),
-        }),
+        },
     }
 }
 
@@ -1532,13 +1300,13 @@ fn capture_plan_from_in_memory_profile(profile: &InMemoryProfileConfig) -> Captu
 
 fn prepare_host_request_from_profile(
     profile: &ResolvedProjectProfile,
-) -> Result<PrepareHostedRunnerFromPathsRequest, ProjectError> {
+) -> Result<PrepareHostedRunnerFromPathsRequest, InternalProfileError> {
     let egress_config = profile
         .egress_config_path
         .as_deref()
         .map(load_egress_config)
         .transpose()
-        .map_err(ProjectError::Config)?;
+        .map_err(InternalProfileError::Config)?;
     match &profile.ingress {
         ResolvedProjectIngress::Fixture { .. } => {
             Ok(PrepareHostedRunnerFromPathsRequest::for_fixture(
@@ -1555,7 +1323,7 @@ fn prepare_host_request_from_profile(
                 adapter_path.clone(),
                 egress_config,
             )),
-            None => Err(ProjectError::Host(
+            None => Err(InternalProfileError::HostRun(
                 ergo_host::HostRunError::ProductionRequiresAdapter,
             )),
         },
@@ -1565,7 +1333,7 @@ fn prepare_host_request_from_profile(
 fn resolve_profile_plan_from_resolved_profile(
     profile_name: &str,
     profile: ResolvedProjectProfile,
-) -> Result<ResolvedProfilePlan, ProjectError> {
+) -> Result<ResolvedProfilePlan, InternalProfileError> {
     let capture = capture_plan_from_resolved_profile(&profile);
     let request = prepare_host_request_from_profile(&profile)?;
     let driver = match profile.ingress {
@@ -1585,15 +1353,17 @@ fn resolve_profile_plan_from_resolved_profile(
 fn resolve_profile_plan_from_in_memory_profile(
     profile_name: &str,
     profile: &InMemoryProfileConfig,
-) -> Result<ResolvedProfilePlan, ProjectError> {
-    validate_in_memory_profile_config(Some(profile_name), profile).map_err(ProjectError::Config)?;
+) -> Result<ResolvedProfilePlan, InternalProfileError> {
+    validate_in_memory_profile_config(Some(profile_name), profile).map_err(|inner| {
+        InternalProfileError::Config(ErgoConfigError::ProjectConfig { inner })
+    })?;
     Ok(ResolvedProfilePlan {
         profile_name: profile_name.to_string(),
         runner_source: RunnerSource::Assets {
             assets: profile.graph_assets.clone(),
             prep: live_prep_options_from_in_memory_profile(profile)?,
         },
-        driver: driver_from_in_memory_ingress(&profile.ingress)?,
+        driver: driver_from_in_memory_ingress(&profile.ingress),
         capture: capture_plan_from_in_memory_profile(profile),
         max_duration: profile.max_duration,
         max_events: profile.max_events,
@@ -1602,16 +1372,16 @@ fn resolve_profile_plan_from_in_memory_profile(
 
 fn host_capture_policy_from_plan(
     capture: &CapturePlan,
-) -> Result<ergo_host::CapturePolicy, ProjectError> {
+) -> Result<ergo_host::CapturePolicy, ErgoConfigError> {
     match capture {
         CapturePlan::InMemory => Ok(ergo_host::CapturePolicy::InMemory),
         CapturePlan::ExplicitFile { path, pretty } => Ok(ergo_host::CapturePolicy::File {
             path: path.clone(),
             pretty: *pretty,
         }),
-        CapturePlan::DefaultFile { .. } => Err(ProjectError::Config(
-            ProjectConfigError::InMemoryAssetsCannotUseDefaultFilesystemCapture,
-        )),
+        CapturePlan::DefaultFile { .. } => {
+            Err(ErgoConfigError::InMemoryAssetsCannotUseDefaultFilesystemCapture)
+        }
     }
 }
 
@@ -1621,14 +1391,16 @@ fn lifecycle_violation(detail: impl Into<String>) -> HostedStepError {
     }
 }
 
-fn run_request_from_config(config: &RunConfig) -> Result<RunGraphFromPathsRequest, ProjectError> {
+fn run_request_from_config(
+    config: &RunConfig,
+) -> Result<RunGraphFromPathsRequest, ErgoConfigError> {
     Ok(RunGraphFromPathsRequest {
         graph_path: config.graph_path.clone(),
         cluster_paths: config.cluster_paths.clone(),
-        driver: ingress_to_driver(&config.ingress).map_err(ProjectError::Config)?,
+        driver: ingress_to_driver(&config.ingress)?,
         adapter_path: config.adapter_path.clone(),
         egress_config: match &config.egress_config_path {
-            Some(path) => Some(load_egress_config(path).map_err(ProjectError::Config)?),
+            Some(path) => Some(load_egress_config(path)?),
             None => None,
         },
         capture_output: config.capture_output.clone(),
@@ -1658,12 +1430,12 @@ fn apply_profile_limits(
     }
 }
 
-fn ingress_to_driver(ingress: &IngressConfig) -> Result<DriverConfig, ProjectConfigError> {
+fn ingress_to_driver(ingress: &IngressConfig) -> Result<DriverConfig, ErgoConfigError> {
     match ingress {
         IngressConfig::Fixture { path } => Ok(DriverConfig::Fixture { path: path.clone() }),
         IngressConfig::Process { command } => {
             if command.is_empty() {
-                return Err(ProjectConfigError::ExplicitRunProcessCommandEmpty);
+                return Err(ErgoConfigError::ExplicitRunProcessCommandEmpty);
             }
             Ok(DriverConfig::Process {
                 command: command.clone(),
@@ -1672,14 +1444,14 @@ fn ingress_to_driver(ingress: &IngressConfig) -> Result<DriverConfig, ProjectCon
     }
 }
 
-fn load_egress_config(path: &Path) -> Result<EgressConfig, ProjectConfigError> {
-    let raw = fs::read_to_string(path).map_err(|source| ProjectConfigError::EgressConfigRead {
+fn load_egress_config(path: &Path) -> Result<EgressConfig, ErgoConfigError> {
+    let raw = fs::read_to_string(path).map_err(|inner| ErgoConfigError::EgressConfigRead {
         path: path.to_path_buf(),
-        source,
+        inner,
     })?;
-    parse_egress_config_toml(&raw).map_err(|source| ProjectConfigError::EgressConfigParse {
+    parse_egress_config_toml(&raw).map_err(|inner| ErgoConfigError::EgressConfigParse {
         path: path.to_path_buf(),
-        source,
+        inner,
     })
 }
 

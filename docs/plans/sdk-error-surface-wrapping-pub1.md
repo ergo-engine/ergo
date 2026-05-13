@@ -283,6 +283,7 @@ Proposed variants:
 
 - `Config { #[source] inner: ErgoConfigError }`
 - `AdapterRequired { #[source] inner: ergo_host::HostRunError }`
+- `GraphLoad { #[source] inner: ergo_host::HostRunError }`
 - `GraphPreparation { #[source] inner: ergo_host::HostRunError }`
 - `AdapterComposition { #[source] inner: ergo_host::HostRunError }`
 - `AdapterSetup { #[source] inner: ergo_host::HostRunError }`
@@ -298,10 +299,19 @@ Mapping guidance from `HostRunError`:
 
 - `AdapterRequired(_)` and `ProductionRequiresAdapter` map to
   `AdapterRequired`.
-- `Setup(LoadGraphAssets(_))` maps to `Config`.
-- `Setup(DependencyScan(_))` and `Setup(GraphPreparation(_))` map to
-  `GraphPreparation` unless the source indicates an invariant breach,
-  in which case `Internal`.
+- `Setup(LoadGraphAssets(_))` and `Setup(DependencyScan(_))` map to
+  `GraphLoad`. These are transport-level failures (file not found, YAML
+  decode error, unresolved cluster reference) that occur while loading
+  graph assets from disk or memory before any expansion or validation
+  takes place. Keep this distinct from `GraphPreparation` so users (and
+  the CLI renderer) can react differently to load-side IO/decode
+  failures vs. structural graph problems.
+- `Setup(GraphPreparation(_))` maps to `GraphPreparation`. This covers
+  expansion and validation failures that occur after the graph has
+  successfully loaded — version-mismatch on cluster references, cycle
+  detection, schema violations, and similar logical/structural problems.
+  The split between `GraphLoad` and `GraphPreparation` is normative;
+  future passes must not reconflate them into a single variant.
 - `Setup(AdapterSetup(Composition(_)))` maps to `AdapterComposition`.
 - Other `Setup(AdapterSetup(_))` maps to `AdapterSetup`.
 - `Setup(StartEgress(_))` maps to `EgressStartup`.
@@ -358,12 +368,17 @@ Proposed runner-only variants:
 
 - `Config { #[source] inner: ErgoConfigError }`
 - `AdapterRequired { #[source] inner: ergo_host::HostRunError }`
+- `GraphLoad { #[source] inner: ergo_host::HostRunError }`
 - `GraphPreparation { #[source] inner: ergo_host::HostRunError }`
 - `AdapterComposition { #[source] inner: ergo_host::HostRunError }`
 - `AdapterSetup { #[source] inner: ergo_host::HostRunError }`
 - `EgressStartup { #[source] inner: ergo_host::HostRunError }`
 - `Initialization { #[source] inner: ergo_host::HostRunError }`
 - `Internal { #[source] inner: ergo_host::HostRunError }`
+
+`GraphLoad` and `GraphPreparation` follow the same load/prep split as
+`ErgoRunError`: load-side transport failures route to `GraphLoad`, and
+post-load expansion/validation failures route to `GraphPreparation`.
 
 Accessors:
 
@@ -508,6 +523,7 @@ Proposed variants:
 - `Config { #[source] inner: ErgoConfigError }`
 - `CaptureRead { #[source] inner: ergo_host::HostReplayError }`
 - `CaptureParse { #[source] inner: ergo_host::HostReplayError }`
+- `GraphLoad { #[source] inner: ergo_host::HostReplayError }`
 - `GraphPreparation { #[source] inner: ergo_host::HostReplayError }`
 - `AdapterComposition { #[source] inner: ergo_host::HostReplayError }`
 - `AdapterSetup { #[source] inner: ergo_host::HostReplayError }`
@@ -522,7 +538,13 @@ Mapping guidance from `HostReplayError`:
 - `Setup(CaptureRead { .. })` maps to `CaptureRead`.
 - `Setup(CaptureParse { .. })` maps to `CaptureParse`.
 - `Setup(LiveEgressConfigurationNotAllowed)` maps to `Config`.
-- `Setup(Setup(GraphPreparation(_)))` maps to `GraphPreparation`.
+- `Setup(Setup(LoadGraphAssets(_)))` and
+  `Setup(Setup(DependencyScan(_)))` map to `GraphLoad`. Same load/prep
+  split as `ErgoRunError`: transport-level failures (file not found,
+  YAML decode, unresolved cluster reference) belong here.
+- `Setup(Setup(GraphPreparation(_)))` maps to `GraphPreparation`. This
+  is reserved for post-load expansion and validation failures and must
+  not absorb load-side errors.
 - `Setup(Setup(AdapterSetup(Composition(_))))` maps to
   `AdapterComposition`.
 - Other `Setup(Setup(AdapterSetup(_)))` maps to `AdapterSetup`.

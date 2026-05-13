@@ -163,6 +163,12 @@ pub fn render_host_run_error(err: HostRunError) -> String {
                     "egress startup",
                     "verify egress command/path and startup protocol",
                 ),
+                _ => (
+                    "host.setup_failed",
+                    "host setup failed",
+                    "host setup",
+                    "inspect host setup configuration",
+                ),
             };
             render_cli_error(
                 &CliErrorInfo::new(code, message)
@@ -243,6 +249,10 @@ pub fn render_host_run_error(err: HostRunError) -> String {
                         "driver.output_contract_failed",
                         "inspect host run finalization and capture policy handling",
                     ),
+                    _ => (
+                        "driver.output_invalid",
+                        "repair the driver or fixture so it produces canonical episode/event output",
+                    ),
                 };
                 render_cli_error(
                     &CliErrorInfo::new(code, "driver output is invalid")
@@ -251,6 +261,12 @@ pub fn render_host_run_error(err: HostRunError) -> String {
                         .with_detail(output.to_string()),
                 )
             }
+            other => render_cli_error(
+                &CliErrorInfo::new("driver.failed", "canonical run driver failed")
+                    .with_where("canonical host ingress")
+                    .with_fix("inspect driver configuration and runtime behavior")
+                    .with_detail(other.to_string()),
+            ),
         },
         HostRunError::Step(message) => render_cli_error(
             &CliErrorInfo::new("host.step_failed", "canonical host step failed")
@@ -263,6 +279,12 @@ pub fn render_host_run_error(err: HostRunError) -> String {
                 .with_where("capture output")
                 .with_fix("verify capture output path and permissions")
                 .with_detail(message.to_string()),
+        ),
+        other => render_cli_error(
+            &CliErrorInfo::new("host.run_failed", "host run failed")
+                .with_where("canonical host run")
+                .with_fix("inspect host run configuration and runtime behavior")
+                .with_detail(other.to_string()),
         ),
     }
 }
