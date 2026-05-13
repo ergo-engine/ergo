@@ -1,18 +1,37 @@
-//! Rust SDK over Ergo host + loader.
+//! Rust SDK for embedding Ergo in an application.
 //!
-//! The SDK is the primary product surface for building an Ergo engine
-//! inside a Rust crate. It wraps the existing canonical host run and
-//! replay paths without introducing a second execution model.
+//! `ergo-sdk-rust` is the Rust application boundary for Ergo. Most users
+//! build an [`Ergo`] engine, point it at a project, then run or replay a
+//! named profile from that project.
 //!
-//! Errors at the public surface are SDK-branded `Ergo*` types (defined
-//! in `error.rs`). Host taxonomies remain reachable through parent-only
-//! accessors and the `std::error::Error::source()` chain.
+//! The usual mental model is:
+//!
+//! 1. A **project** supplies graph assets and named profiles. It can live on
+//!    disk as an `ergo.toml` project or be assembled in memory with
+//!    [`InMemoryProjectSnapshot`].
+//! 2. A **profile** chooses one graph, one ingress source, optional adapter
+//!    and egress configuration, and optional capture settings.
+//! 3. A **run** executes the selected profile through Ergo's canonical host
+//!    orchestration. A **replay** checks a prior capture against the same
+//!    deterministic graph path.
+//!
+//! Start with [`Ergo::from_project`] for a filesystem project, or with
+//! [`Ergo::builder`] when you need to register custom primitives or supply an
+//! in-memory project. For event-by-event control, use
+//! [`Ergo::runner_for_profile`] and drive the returned [`ProfileRunner`]
+//! manually.
+//!
+//! Errors at this boundary use SDK-branded `Ergo*` types such as
+//! [`ErgoRunError`] and [`ErgoReplayError`]. Match those categories first.
+//! Host error taxonomies remain available only as advanced escape hatches
+//! through parent accessors and the [`std::error::Error::source`] chain.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// Fixture item data for SDK-authored in-memory fixture ingress.
 pub use ergo_adapter::fixture::FixtureItem;
 use ergo_host::{
     finalize_hosted_runner_capture, load_graph_assets_from_paths,
@@ -22,9 +41,9 @@ use ergo_host::{
     run_graph_from_paths_with_surfaces_and_control, validate_run_graph_from_assets_with_surfaces,
     validate_run_graph_from_paths_with_surfaces, write_capture_bundle as host_write_capture_bundle,
     DriverConfig, HostRunError, HostStopHandle, HostedRunner, HostedStepError, LivePrepOptions,
-    PrepareHostedRunnerFromPathsRequest, ReplayGraphFromAssetsRequest,
-    ReplayGraphFromPathsRequest, ReplayGraphResult, RunControl, RunGraphFromAssetsRequest,
-    RunGraphFromPathsRequest, RunOutcome, RuntimeSurfaces,
+    PrepareHostedRunnerFromPathsRequest, ReplayGraphFromAssetsRequest, ReplayGraphFromPathsRequest,
+    ReplayGraphResult, RunControl, RunGraphFromAssetsRequest, RunGraphFromPathsRequest, RunOutcome,
+    RuntimeSurfaces,
 };
 use ergo_loader::{
     load_project, PreparedGraphAssets, ResolvedProject, ResolvedProjectIngress,
@@ -32,38 +51,54 @@ use ergo_loader::{
 };
 use ergo_runtime::catalog::CatalogBuilder;
 
+/// Transparent host-owned authoring and outcome types kept as part of the SDK
+/// surface.
+///
+/// These types are data users construct, inspect, or receive directly; host
+/// error taxonomies are wrapped in SDK `Ergo*` errors instead.
 pub use ergo_host::{
-    parse_egress_config_toml, AdapterInput, CaptureBundle, CaptureJsonStyle, CaptureWriteError,
-    EgressChannelConfig, EgressConfig, EgressConfigBuilder, EgressConfigError,
-    EgressConfigParseError, EgressRoute, HostReplayError, HostedEvent, HostedEventBuildError,
-    HostedStepOutcome, InterruptedRun, InterruptionReason, RunSummary,
+    parse_egress_config_toml, AdapterInput, CaptureBundle, CaptureJsonStyle, EgressChannelConfig,
+    EgressConfig, EgressConfigBuilder, EgressConfigError, EgressConfigParseError, EgressRoute,
+    HostedEvent, HostedStepOutcome, InterruptedRun, InterruptionReason, RunSummary,
 };
+/// Runtime catalog helpers re-exported for advanced primitive registration.
 pub use ergo_runtime::catalog::{build_core, build_core_catalog, core_registries};
+/// Runtime execution context visible to custom primitive implementations.
 pub use ergo_runtime::runtime::ExecutionContext;
+/// Runtime primitive modules used when implementing custom sources, computes,
+/// triggers, or actions for an [`ErgoBuilder`].
 pub use ergo_runtime::{action, common, compute, source, trigger};
 
 mod error;
-pub use error::{
-    ErgoBuildError, ErgoCaptureError, ErgoConfigError, ErgoProjectConfigError, ErgoProjectError,
-    ErgoReplayError, ErgoRunError, ErgoRunnerError, ErgoStepError, ErgoValidationError,
-};
 use error::{
     map_host_replay_error, map_host_run_error_to_run, map_host_run_error_to_runner,
     map_hosted_step_error,
 };
+pub use error::{
+    ErgoBuildError, ErgoCaptureError, ErgoConfigError, ErgoProjectConfigError, ErgoProjectError,
+    ErgoReplayError, ErgoRunError, ErgoRunnerError, ErgoStepError, ErgoValidationError,
+};
 
 #[derive(Debug, Clone, Default)]
+/// Cooperative stop handle for a synchronous SDK run.
+///
+/// Clone or share this handle with the thread that should request shutdown,
+/// then pass it to [`Ergo::run_with_stop`] or [`Ergo::run_profile_with_stop`].
+/// Calling [`StopHandle::stop`] asks the host run loop to stop at the next
+/// supported boundary; it does not forcibly kill an adapter process.
 pub struct StopHandle {
     handle: HostStopHandle,
 }
 
 impl StopHandle {
+    /// Creates a stop handle in the non-stopped state.
     pub fn new() -> Self {
         Self {
             handle: HostStopHandle::new(),
         }
     }
 
+    /// Requests graceful stop for any run using this handle.
     pub fn stop(&self) {
         self.handle.request_stop();
     }
@@ -155,18 +190,34 @@ enum ProfileRunnerState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Ingress source for an explicit, path-backed [`RunConfig`].
+///
+/// Use fixture ingress for deterministic historical input and process ingress
+/// for a live adapter channel that speaks Ergo's process-driver protocol.
 pub enum IngressConfig {
-    Fixture { path: PathBuf },
-    Process { command: Vec<String> },
+    /// Read fixture events from a JSONL fixture file.
+    Fixture {
+        /// Path to the fixture JSONL file.
+        path: PathBuf,
+    },
+    /// Launch a process ingress command.
+    Process {
+        /// Executable and arguments for the process ingress channel.
+        command: Vec<String>,
+    },
 }
 
 impl IngressConfig {
+    /// Creates fixture ingress from a JSONL fixture path.
     pub fn fixture(path: impl AsRef<Path>) -> Self {
         Self::Fixture {
             path: path.as_ref().to_path_buf(),
         }
     }
 
+    /// Creates process ingress from an executable plus arguments.
+    ///
+    /// The command must not be empty when the run is executed.
     pub fn process<I, S>(command: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -179,6 +230,12 @@ impl IngressConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Explicit run configuration for running graph files without an `ergo.toml`
+/// profile.
+///
+/// Use [`Ergo::run`] for one-off execution when your application already knows
+/// the graph path and ingress source. Use [`Ergo::run_profile`] when those
+/// choices should come from project profile configuration.
 pub struct RunConfig {
     graph_path: PathBuf,
     cluster_paths: Vec<PathBuf>,
@@ -192,6 +249,7 @@ pub struct RunConfig {
 }
 
 impl RunConfig {
+    /// Starts a run configuration with one graph path and one ingress source.
     pub fn new(graph_path: impl AsRef<Path>, ingress: IngressConfig) -> Self {
         Self {
             graph_path: graph_path.as_ref().to_path_buf(),
@@ -206,36 +264,44 @@ impl RunConfig {
         }
     }
 
+    /// Adds a cluster search path used while resolving the graph.
     pub fn cluster_path(mut self, path: impl AsRef<Path>) -> Self {
         self.cluster_paths.push(path.as_ref().to_path_buf());
         self
     }
 
+    /// Adds an adapter manifest path for adapter-bound graphs or production
+    /// process ingress.
     pub fn adapter(mut self, path: impl AsRef<Path>) -> Self {
         self.adapter_path = Some(path.as_ref().to_path_buf());
         self
     }
 
+    /// Adds an egress TOML configuration path for live effect dispatch.
     pub fn egress_config(mut self, path: impl AsRef<Path>) -> Self {
         self.egress_config_path = Some(path.as_ref().to_path_buf());
         self
     }
 
+    /// Writes the produced capture bundle to this path after a successful run.
     pub fn capture_output(mut self, path: impl AsRef<Path>) -> Self {
         self.capture_output = Some(path.as_ref().to_path_buf());
         self
     }
 
+    /// Chooses pretty JSON formatting for capture output.
     pub fn pretty_capture(mut self, enabled: bool) -> Self {
         self.pretty_capture = enabled;
         self
     }
 
+    /// Stops the run after the configured maximum wall-clock duration.
     pub fn max_duration(mut self, max_duration: Duration) -> Self {
         self.max_duration = Some(max_duration);
         self
     }
 
+    /// Stops the run after the configured maximum number of processed events.
     pub fn max_events(mut self, max_events: u64) -> Self {
         self.max_events = Some(max_events);
         self
@@ -243,6 +309,8 @@ impl RunConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Replay configuration for reading a capture bundle from disk and replaying it
+/// against graph files.
 pub struct ReplayConfig {
     capture_path: PathBuf,
     graph_path: PathBuf,
@@ -251,6 +319,7 @@ pub struct ReplayConfig {
 }
 
 impl ReplayConfig {
+    /// Creates replay configuration from a capture path and graph path.
     pub fn new(capture_path: impl AsRef<Path>, graph_path: impl AsRef<Path>) -> Self {
         Self {
             capture_path: capture_path.as_ref().to_path_buf(),
@@ -260,11 +329,14 @@ impl ReplayConfig {
         }
     }
 
+    /// Adds a cluster search path used while resolving the graph for replay.
     pub fn cluster_path(mut self, path: impl AsRef<Path>) -> Self {
         self.cluster_paths.push(path.as_ref().to_path_buf());
         self
     }
 
+    /// Adds an adapter manifest path used to interpret captured external
+    /// events.
     pub fn adapter(mut self, path: impl AsRef<Path>) -> Self {
         self.adapter_path = Some(path.as_ref().to_path_buf());
         self
@@ -272,6 +344,10 @@ impl ReplayConfig {
 }
 
 #[derive(Debug, Clone)]
+/// Replay configuration for an already-loaded [`CaptureBundle`].
+///
+/// This is useful when the application stores captures outside the local
+/// filesystem or has just received a capture from [`ProfileRunner::finish`].
 pub struct ReplayBundleConfig {
     bundle: CaptureBundle,
     graph_path: PathBuf,
@@ -280,6 +356,8 @@ pub struct ReplayBundleConfig {
 }
 
 impl ReplayBundleConfig {
+    /// Creates replay configuration from an in-memory capture bundle and graph
+    /// path.
     pub fn new(bundle: CaptureBundle, graph_path: impl AsRef<Path>) -> Self {
         Self {
             bundle,
@@ -289,16 +367,20 @@ impl ReplayBundleConfig {
         }
     }
 
+    /// Adds a cluster search path used while resolving the replay graph.
     pub fn cluster_path(mut self, path: impl AsRef<Path>) -> Self {
         self.cluster_paths.push(path.as_ref().to_path_buf());
         self
     }
 
+    /// Adds an adapter manifest path used to interpret captured external
+    /// events.
     pub fn adapter_path(mut self, path: impl AsRef<Path>) -> Self {
         self.adapter = Some(AdapterInput::Path(path.as_ref().to_path_buf()));
         self
     }
 
+    /// Adds an adapter manifest from any supported SDK adapter input.
     pub fn adapter(mut self, adapter: AdapterInput) -> Self {
         self.adapter = Some(adapter);
         self
@@ -306,20 +388,41 @@ impl ReplayBundleConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Summary returned by [`Ergo::validate_project`].
 pub struct ProjectSummary {
+    /// Project root for filesystem projects, or `None` for in-memory projects.
     pub root: Option<PathBuf>,
+    /// Project name from `ergo.toml` or the in-memory snapshot.
     pub name: String,
+    /// Project version from `ergo.toml` or the in-memory snapshot.
     pub version: String,
+    /// Profile names validated in deterministic map order.
     pub profiles: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Capture policy for an in-memory profile.
+///
+/// Filesystem profiles use their `ergo.toml` capture settings. This type is
+/// for SDK-owned in-memory profiles where the application chooses whether the
+/// resulting capture stays in memory or is also written to disk.
 pub enum ProfileCapture {
+    /// Keep the capture bundle in memory only.
     InMemory,
-    File { path: PathBuf, pretty: bool },
+    /// Write the capture to a file, optionally using pretty JSON formatting.
+    File {
+        /// Output path for the capture JSON.
+        path: PathBuf,
+        /// Whether to write pretty JSON instead of compact JSON.
+        pretty: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
+/// One profile inside an [`InMemoryProjectSnapshot`].
+///
+/// The profile owns prepared graph assets, ingress configuration, optional
+/// adapter and egress configuration, capture policy, and optional stop limits.
 pub struct InMemoryProfileConfig {
     graph_assets: PreparedGraphAssets,
     ingress: InMemoryIngress,
@@ -331,6 +434,11 @@ pub struct InMemoryProfileConfig {
 }
 
 #[derive(Debug, Clone)]
+/// SDK-owned project snapshot for applications that do not want an `ergo.toml`
+/// project on disk.
+///
+/// A snapshot is immutable after build and can be installed on an
+/// [`ErgoBuilder`] with [`ErgoBuilder::in_memory_project`].
 pub struct InMemoryProjectSnapshot {
     name: String,
     version: String,
@@ -349,10 +457,12 @@ enum InMemoryIngress {
 }
 
 impl ProfileCapture {
+    /// Keeps profile capture data in memory only.
     pub fn in_memory() -> Self {
         Self::InMemory
     }
 
+    /// Writes profile capture data to `path`.
     pub fn file(path: impl AsRef<Path>, pretty: bool) -> Self {
         Self::File {
             path: path.as_ref().to_path_buf(),
@@ -362,6 +472,10 @@ impl ProfileCapture {
 }
 
 impl InMemoryProfileConfig {
+    /// Creates an in-memory profile that launches a process ingress command.
+    ///
+    /// Production process ingress requires an adapter before the profile can
+    /// run. Add it with [`InMemoryProfileConfig::adapter`].
     pub fn process<I, S>(
         graph_assets: PreparedGraphAssets,
         command: I,
@@ -385,6 +499,10 @@ impl InMemoryProfileConfig {
         Ok(config)
     }
 
+    /// Creates an in-memory profile from fixture items.
+    ///
+    /// `source_label` identifies the synthetic source used for the fixture
+    /// stream. The item list and label must both be non-empty.
     pub fn fixture_items(
         graph_assets: PreparedGraphAssets,
         items: Vec<FixtureItem>,
@@ -406,26 +524,33 @@ impl InMemoryProfileConfig {
         Ok(config)
     }
 
+    /// Adds an adapter manifest for adapter-bound graphs or production
+    /// process ingress.
     pub fn adapter(mut self, adapter: AdapterInput) -> Self {
         self.adapter = Some(adapter);
         self
     }
 
+    /// Adds egress configuration for live effect dispatch.
     pub fn egress_config(mut self, egress_config: EgressConfig) -> Self {
         self.egress_config = Some(egress_config);
         self
     }
 
+    /// Sets how captures from this profile are retained or written.
     pub fn capture(mut self, capture: ProfileCapture) -> Self {
         self.capture = capture;
         self
     }
 
+    /// Stops runs of this profile after the configured wall-clock duration.
     pub fn max_duration(mut self, max_duration: Duration) -> Self {
         self.max_duration = Some(max_duration);
         self
     }
 
+    /// Stops runs of this profile after the configured number of processed
+    /// events.
     pub fn max_events(mut self, max_events: u64) -> Self {
         self.max_events = Some(max_events);
         self
@@ -433,6 +558,7 @@ impl InMemoryProfileConfig {
 }
 
 #[derive(Debug, Clone)]
+/// Builder for [`InMemoryProjectSnapshot`].
 pub struct InMemoryProjectSnapshotBuilder {
     name: String,
     version: String,
@@ -440,17 +566,23 @@ pub struct InMemoryProjectSnapshotBuilder {
 }
 
 impl InMemoryProjectSnapshotBuilder {
+    /// Adds or replaces a named in-memory profile.
     pub fn profile(mut self, name: impl Into<String>, profile: InMemoryProfileConfig) -> Self {
         self.profiles.insert(name.into(), profile);
         self
     }
 
+    /// Validates and builds the snapshot.
+    ///
+    /// Fails when the project has no profiles or when any profile contains
+    /// invalid in-memory construction data.
     pub fn build(self) -> Result<InMemoryProjectSnapshot, ErgoProjectConfigError> {
         InMemoryProjectSnapshot::from_parts(self.name, self.version, self.profiles)
     }
 }
 
 impl InMemoryProjectSnapshot {
+    /// Starts an in-memory project snapshot builder.
     pub fn builder(
         name: impl Into<String>,
         version: impl Into<String>,
@@ -462,6 +594,7 @@ impl InMemoryProjectSnapshot {
         }
     }
 
+    /// Returns the profile names available in this snapshot.
     pub fn profile_names(&self) -> Vec<String> {
         self.profiles.keys().cloned().collect()
     }
@@ -549,6 +682,18 @@ struct ResolvedProfilePlan {
     max_events: Option<u64>,
 }
 
+/// Builder for an [`Ergo`] engine handle.
+///
+/// Use the builder when you need custom primitives, an in-memory project, or a
+/// filesystem project discovered from a path.
+///
+/// ```
+/// # fn main() -> Result<(), ergo_sdk_rust::ErgoBuildError> {
+/// let ergo = ergo_sdk_rust::Ergo::builder().build()?;
+/// # let _ = ergo;
+/// # Ok(())
+/// # }
+/// ```
 pub struct ErgoBuilder {
     catalog_builder: CatalogBuilder,
     project_source: ProjectSource,
@@ -562,6 +707,8 @@ impl Default for ErgoBuilder {
 }
 
 impl ErgoBuilder {
+    /// Creates a builder with the core Ergo primitive catalog and no project
+    /// source.
     pub fn new() -> Self {
         Self {
             catalog_builder: CatalogBuilder::new(),
@@ -570,16 +717,27 @@ impl ErgoBuilder {
         }
     }
 
+    /// Uses a filesystem project discovered from `path`.
+    ///
+    /// `path` may point at the project root, at `ergo.toml`, or at a child
+    /// path below the root. Project resolution happens when an operation needs
+    /// the project, so this method does not read the filesystem immediately.
     pub fn project_root(mut self, path: impl AsRef<Path>) -> Self {
         self.set_project_source(ProjectSource::Filesystem(path.as_ref().to_path_buf()));
         self
     }
 
+    /// Uses an SDK-owned in-memory project snapshot.
+    ///
+    /// This is the hermetic alternative to `ergo.toml` for applications that
+    /// assemble project assets from memory or another storage layer.
     pub fn in_memory_project(mut self, snapshot: InMemoryProjectSnapshot) -> Self {
         self.set_project_source(ProjectSource::InMemory(snapshot));
         self
     }
 
+    /// Registers a custom source primitive in addition to Ergo's core
+    /// primitives.
     pub fn add_source<P>(mut self, primitive: P) -> Self
     where
         P: source::SourcePrimitive + 'static,
@@ -588,6 +746,8 @@ impl ErgoBuilder {
         self
     }
 
+    /// Registers a custom compute primitive in addition to Ergo's core
+    /// primitives.
     pub fn add_compute<P>(mut self, primitive: P) -> Self
     where
         P: compute::ComputePrimitive + 'static,
@@ -596,6 +756,8 @@ impl ErgoBuilder {
         self
     }
 
+    /// Registers a custom trigger primitive in addition to Ergo's core
+    /// primitives.
     pub fn add_trigger<P>(mut self, primitive: P) -> Self
     where
         P: trigger::TriggerPrimitive + 'static,
@@ -604,6 +766,8 @@ impl ErgoBuilder {
         self
     }
 
+    /// Registers a custom action primitive in addition to Ergo's core
+    /// primitives.
     pub fn add_action<P>(mut self, primitive: P) -> Self
     where
         P: action::ActionPrimitive + 'static,
@@ -612,14 +776,21 @@ impl ErgoBuilder {
         self
     }
 
+    /// Builds the reusable [`Ergo`] engine handle.
+    ///
+    /// Fails if primitive registration fails, if the configured in-memory
+    /// project is invalid, or if both a filesystem project and in-memory
+    /// project were configured on the same builder.
     pub fn build(self) -> Result<Ergo, ErgoBuildError> {
         if self.project_source_conflict {
             return Err(ErgoBuildError::ProjectSourceConflict);
         }
         if let ProjectSource::InMemory(snapshot) = &self.project_source {
-            snapshot.validate().map_err(|inner| ErgoBuildError::Project {
-                inner: ErgoProjectError::Config { inner },
-            })?;
+            snapshot
+                .validate()
+                .map_err(|inner| ErgoBuildError::Project {
+                    inner: ErgoProjectError::Config { inner },
+                })?;
         }
         let (registries, catalog) = self
             .catalog_builder
@@ -654,18 +825,50 @@ pub struct Ergo {
 }
 
 impl Ergo {
+    /// Starts an [`ErgoBuilder`].
+    ///
+    /// ```
+    /// # fn main() -> Result<(), ergo_sdk_rust::ErgoBuildError> {
+    /// let ergo = ergo_sdk_rust::Ergo::builder().build()?;
+    /// # let _ = ergo;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn builder() -> ErgoBuilder {
         ErgoBuilder::new()
     }
 
+    /// Starts an [`ErgoBuilder`] for a filesystem project.
+    ///
+    /// Project discovery walks upward from the supplied path until it finds an
+    /// `ergo.toml`.
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let ergo = ergo_sdk_rust::Ergo::from_project("/path/to/my-ergo-project").build()?;
+    /// let summary = ergo.validate_project()?;
+    /// # let _ = summary;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn from_project(path: impl AsRef<Path>) -> ErgoBuilder {
         ErgoBuilder::new().project_root(path)
     }
 
+    /// Runs an explicit graph configuration without resolving an `ergo.toml`
+    /// profile.
+    ///
+    /// Use this when your application already has graph paths and ingress
+    /// configuration. Profile-based applications usually call
+    /// [`Ergo::run_profile`] instead.
     pub fn run(&self, config: RunConfig) -> Result<RunOutcome, ErgoRunError> {
         self.run_with_control(config, RunControl::default())
     }
 
+    /// Runs an explicit graph configuration with a cooperative stop handle.
+    ///
+    /// The stop handle requests a graceful host stop; the returned
+    /// [`RunOutcome`] records whether the run completed or was interrupted.
     pub fn run_with_stop(
         &self,
         config: RunConfig,
@@ -682,8 +885,8 @@ impl Ergo {
         config: RunConfig,
         control: RunControl,
     ) -> Result<RunOutcome, ErgoRunError> {
-        let request = run_request_from_config(&config)
-            .map_err(|inner| ErgoRunError::Config { inner })?;
+        let request =
+            run_request_from_config(&config).map_err(|inner| ErgoRunError::Config { inner })?;
 
         run_graph_from_paths_with_surfaces_and_control(
             request,
@@ -693,10 +896,29 @@ impl Ergo {
         .map_err(map_host_run_error_to_run)
     }
 
+    /// Runs a named project profile.
+    ///
+    /// The profile supplies graph, ingress, adapter, egress, capture, and run
+    /// limit configuration. Filesystem projects resolve profiles from
+    /// `ergo.toml`; in-memory projects resolve them from
+    /// [`InMemoryProjectSnapshot`].
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let ergo = ergo_sdk_rust::Ergo::from_project("/path/to/my-ergo-project").build()?;
+    /// let outcome = ergo.run_profile("historical")?;
+    /// # let _ = outcome;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn run_profile(&self, profile_name: &str) -> Result<RunOutcome, ErgoRunError> {
         self.run_profile_with_control(profile_name, RunControl::default())
     }
 
+    /// Runs a named project profile with a cooperative stop handle.
+    ///
+    /// Use this for services or UIs that need to request graceful shutdown
+    /// while the run is blocked in the host loop.
     pub fn run_profile_with_stop(
         &self,
         profile_name: &str,
@@ -719,6 +941,10 @@ impl Ergo {
         self.run_profile_plan_with_control(plan, control)
     }
 
+    /// Replays a capture file against explicit graph paths.
+    ///
+    /// Replay is strict: the capture graph identity and event stream must
+    /// match what the graph expects.
     pub fn replay(&self, config: ReplayConfig) -> Result<ReplayGraphResult, ErgoReplayError> {
         replay_graph_from_paths_with_surfaces(
             ReplayGraphFromPathsRequest {
@@ -732,6 +958,22 @@ impl Ergo {
         .map_err(map_host_replay_error)
     }
 
+    /// Replays an already-loaded capture bundle against explicit graph paths.
+    ///
+    /// Use this when your application stores captures outside the local
+    /// filesystem or received a bundle from manual runner finalization.
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let bundle: ergo_sdk_rust::CaptureBundle = unimplemented!();
+    /// let ergo = ergo_sdk_rust::Ergo::builder().build()?;
+    /// let replay = ergo.replay_bundle(
+    ///     ergo_sdk_rust::ReplayBundleConfig::new(bundle, "graphs/strategy.yaml"),
+    /// )?;
+    /// # let _ = replay;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn replay_bundle(
         &self,
         config: ReplayBundleConfig,
@@ -750,6 +992,20 @@ impl Ergo {
         .map_err(map_host_replay_error)
     }
 
+    /// Replays a capture file using the graph and adapter settings from a
+    /// named filesystem project profile.
+    ///
+    /// In-memory profiles do not support path-based `replay_profile`; use
+    /// [`Ergo::replay_profile_bundle`] for in-memory projects.
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let ergo = ergo_sdk_rust::Ergo::from_project("/path/to/my-ergo-project").build()?;
+    /// let replay = ergo.replay_profile("historical", "captures/historical.capture.json")?;
+    /// # let _ = replay;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn replay_profile(
         &self,
         profile_name: &str,
@@ -774,6 +1030,10 @@ impl Ergo {
         }
     }
 
+    /// Replays an already-loaded capture bundle using a named project profile.
+    ///
+    /// This is the replay entry point that works for both filesystem and
+    /// in-memory projects.
     pub fn replay_profile_bundle(
         &self,
         profile_name: &str,
@@ -785,6 +1045,12 @@ impl Ergo {
         self.replay_profile_bundle_from_plan(plan, bundle)
     }
 
+    /// Validates the configured project and all of its profiles without
+    /// running ingress.
+    ///
+    /// The result summarizes the project name, version, and profile list.
+    /// Failure is categorized as [`ErgoValidationError`] so callers can
+    /// distinguish SDK configuration mistakes from host preflight failures.
     pub fn validate_project(&self) -> Result<ProjectSummary, ErgoValidationError> {
         match &self.project_source {
             ProjectSource::Filesystem(_) => {
@@ -929,11 +1195,13 @@ impl Ergo {
         plan: &ResolvedProfilePlan,
     ) -> Result<(), InternalProfileError> {
         match (&plan.runner_source, &plan.capture) {
-            (RunnerSource::Paths(_request), CapturePlan::InMemory) => Err(
-                InternalProfileError::Config(ErgoConfigError::FilesystemProfileCannotUseInMemoryCapture {
-                    profile: plan.profile_name.clone(),
-                }),
-            ),
+            (RunnerSource::Paths(_request), CapturePlan::InMemory) => {
+                Err(InternalProfileError::Config(
+                    ErgoConfigError::FilesystemProfileCannotUseInMemoryCapture {
+                        profile: plan.profile_name.clone(),
+                    },
+                ))
+            }
             (RunnerSource::Paths(request), CapturePlan::DefaultFile { pretty }) => {
                 validate_run_graph_from_paths_with_surfaces(
                     RunGraphFromPathsRequest {
@@ -1017,6 +1285,24 @@ impl Ergo {
         }
     }
 
+    /// Prepares a manual runner for a named profile.
+    ///
+    /// The returned [`ProfileRunner`] lets the application feed
+    /// [`HostedEvent`] values one at a time, inspect context, and finalize the
+    /// capture bundle. Preparing the runner resolves the profile and validates
+    /// setup, but does not launch process ingress.
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let ergo = ergo_sdk_rust::Ergo::from_project("/path/to/my-ergo-project").build()?;
+    /// let mut runner = ergo.runner_for_profile("manual")?;
+    /// # let event: ergo_sdk_rust::HostedEvent = unimplemented!();
+    /// let outcome = runner.step(event)?;
+    /// let capture = runner.finish()?;
+    /// # let _ = (outcome, capture);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn runner_for_profile(&self, profile_name: &str) -> Result<ProfileRunner, ErgoRunnerError> {
         let plan = self
             .resolve_profile_plan(profile_name)
@@ -1058,6 +1344,24 @@ impl Ergo {
     }
 }
 
+/// Manual profile runner for applications that own event delivery.
+///
+/// A `ProfileRunner` is prepared from a normal project profile, then driven
+/// with [`ProfileRunner::step`]. Finish it exactly once with
+/// [`ProfileRunner::finish`] or [`ProfileRunner::finish_and_write_capture`]
+/// to recover the capture bundle.
+///
+/// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let ergo = ergo_sdk_rust::Ergo::from_project("/path/to/my-ergo-project").build()?;
+/// let mut runner = ergo.runner_for_profile("manual")?;
+/// # let event: ergo_sdk_rust::HostedEvent = unimplemented!();
+/// let step = runner.step(event)?;
+/// let capture = runner.finish()?;
+/// # let _ = (step, capture);
+/// # Ok(())
+/// # }
+/// ```
 pub struct ProfileRunner {
     runner: Option<HostedRunner>,
     capture: CapturePlan,
@@ -1066,6 +1370,12 @@ pub struct ProfileRunner {
 }
 
 impl ProfileRunner {
+    /// Applies one hosted event to the prepared profile.
+    ///
+    /// Recoverable input and binding failures leave the runner available for a
+    /// later `step` call. Non-recoverable failures block further stepping.
+    /// Egress dispatch failures may still permit finalization; check
+    /// [`ErgoStepError::can_finish`].
     pub fn step(&mut self, event: HostedEvent) -> Result<HostedStepOutcome, ErgoStepError> {
         match self.state {
             ProfileRunnerState::Active => {}
@@ -1108,6 +1418,10 @@ impl ProfileRunner {
         }
     }
 
+    /// Borrows the current adapter context snapshot.
+    ///
+    /// The snapshot is available until the runner is finished. After
+    /// finalization, this returns a lifecycle [`ErgoStepError`].
     pub fn context_snapshot(
         &self,
     ) -> Result<&std::collections::BTreeMap<String, serde_json::Value>, ErgoStepError> {
@@ -1119,14 +1433,20 @@ impl ProfileRunner {
         Ok(runner.context_snapshot())
     }
 
+    /// Returns the configured capture output path, if this profile writes one.
     pub fn capture_output_path(&self) -> Option<&Path> {
         self.capture.configured_path()
     }
 
+    /// Returns whether the configured capture output should be pretty JSON.
     pub fn pretty_capture(&self) -> bool {
         self.capture.pretty()
     }
 
+    /// Finalizes the runner and returns the capture bundle without writing it.
+    ///
+    /// The runner must have completed at least one successful step. After this
+    /// call, the runner is finished and cannot step or finish again.
     pub fn finish(&mut self) -> Result<CaptureBundle, ErgoStepError> {
         match self.state {
             ProfileRunnerState::Finished => {
@@ -1156,6 +1476,12 @@ impl ProfileRunner {
         finalize_hosted_runner_capture(runner, false).map_err(map_hosted_step_error)
     }
 
+    /// Finalizes the runner, writes the capture to the profile's configured
+    /// capture file, and returns the same bundle.
+    ///
+    /// If finalization succeeds but the filesystem write fails, the returned
+    /// [`ErgoCaptureError`] may still expose the generated bundle through
+    /// [`ErgoCaptureError::capture_bundle`].
     pub fn finish_and_write_capture(&mut self) -> Result<CaptureBundle, ErgoCaptureError> {
         let capture_path = match &self.capture {
             CapturePlan::ExplicitFile { path, .. } => path.clone(),
@@ -1181,10 +1507,10 @@ impl ProfileRunner {
     }
 }
 
-/// SDK-branded wrapper around the host capture-bundle writer.
+/// Writes a capture bundle to disk through the SDK error surface.
 ///
-/// Returns `ErgoCaptureError::Write` on filesystem failure with `bundle: None`
-/// (the caller already owns the bundle they passed in).
+/// Returns [`ErgoCaptureError::Write`] on filesystem failure with no recovered
+/// bundle attached, because the caller already owns the bundle they passed in.
 pub fn write_capture_bundle(
     path: impl AsRef<Path>,
     bundle: &CaptureBundle,
@@ -1354,9 +1680,8 @@ fn resolve_profile_plan_from_in_memory_profile(
     profile_name: &str,
     profile: &InMemoryProfileConfig,
 ) -> Result<ResolvedProfilePlan, InternalProfileError> {
-    validate_in_memory_profile_config(Some(profile_name), profile).map_err(|inner| {
-        InternalProfileError::Config(ErgoConfigError::ProjectConfig { inner })
-    })?;
+    validate_in_memory_profile_config(Some(profile_name), profile)
+        .map_err(|inner| InternalProfileError::Config(ErgoConfigError::ProjectConfig { inner }))?;
     Ok(ResolvedProfilePlan {
         profile_name: profile_name.to_string(),
         runner_source: RunnerSource::Assets {

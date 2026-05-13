@@ -41,15 +41,20 @@ use ergo_runtime::catalog::CoreRegistrationError;
 
 #[derive(Debug)]
 #[non_exhaustive]
+/// Errors returned while building an [`Ergo`](crate::Ergo) engine handle.
 pub enum ErgoBuildError {
+    /// The runtime primitive catalog could not be registered.
     Registration {
         #[allow(missing_docs)]
         inner: CoreRegistrationError,
     },
+    /// The configured in-memory project snapshot is invalid.
     Project {
         #[allow(missing_docs)]
         inner: ErgoProjectError,
     },
+    /// The builder was configured with both filesystem and in-memory project
+    /// sources.
     ProjectSourceConflict,
 }
 
@@ -78,12 +83,33 @@ impl std::error::Error for ErgoBuildError {
 
 #[derive(Debug)]
 #[non_exhaustive]
+/// Validation errors for SDK-owned in-memory project/profile construction.
+///
+/// These errors happen while assembling an [`InMemoryProjectSnapshot`](crate::InMemoryProjectSnapshot),
+/// before a run, replay, or validation operation resolves a profile.
 pub enum ErgoProjectConfigError {
+    /// The snapshot builder has no profiles.
     InMemoryProjectHasNoProfiles,
-    InMemoryFixtureSourceLabelEmpty { profile: Option<String> },
-    InMemoryFixtureItemsEmpty { profile: Option<String> },
-    InMemoryProcessCommandEmpty { profile: Option<String> },
-    InMemoryProcessExecutableBlank { profile: Option<String> },
+    /// A fixture-items profile has an empty source label.
+    InMemoryFixtureSourceLabelEmpty {
+        /// Profile name when validation happened inside a project snapshot.
+        profile: Option<String>,
+    },
+    /// A fixture-items profile has no fixture items.
+    InMemoryFixtureItemsEmpty {
+        /// Profile name when validation happened inside a project snapshot.
+        profile: Option<String>,
+    },
+    /// A process-ingress profile has an empty command vector.
+    InMemoryProcessCommandEmpty {
+        /// Profile name when validation happened inside a project snapshot.
+        profile: Option<String>,
+    },
+    /// A process-ingress profile has a blank executable string.
+    InMemoryProcessExecutableBlank {
+        /// Profile name when validation happened inside a project snapshot.
+        profile: Option<String>,
+    },
 }
 
 impl std::fmt::Display for ErgoProjectConfigError {
@@ -129,7 +155,9 @@ impl std::error::Error for ErgoProjectConfigError {}
 
 #[derive(Debug)]
 #[non_exhaustive]
+/// Errors returned while assembling an SDK-owned in-memory project.
 pub enum ErgoProjectError {
+    /// The project failed construction-time profile validation.
     Config {
         #[allow(missing_docs)]
         inner: ErgoProjectConfigError,
@@ -160,38 +188,63 @@ impl From<ErgoProjectConfigError> for ErgoProjectError {
 
 #[derive(Debug)]
 #[non_exhaustive]
+/// Errors returned while resolving SDK, project, profile, or run
+/// configuration.
 pub enum ErgoConfigError {
+    /// The operation requires a project but the engine has no project source.
     ProjectNotConfigured,
+    /// The requested profile name does not exist in the configured project.
     ProfileNotFound {
+        /// Requested profile name.
         name: String,
     },
+    /// The filesystem project could not be discovered, read, or decoded.
     ProjectLoad {
         #[allow(missing_docs)]
         inner: LoaderProjectError,
     },
+    /// An in-memory project/profile construction rule failed during operation
+    /// preparation.
     ProjectConfig {
         #[allow(missing_docs)]
         inner: ErgoProjectConfigError,
     },
+    /// An explicit [`RunConfig`](crate::RunConfig) process ingress command was
+    /// empty.
     ExplicitRunProcessCommandEmpty,
+    /// An egress TOML file could not be read.
     EgressConfigRead {
+        /// Path to the egress config file.
         path: PathBuf,
         #[allow(missing_docs)]
         inner: std::io::Error,
     },
+    /// An egress TOML file could not be parsed or validated.
     EgressConfigParse {
+        /// Path to the egress config file.
         path: PathBuf,
         #[allow(missing_docs)]
         inner: EgressConfigParseError,
     },
+    /// A filesystem-backed profile tried to request in-memory-only capture
+    /// behavior.
     FilesystemProfileCannotUseInMemoryCapture {
+        /// Profile that requested the unsupported capture mode.
         profile: String,
     },
+    /// An in-memory graph-assets profile tried to use the filesystem default
+    /// capture path.
     InMemoryAssetsCannotUseDefaultFilesystemCapture,
+    /// The requested operation is not supported for the current project
+    /// transport.
     UnsupportedOperation {
+        /// Operation name.
         operation: &'static str,
+        /// Project transport or source kind.
         transport: &'static str,
     },
+    /// Replay was configured with live egress behavior, which replay never
+    /// dispatches.
     LiveEgressConfigurationNotAllowed,
 }
 
@@ -270,43 +323,59 @@ impl From<LoaderProjectError> for ErgoConfigError {
 
 #[derive(Debug)]
 #[non_exhaustive]
+/// Errors returned while manually stepping a [`ProfileRunner`](crate::ProfileRunner).
+///
+/// Recoverable variants allow another step attempt; check
+/// [`ErgoStepError::is_recoverable`]. Egress dispatch failures may still allow
+/// finalization; check [`ErgoStepError::can_finish`].
 pub enum ErgoStepError {
+    /// The supplied hosted event was structurally invalid for stepping.
     Input {
         #[allow(missing_docs)]
         inner: HostedStepError,
     },
+    /// The hosted event could not be converted into the graph event format.
     EventBuild {
         #[allow(missing_docs)]
         inner: HostedEventBuildError,
     },
+    /// Event-to-graph binding failed.
     Binding {
         #[allow(missing_docs)]
         inner: HostedStepError,
     },
+    /// The runner was used in an invalid lifecycle state.
     Lifecycle {
         #[allow(missing_docs)]
         inner: HostedStepError,
     },
+    /// Runtime effect application failed.
     EffectApply {
         #[allow(missing_docs)]
         inner: HostedStepError,
     },
+    /// The adapter or egress configuration did not cover a produced handler.
     HandlerCoverage {
         #[allow(missing_docs)]
         inner: HostedStepError,
     },
+    /// Egress intent validation failed before dispatch.
     EgressValidation {
         #[allow(missing_docs)]
         inner: HostedStepError,
     },
+    /// Egress process-channel startup or communication failed.
     EgressProcess {
         #[allow(missing_docs)]
         inner: HostedStepError,
     },
+    /// Egress dispatch failed after the step produced an intent.
     EgressDispatch {
         #[allow(missing_docs)]
         inner: HostedStepError,
     },
+    /// A host or SDK invariant failed; report this as a bug rather than user
+    /// configuration feedback.
     Internal {
         #[allow(missing_docs)]
         inner: HostedStepError,
@@ -413,15 +482,20 @@ pub(crate) fn map_hosted_step_error(err: HostedStepError) -> ErgoStepError {
 
 #[derive(Debug)]
 #[non_exhaustive]
+/// Errors returned while finalizing or writing capture bundles.
 pub enum ErgoCaptureError {
+    /// Manual-runner finalization failed before a capture bundle was produced.
     Finalize {
         #[allow(missing_docs)]
         inner: ErgoStepError,
     },
+    /// The profile has no capture file path for automatic writing.
     OutputNotConfigured,
+    /// Writing a capture bundle to disk failed.
     Write {
         #[allow(missing_docs)]
         inner: CaptureWriteError,
+        /// Bundle recovered after finalization when the write failed.
         bundle: Option<CaptureBundle>,
     },
 }
@@ -471,55 +545,76 @@ impl ErgoCaptureError {
 
 #[derive(Debug)]
 #[non_exhaustive]
+/// Errors returned while running a profile or explicit run configuration.
+///
+/// Match these SDK categories first. Use [`ErgoRunError::as_host_run_error`]
+/// only when an advanced caller also depends on `ergo-host` and needs the host
+/// taxonomy underneath the SDK category.
 pub enum ErgoRunError {
+    /// SDK-side configuration or profile resolution failed before host run
+    /// orchestration.
     Config {
         #[allow(missing_docs)]
         inner: ErgoConfigError,
     },
+    /// Production ingress or adapter-bound graph execution requires an
+    /// adapter, but none was configured.
     AdapterRequired {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Graph or cluster assets could not be loaded.
     GraphLoad {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Graph assets loaded but failed preparation or validation.
     GraphPreparation {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Adapter manifest composition failed.
     AdapterComposition {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Adapter setup failed after composition.
     AdapterSetup {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Ingress startup, protocol, input, I/O, or output failed.
     Ingress {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Egress channel startup failed before events were processed.
     EgressStartup {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Egress intent validation failed during the run.
     EgressValidation {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Egress dispatch failed during the run.
     EgressDispatch {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Per-event graph stepping failed.
     Step {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// A host or SDK invariant failed; report this as a bug rather than user
+    /// configuration feedback.
     Internal {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Capture finalization or writing failed.
     Capture {
         #[allow(missing_docs)]
         inner: ErgoCaptureError,
@@ -600,39 +695,57 @@ impl ErgoRunError {
 
 #[derive(Debug)]
 #[non_exhaustive]
+/// Errors returned while preparing a [`ProfileRunner`](crate::ProfileRunner).
+///
+/// This type is intentionally smaller than [`ErgoRunError`]: preparation can
+/// fail while loading, preparing, or starting support channels, but it does not
+/// include run-time ingress streaming, step dispatch, or capture-write
+/// outcomes.
 pub enum ErgoRunnerError {
+    /// SDK-side configuration or profile resolution failed before runner
+    /// preparation.
     Config {
         #[allow(missing_docs)]
         inner: ErgoConfigError,
     },
+    /// Production manual stepping or an adapter-bound graph requires an
+    /// adapter, but none was configured.
     AdapterRequired {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Graph or cluster assets could not be loaded.
     GraphLoad {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Graph assets loaded but failed preparation or validation.
     GraphPreparation {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Adapter manifest composition failed.
     AdapterComposition {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Adapter setup failed after composition.
     AdapterSetup {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Egress channel startup failed while preparing the runner.
     EgressStartup {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// Hosted runner validation or initialization failed.
     Initialization {
         #[allow(missing_docs)]
         inner: HostRunError,
     },
+    /// A host or SDK invariant failed; report this as a bug rather than user
+    /// configuration feedback.
     Internal {
         #[allow(missing_docs)]
         inner: HostRunError,
@@ -792,51 +905,69 @@ pub(crate) fn map_host_run_error_to_runner(err: HostRunError) -> ErgoRunnerError
 
 #[derive(Debug)]
 #[non_exhaustive]
+/// Errors returned while replaying a capture.
+///
+/// Replay failures are grouped by the user decision they point to: capture
+/// availability, graph setup, adapter setup, deterministic mismatch, or
+/// internal invariant failure.
 pub enum ErgoReplayError {
+    /// SDK-side configuration or profile resolution failed before replay.
     Config {
         #[allow(missing_docs)]
         inner: ErgoConfigError,
     },
+    /// The capture file could not be read.
     CaptureRead {
         #[allow(missing_docs)]
         inner: HostReplayError,
     },
+    /// The capture data could not be parsed or rehydrated.
     CaptureParse {
         #[allow(missing_docs)]
         inner: HostReplayError,
     },
+    /// Graph or cluster assets could not be loaded.
     GraphLoad {
         #[allow(missing_docs)]
         inner: HostReplayError,
     },
+    /// Graph assets loaded but failed preparation or validation.
     GraphPreparation {
         #[allow(missing_docs)]
         inner: HostReplayError,
     },
+    /// Adapter manifest composition failed.
     AdapterComposition {
         #[allow(missing_docs)]
         inner: HostReplayError,
     },
+    /// Adapter setup failed after composition.
     AdapterSetup {
         #[allow(missing_docs)]
         inner: HostReplayError,
     },
+    /// Replay preflight rejected the capture before stepping.
     ReplayPreflight {
         #[allow(missing_docs)]
         inner: HostReplayError,
     },
+    /// Replay observed a deterministic mismatch.
     ReplayMismatch {
         #[allow(missing_docs)]
         inner: HostReplayError,
     },
+    /// The capture uses external event kinds the replay path cannot represent.
     ReplayOwnership {
         #[allow(missing_docs)]
         inner: HostReplayError,
     },
+    /// Per-event replay stepping failed.
     Step {
         #[allow(missing_docs)]
         inner: HostReplayError,
     },
+    /// A host or SDK invariant failed; report this as a bug rather than user
+    /// configuration feedback.
     Internal {
         #[allow(missing_docs)]
         inner: HostReplayError,
@@ -978,17 +1109,23 @@ pub(crate) fn map_host_replay_error(err: HostReplayError) -> ErgoReplayError {
 
 #[derive(Debug)]
 #[non_exhaustive]
+/// Errors returned while validating a configured project.
 pub enum ErgoValidationError {
+    /// Project-level SDK configuration prevented validation from starting.
     Config {
         #[allow(missing_docs)]
         inner: ErgoConfigError,
     },
+    /// A specific profile failed SDK configuration resolution.
     Profile {
+        /// Profile being validated.
         profile: String,
         #[allow(missing_docs)]
         inner: ErgoConfigError,
     },
+    /// A specific profile reached host preflight and failed validation there.
     HostValidation {
+        /// Profile being validated.
         profile: String,
         #[allow(missing_docs)]
         inner: HostRunError,
