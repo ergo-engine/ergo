@@ -158,7 +158,6 @@ impl From<ErgoProjectConfigError> for ErgoProjectError {
     }
 }
 
-
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ErgoConfigError {
@@ -228,7 +227,10 @@ impl std::fmt::Display for ErgoConfigError {
                 f,
                 "default filesystem capture cannot be applied to in-memory graph assets"
             ),
-            Self::UnsupportedOperation { operation, transport } => write!(
+            Self::UnsupportedOperation {
+                operation,
+                transport,
+            } => write!(
                 f,
                 "operation '{operation}' is not supported for {transport} projects"
             ),
@@ -265,7 +267,6 @@ impl From<LoaderProjectError> for ErgoConfigError {
         }
     }
 }
-
 
 #[derive(Debug)]
 #[non_exhaustive]
@@ -468,79 +469,125 @@ impl ErgoCaptureError {
     }
 }
 
-
-macro_rules! ergo_run_like_error {
-    ($name:ident, $($variant:ident),+ $(,)?) => {
-        #[derive(Debug)]
-        #[non_exhaustive]
-        pub enum $name {
-            Config {
-                #[allow(missing_docs)]
-                inner: ErgoConfigError,
-            },
-            $(
-                $variant {
-                    #[allow(missing_docs)]
-                    inner: HostRunError,
-                },
-            )+
-            Capture {
-                #[allow(missing_docs)]
-                inner: ErgoCaptureError,
-            },
-        }
-
-        impl std::fmt::Display for $name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                match self {
-                    Self::Config { inner } => write!(f, "{inner}"),
-                    Self::Capture { inner } => write!(f, "{inner}"),
-                    $( Self::$variant { inner } => write!(f, "{inner}"), )+
-                }
-            }
-        }
-
-        impl std::error::Error for $name {
-            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-                match self {
-                    Self::Config { inner } => Some(inner),
-                    Self::Capture { inner } => Some(inner),
-                    $( Self::$variant { inner } => Some(inner), )+
-                }
-            }
-        }
-
-        impl $name {
-            /// Parent-only escape hatch returning the underlying host run
-            /// error. Returns `None` for normalized capture-write failures
-            /// (the exact `CaptureWriteError` is preserved on
-            /// `ErgoCaptureError`).
-            pub fn as_host_run_error(&self) -> Option<&HostRunError> {
-                match self {
-                    $( Self::$variant { inner } => Some(inner), )+
-                    Self::Config { .. } | Self::Capture { .. } => None,
-                }
-            }
-        }
-    };
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ErgoRunError {
+    Config {
+        #[allow(missing_docs)]
+        inner: ErgoConfigError,
+    },
+    AdapterRequired {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    GraphLoad {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    GraphPreparation {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    AdapterComposition {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    AdapterSetup {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    Ingress {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    EgressStartup {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    EgressValidation {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    EgressDispatch {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    Step {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    Internal {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    Capture {
+        #[allow(missing_docs)]
+        inner: ErgoCaptureError,
+    },
 }
 
-ergo_run_like_error!(
-    ErgoRunError,
-    AdapterRequired,
-    GraphLoad,
-    GraphPreparation,
-    AdapterComposition,
-    AdapterSetup,
-    Ingress,
-    EgressStartup,
-    EgressValidation,
-    EgressDispatch,
-    Step,
-    Internal,
-);
+impl std::fmt::Display for ErgoRunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Config { inner } => write!(f, "{inner}"),
+            Self::AdapterRequired { inner }
+            | Self::GraphLoad { inner }
+            | Self::GraphPreparation { inner }
+            | Self::AdapterComposition { inner }
+            | Self::AdapterSetup { inner }
+            | Self::Ingress { inner }
+            | Self::EgressStartup { inner }
+            | Self::EgressValidation { inner }
+            | Self::EgressDispatch { inner }
+            | Self::Step { inner }
+            | Self::Internal { inner } => write!(f, "{inner}"),
+            Self::Capture { inner } => write!(f, "{inner}"),
+        }
+    }
+}
+
+impl std::error::Error for ErgoRunError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Config { inner } => Some(inner),
+            Self::AdapterRequired { inner }
+            | Self::GraphLoad { inner }
+            | Self::GraphPreparation { inner }
+            | Self::AdapterComposition { inner }
+            | Self::AdapterSetup { inner }
+            | Self::Ingress { inner }
+            | Self::EgressStartup { inner }
+            | Self::EgressValidation { inner }
+            | Self::EgressDispatch { inner }
+            | Self::Step { inner }
+            | Self::Internal { inner } => Some(inner),
+            Self::Capture { inner } => Some(inner),
+        }
+    }
+}
 
 impl ErgoRunError {
+    /// Parent-only escape hatch returning the underlying host run error.
+    /// Returns `None` for SDK configuration failures and normalized
+    /// capture-write failures (the exact `CaptureWriteError` is preserved on
+    /// `ErgoCaptureError`).
+    pub fn as_host_run_error(&self) -> Option<&HostRunError> {
+        match self {
+            Self::AdapterRequired { inner }
+            | Self::GraphLoad { inner }
+            | Self::GraphPreparation { inner }
+            | Self::AdapterComposition { inner }
+            | Self::AdapterSetup { inner }
+            | Self::Ingress { inner }
+            | Self::EgressStartup { inner }
+            | Self::EgressValidation { inner }
+            | Self::EgressDispatch { inner }
+            | Self::Step { inner }
+            | Self::Internal { inner } => Some(inner),
+            Self::Config { .. } | Self::Capture { .. } => None,
+        }
+    }
+
     /// Returns the wrapped capture error when the run failure normalized to a
     /// capture-write outcome.
     pub fn as_capture_error(&self) -> Option<&ErgoCaptureError> {
@@ -551,17 +598,96 @@ impl ErgoRunError {
     }
 }
 
-ergo_run_like_error!(
-    ErgoRunnerError,
-    AdapterRequired,
-    GraphLoad,
-    GraphPreparation,
-    AdapterComposition,
-    AdapterSetup,
-    EgressStartup,
-    Initialization,
-    Internal,
-);
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ErgoRunnerError {
+    Config {
+        #[allow(missing_docs)]
+        inner: ErgoConfigError,
+    },
+    AdapterRequired {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    GraphLoad {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    GraphPreparation {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    AdapterComposition {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    AdapterSetup {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    EgressStartup {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    Initialization {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+    Internal {
+        #[allow(missing_docs)]
+        inner: HostRunError,
+    },
+}
+
+impl std::fmt::Display for ErgoRunnerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Config { inner } => write!(f, "{inner}"),
+            Self::AdapterRequired { inner }
+            | Self::GraphLoad { inner }
+            | Self::GraphPreparation { inner }
+            | Self::AdapterComposition { inner }
+            | Self::AdapterSetup { inner }
+            | Self::EgressStartup { inner }
+            | Self::Initialization { inner }
+            | Self::Internal { inner } => write!(f, "{inner}"),
+        }
+    }
+}
+
+impl std::error::Error for ErgoRunnerError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Config { inner } => Some(inner),
+            Self::AdapterRequired { inner }
+            | Self::GraphLoad { inner }
+            | Self::GraphPreparation { inner }
+            | Self::AdapterComposition { inner }
+            | Self::AdapterSetup { inner }
+            | Self::EgressStartup { inner }
+            | Self::Initialization { inner }
+            | Self::Internal { inner } => Some(inner),
+        }
+    }
+}
+
+impl ErgoRunnerError {
+    /// Parent-only escape hatch returning the underlying host run error.
+    /// Returns `None` for SDK configuration failures.
+    pub fn as_host_run_error(&self) -> Option<&HostRunError> {
+        match self {
+            Self::AdapterRequired { inner }
+            | Self::GraphLoad { inner }
+            | Self::GraphPreparation { inner }
+            | Self::AdapterComposition { inner }
+            | Self::AdapterSetup { inner }
+            | Self::EgressStartup { inner }
+            | Self::Initialization { inner }
+            | Self::Internal { inner } => Some(inner),
+            Self::Config { .. } => None,
+        }
+    }
+}
 
 enum HostRunCategory {
     AdapterRequired,
@@ -627,7 +753,10 @@ fn classify_host_setup(setup: &HostSetupError) -> HostRunCategory {
 pub(crate) fn map_host_run_error_to_run(err: HostRunError) -> ErgoRunError {
     if let HostRunError::CaptureWrite(inner) = err {
         return ErgoRunError::Capture {
-            inner: ErgoCaptureError::Write { inner, bundle: None },
+            inner: ErgoCaptureError::Write {
+                inner,
+                bundle: None,
+            },
         };
     }
     match classify_host_run_error(&err) {
@@ -773,7 +902,6 @@ impl ErgoReplayError {
     }
 }
 
-
 enum HostReplayCategory {
     Config,
     CaptureRead,
@@ -795,7 +923,9 @@ fn classify_host_replay_error(err: &HostReplayError) -> HostReplayCategory {
     #[allow(unreachable_patterns)]
     match err {
         HostReplayError::GraphIdMismatch { .. } => HostReplayCategory::ReplayMismatch,
-        HostReplayError::ExternalKindsNotRepresentable { .. } => HostReplayCategory::ReplayOwnership,
+        HostReplayError::ExternalKindsNotRepresentable { .. } => {
+            HostReplayCategory::ReplayOwnership
+        }
         HostReplayError::Setup(setup) => match setup {
             HostReplaySetupError::CaptureRead { .. } => HostReplayCategory::CaptureRead,
             HostReplaySetupError::CaptureParse { .. } => HostReplayCategory::CaptureParse,
