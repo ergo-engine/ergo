@@ -3,5 +3,8 @@ name = "ergo-test-support"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+description = "Internal test utilities for the Ergo workspace (not for external consumers)"
+repository.workspace = true
+publish = false
 
 [dependencies]

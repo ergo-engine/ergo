@@ -3,10 +3,12 @@ name = "ergo-loader"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+description = "Project discovery, graph decode, and source loading for the Ergo graph execution engine"
+repository.workspace = true
 
 [dependencies]
-ergo-runtime = { path = "../../../kernel/runtime" }
-ergo-prod-duration = { path = "../../shared/duration" }
+ergo-runtime = { path = "../../../kernel/runtime", version = "0.1.0" }
+ergo-prod-duration = { path = "../../shared/duration", version = "0.1.0" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"

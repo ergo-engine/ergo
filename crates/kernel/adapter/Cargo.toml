@@ -3,9 +3,11 @@ name = "ergo-adapter"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+description = "Kernel adapter surface for manifests, event binding, composition checks, and capture helpers in Ergo"
+repository.workspace = true
 
 [dependencies]
-ergo-runtime = { path = "../runtime" }
+ergo-runtime = { path = "../runtime", version = "0.1.0" }
 jsonschema = "0.40.0"
 regex = "1.10"
 semver = "1.0"

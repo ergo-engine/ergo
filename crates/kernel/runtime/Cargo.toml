@@ -3,6 +3,8 @@ name = "ergo-runtime"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+description = "Canonical primitive contracts and reference implementations for the Ergo graph execution engine"
+repository.workspace = true
 
 [dependencies]
 semver = "1.0"

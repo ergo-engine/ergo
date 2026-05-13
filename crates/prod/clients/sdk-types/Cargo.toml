@@ -3,6 +3,8 @@ name = "ergo-sdk-types"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+description = "Shared serializable types for Ergo SDK clients across languages"
+repository.workspace = true
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

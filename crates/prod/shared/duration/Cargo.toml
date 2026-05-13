@@ -3,5 +3,7 @@ name = "ergo-prod-duration"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+description = "Shared duration-literal parser for Ergo production config surfaces"
+repository.workspace = true
 
 [dependencies]
