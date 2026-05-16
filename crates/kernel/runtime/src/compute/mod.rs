@@ -117,6 +117,14 @@ pub struct ComputePrimitiveManifest {
     pub side_effects: bool,
 }
 
+/// A compute primitive that transforms inputs and parameters into outputs.
+///
+/// State must be declared and resettable per manifest validation
+/// (`CMP-9`, `state.allowed => state.resettable`); undeclared per-instance
+/// mutability would violate determinism and is detected at runtime by
+/// capture/replay. Structural enforcement on top (derive macros, marker
+/// traits, newtype wrappers) was considered and rejected; see
+/// `docs/ledger/decisions/rejected-structural-enforcement-of-statelessness.md`.
 pub trait ComputePrimitive {
     fn manifest(&self) -> &ComputePrimitiveManifest;
 

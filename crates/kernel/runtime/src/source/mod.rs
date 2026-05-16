@@ -336,6 +336,13 @@ impl fmt::Display for SourceValidationError {
 
 impl std::error::Error for SourceValidationError {}
 
+/// A source primitive that produces values for graph evaluation.
+///
+/// Statelessness is enforced at registration by manifest validation
+/// (`SRC-8`, `state.allowed == false`) and at runtime by capture/replay.
+/// Structural enforcement on top (derive macros, marker traits, newtype
+/// wrappers) was considered and rejected; see
+/// `docs/ledger/decisions/rejected-structural-enforcement-of-statelessness.md`.
 pub trait SourcePrimitive {
     fn manifest(&self) -> &SourcePrimitiveManifest;
 

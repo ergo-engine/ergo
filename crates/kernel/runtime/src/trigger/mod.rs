@@ -396,6 +396,12 @@ impl std::error::Error for TriggerValidationError {}
 /// Temporal patterns requiring memory (once, latch, debounce, count) must be
 /// implemented as clusters where state flows through graph structure or
 /// environment, not trigger internals.
+///
+/// Statelessness is enforced at registration by manifest validation
+/// (`TRG-9`, `state.allowed == false`) and at runtime by capture/replay.
+/// Structural enforcement on top (derive macros, marker traits, newtype
+/// wrappers) was considered and rejected; see
+/// `docs/ledger/decisions/rejected-structural-enforcement-of-statelessness.md`.
 pub trait TriggerPrimitive: Send + Sync {
     fn manifest(&self) -> &TriggerPrimitiveManifest;
 

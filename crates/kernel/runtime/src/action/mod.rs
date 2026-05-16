@@ -759,6 +759,13 @@ impl fmt::Display for ActionValidationError {
 
 impl std::error::Error for ActionValidationError {}
 
+/// An action primitive that performs effects keyed by inputs and parameters.
+///
+/// Statelessness is enforced at registration by manifest validation
+/// (`ACT-10`, `state.allowed == false`) and at runtime by capture/replay.
+/// Structural enforcement on top (derive macros, marker traits, newtype
+/// wrappers) was considered and rejected; see
+/// `docs/ledger/decisions/rejected-structural-enforcement-of-statelessness.md`.
 pub trait ActionPrimitive {
     fn manifest(&self) -> &ActionPrimitiveManifest;
 
