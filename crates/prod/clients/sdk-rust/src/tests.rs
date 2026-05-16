@@ -44,6 +44,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+fn downcast_source<T: std::error::Error + 'static>(src: &ErgoErrorSource) -> &T {
+    src.as_dyn_error()
+        .downcast_ref::<T>()
+        .expect("opaque source must downcast to expected internal type for tests")
+}
+
 struct InjectedNumberSource {
     manifest: SourcePrimitiveManifest,
     output: f64,
@@ -648,11 +654,14 @@ outputs:
         .expect_err("zero-event host stop should surface an SDK error");
 
     stopper.join().expect("stopper thread must join");
-    match err.as_host_run_error() {
-        Some(HostRunError::Driver(HostDriverError::Output(
-            HostDriverOutputError::StopBeforeFirstCommittedEvent,
-        ))) => {}
-        _ => panic!("expected host stop StepFailed error, got {err:?}"),
+    match &err {
+        ErgoRunError::Ingress { source } => match downcast_source::<HostRunError>(source) {
+            HostRunError::Driver(HostDriverError::Output(
+                HostDriverOutputError::StopBeforeFirstCommittedEvent,
+            )) => {}
+            other => panic!("expected host stop StepFailed error, got {other:?}"),
+        },
+        _ => panic!("expected ErgoRunError::Ingress, got {err:?}"),
     }
     assert!(
         !capture.exists(),
@@ -1320,9 +1329,12 @@ outputs:
         .expect_err("adapter-less intent profile must fail validation");
 
     match &err {
-        ErgoValidationError::HostValidation { profile, inner } => {
+        ErgoValidationError::HostValidation { profile, source } => {
             assert_eq!(profile, "live");
-            assert!(matches!(inner, HostRunError::AdapterRequired(_)));
+            assert!(matches!(
+                downcast_source::<HostRunError>(source),
+                HostRunError::AdapterRequired(_)
+            ));
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -1542,9 +1554,12 @@ fn validate_project_in_memory_preserves_adapter_required_preflight(
     // ever runs.  This is the intended layered enforcement: SDK catches
     // configuration errors before host catches graph-structural errors.
     match &err {
-        ErgoValidationError::HostValidation { profile, inner } => {
+        ErgoValidationError::HostValidation { profile, source } => {
             assert_eq!(profile, "live");
-            assert!(matches!(inner, HostRunError::ProductionRequiresAdapter));
+            assert!(matches!(
+                downcast_source::<HostRunError>(source),
+                HostRunError::ProductionRequiresAdapter
+            ));
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -1590,9 +1605,9 @@ outputs:
         .validate_project()
         .expect_err("missing fixture should fail validation");
     match &validate_err {
-        ErgoValidationError::HostValidation { profile, inner } => {
+        ErgoValidationError::HostValidation { profile, source } => {
             assert_eq!(profile, "historical");
-            match inner {
+            match downcast_source::<HostRunError>(source) {
                 HostRunError::Driver(HostDriverError::Input(
                     HostDriverInputError::FixtureParse(detail),
                 )) => {
@@ -1607,12 +1622,15 @@ outputs:
     let run_err = ergo
         .run_profile("historical")
         .expect_err("missing fixture should fail run_profile");
-    match run_err.as_host_run_error() {
-        Some(HostRunError::Driver(HostDriverError::Input(
-            HostDriverInputError::FixtureParse(detail),
-        ))) => {
-            assert!(detail.to_string().contains("read fixture"));
-        }
+    match &run_err {
+        ErgoRunError::Ingress { source } => match downcast_source::<HostRunError>(source) {
+            HostRunError::Driver(HostDriverError::Input(
+                HostDriverInputError::FixtureParse(detail),
+            )) => {
+                assert!(detail.to_string().contains("read fixture"));
+            }
+            other => panic!("unexpected run_profile error: {other:?}"),
+        },
         _ => panic!("unexpected run_profile error: {run_err:?}"),
     }
 
@@ -1640,10 +1658,10 @@ fn validate_project_rejects_missing_in_memory_process_driver_before_run_profile(
         .validate_project()
         .expect_err("missing process driver should fail validation");
     match &validate_err {
-        ErgoValidationError::HostValidation { profile, inner } => {
+        ErgoValidationError::HostValidation { profile, source } => {
             assert_eq!(profile, "historical");
             assert!(matches!(
-                inner,
+                downcast_source::<HostRunError>(source),
                 HostRunError::Driver(HostDriverError::Input(
                     HostDriverInputError::ProcessPathMetadata { .. },
                 ))
@@ -1655,10 +1673,13 @@ fn validate_project_rejects_missing_in_memory_process_driver_before_run_profile(
     let run_err = ergo
         .run_profile("historical")
         .expect_err("missing process driver should fail run_profile");
-    match run_err.as_host_run_error() {
-        Some(HostRunError::Driver(HostDriverError::Input(
-            HostDriverInputError::ProcessPathMetadata { .. },
-        ))) => {}
+    match &run_err {
+        ErgoRunError::Ingress { source } => assert!(matches!(
+            downcast_source::<HostRunError>(source),
+            HostRunError::Driver(HostDriverError::Input(
+                HostDriverInputError::ProcessPathMetadata { .. },
+            ))
+        )),
         _ => panic!("unexpected run_profile error: {run_err:?}"),
     }
 
@@ -1726,9 +1747,9 @@ command = ["oops"
         ErgoValidationError::Profile { profile, inner } => {
             assert_eq!(profile, "live");
             match inner {
-                ErgoConfigError::EgressConfigParse { path, inner } => {
+                ErgoConfigError::EgressConfigParse { path, source } => {
                     assert!(path.ends_with("egress/live.toml"));
-                    assert!(inner.to_string().contains("TOML parse error"));
+                    assert!(source.to_string().contains("TOML parse error"));
                 }
                 other => panic!("unexpected invalid-egress source: {other:?}"),
             }
@@ -1819,9 +1840,9 @@ outputs:
         .expect_err("version-miss cluster profile must fail validation");
 
     match &err {
-        ErgoValidationError::HostValidation { profile, inner } => {
+        ErgoValidationError::HostValidation { profile, source } => {
             assert_eq!(profile, "historical");
-            let detail = inner.to_string();
+            let detail = downcast_source::<HostRunError>(source).to_string();
             assert!(detail.contains("graph expansion failed"));
             assert!(!detail.contains("cluster discovery failed"));
             assert!(detail.contains("shared_value"));
@@ -1864,29 +1885,25 @@ fixture = "fixtures/historical.jsonl"
     let run_err = ergo
         .run_profile("historical")
         .expect_err("missing graph file should fail run_profile");
-    assert!(
-        matches!(
-            &run_err,
-            ErgoRunError::GraphLoad {
-                inner: HostRunError::Setup(HostSetupError::LoadGraphAssets(_))
-            }
-        ),
-        "missing graph file must classify as GraphLoad: {run_err:?}"
-    );
+    match &run_err {
+        ErgoRunError::GraphLoad { source } => assert!(matches!(
+            downcast_source::<HostRunError>(source),
+            HostRunError::Setup(HostSetupError::LoadGraphAssets(_))
+        )),
+        other => panic!("missing graph file must classify as GraphLoad: {other:?}"),
+    }
 
     let runner_err = match ergo.runner_for_profile("historical") {
         Ok(_) => panic!("missing graph file should fail runner_for_profile"),
         Err(err) => err,
     };
-    assert!(
-        matches!(
-            &runner_err,
-            ErgoRunnerError::GraphLoad {
-                inner: HostRunError::Setup(HostSetupError::LoadGraphAssets(_))
-            }
-        ),
-        "missing graph file must classify as runner GraphLoad: {runner_err:?}"
-    );
+    match &runner_err {
+        ErgoRunnerError::GraphLoad { source } => assert!(matches!(
+            downcast_source::<HostRunError>(source),
+            HostRunError::Setup(HostSetupError::LoadGraphAssets(_))
+        )),
+        other => panic!("missing graph file must classify as runner GraphLoad: {other:?}"),
+    }
 
     let _ = fs::remove_dir_all(root);
     Ok(())
@@ -1923,15 +1940,13 @@ fixture = "fixtures/historical.jsonl"
     let run_err = ergo
         .run_profile("historical")
         .expect_err("graph YAML decode failure should fail run_profile");
-    assert!(
-        matches!(
-            &run_err,
-            ErgoRunError::GraphLoad {
-                inner: HostRunError::Setup(HostSetupError::LoadGraphAssets(_))
-            }
-        ),
-        "yaml decode failure must classify as GraphLoad: {run_err:?}"
-    );
+    match &run_err {
+        ErgoRunError::GraphLoad { source } => assert!(matches!(
+            downcast_source::<HostRunError>(source),
+            HostRunError::Setup(HostSetupError::LoadGraphAssets(_))
+        )),
+        other => panic!("yaml decode failure must classify as GraphLoad: {other:?}"),
+    }
 
     let _ = fs::remove_dir_all(root);
     Ok(())
@@ -1997,15 +2012,13 @@ outputs:
     let run_err = ergo
         .run_profile("historical")
         .expect_err("expansion mismatch should fail run_profile");
-    assert!(
-        matches!(
-            &run_err,
-            ErgoRunError::GraphPreparation {
-                inner: HostRunError::Setup(HostSetupError::GraphPreparation(_))
-            }
-        ),
-        "graph expansion failure must classify as GraphPreparation: {run_err:?}"
-    );
+    match &run_err {
+        ErgoRunError::GraphPreparation { source } => assert!(matches!(
+            downcast_source::<HostRunError>(source),
+            HostRunError::Setup(HostSetupError::GraphPreparation(_))
+        )),
+        other => panic!("graph expansion failure must classify as GraphPreparation: {other:?}"),
+    }
 
     let _ = fs::remove_dir_all(root);
     Ok(())
@@ -2340,8 +2353,8 @@ outputs:
         .expect_err("capture write failure should preserve bundle in the error");
 
     match &err {
-        ErgoCaptureError::Write { inner, bundle } => {
-            assert!(inner
+        ErgoCaptureError::Write { source, bundle } => {
+            assert!(source
                 .to_string()
                 .contains("create capture output directory"));
             assert_eq!(
@@ -2405,15 +2418,15 @@ outputs:
         Ok(_) => panic!("profile resolution should still require ingress"),
         Err(err) => err,
     };
-    match err {
+    match &err {
         ErgoRunnerError::Config {
-            inner:
-                ErgoConfigError::ProjectLoad {
-                    inner: LoaderProjectError::ProfileInvalid { detail, .. },
-                },
-        } => {
-            assert!(detail.contains("exactly one ingress source"));
-        }
+            inner: ErgoConfigError::ProjectLoad { source },
+        } => match downcast_source::<LoaderProjectError>(source) {
+            LoaderProjectError::ProfileInvalid { detail, .. } => {
+                assert!(detail.contains("exactly one ingress source"));
+            }
+            other => panic!("unexpected loader project error: {other:?}"),
+        },
         other => panic!("unexpected runner_for_profile ingress error: {other:?}"),
     }
 
@@ -2452,11 +2465,14 @@ fixture = "fixtures/live.jsonl"
         Ok(_) => panic!("adapter-required profile should fail before returning runner"),
         Err(err) => err,
     };
-    match err {
-        ErgoRunnerError::AdapterRequired {
-            inner: HostRunError::AdapterRequired(summary),
-        } => {
-            assert!(summary.requires_adapter);
+    match &err {
+        ErgoRunnerError::AdapterRequired { source } => {
+            match downcast_source::<HostRunError>(source) {
+                HostRunError::AdapterRequired(summary) => {
+                    assert!(summary.requires_adapter);
+                }
+                other => panic!("unexpected adapter-preflight host error: {other:?}"),
+            }
         }
         other => panic!("unexpected adapter-preflight error: {other:?}"),
     }
@@ -2501,12 +2517,13 @@ egress = "egress/live.toml"
         Ok(_) => panic!("egress startup failure should surface during runner creation"),
         Err(err) => err,
     };
-    assert!(matches!(
-        err,
-        ErgoRunnerError::EgressStartup {
-            inner: HostRunError::Setup(HostSetupError::StartEgress(_))
-        }
-    ));
+    match &err {
+        ErgoRunnerError::EgressStartup { source } => assert!(matches!(
+            downcast_source::<HostRunError>(source),
+            HostRunError::Setup(HostSetupError::StartEgress(_))
+        )),
+        other => panic!("unexpected egress-startup error: {other:?}"),
+    }
 
     let _ = fs::remove_dir_all(root);
     Ok(())
@@ -2604,12 +2621,13 @@ egress = "egress/live.toml"
             payload: Some(serde_json::json!({"price": 100.0})),
         })
         .expect_err("missing semantic kind should surface a recoverable input error");
-    assert!(matches!(
-        &step_err,
-        ErgoStepError::Input {
-            inner: HostedStepError::MissingSemanticKind
-        }
-    ));
+    match &step_err {
+        ErgoStepError::Input { source } => assert!(matches!(
+            downcast_source::<HostedStepError>(source),
+            HostedStepError::MissingSemanticKind
+        )),
+        other => panic!("expected ErgoStepError::Input, got {other:?}"),
+    }
 
     let recovered = runner.step(adapter_bound_event("evt_good", 101.5))?;
     assert_eq!(recovered.termination, Some(RunTermination::Completed));
@@ -2661,15 +2679,13 @@ egress = "egress/live.toml"
     let step_err = runner
         .step(adapter_bound_event("evt1", 101.5))
         .expect_err("egress dispatch failure should interrupt manual stepping");
-    assert!(
-        matches!(
-            &step_err,
-            ErgoStepError::EgressDispatch {
-                inner: HostedStepError::EgressDispatchFailure(_)
-            }
-        ),
-        "unexpected dispatch failure: {step_err:?}"
-    );
+    match &step_err {
+        ErgoStepError::EgressDispatch { source } => assert!(matches!(
+            downcast_source::<HostedStepError>(source),
+            HostedStepError::EgressDispatchFailure(_)
+        )),
+        other => panic!("unexpected dispatch failure: {other:?}"),
+    }
 
     let step_again = runner
         .step(adapter_bound_event("evt2", 101.6))

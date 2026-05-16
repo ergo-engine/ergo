@@ -23,8 +23,79 @@
 //!
 //! Errors at this boundary use SDK-branded `Ergo*` types such as
 //! [`ErgoRunError`] and [`ErgoReplayError`]. Match those categories first.
-//! Host error taxonomies remain available only as advanced escape hatches
-//! through parent accessors and the [`std::error::Error::source`] chain.
+//! Host, loader, and runtime error taxonomies are not part of the SDK's
+//! public surface; advanced callers reach them only as `&dyn Error` through
+//! the [`std::error::Error::source`] chain (and `downcast_ref` against the
+//! relevant Ergo crate they already depend on).
+//!
+//! # Threading model
+//!
+//! In v1, [`Ergo`] is a single-threaded handle. Build one handle and reuse
+//! it for any number of sequential operations on the same thread. Runs and
+//! replays are synchronous; calls block the calling thread until the host
+//! loop completes.
+//!
+//! To use Ergo from multiple threads today, build one handle per thread
+//! (registers the primitive catalog separately) or wrap a shared handle in
+//! `std::sync::Mutex` and serialize access. The engine handle is not
+//! `Send + Sync` because primitive trait objects in the runtime catalog do
+//! not yet require those bounds; tightening those bounds is a kernel-level
+//! decision tracked separately and is on the post-v1 roadmap.
+//!
+//! [`StopHandle`] is `Send + Sync` and may be shared with another thread
+//! that needs to request a graceful host stop while a run is blocked in
+//! [`Ergo::run_with_stop`] or [`Ergo::run_profile_with_stop`]. The stop
+//! handle does not require thread-mobility of [`Ergo`] itself: the
+//! supervising thread only needs to call [`StopHandle::stop`].
+//!
+//! # Quick start
+//!
+//! Run a named profile from a filesystem project:
+//!
+//! ```no_run
+//! use ergo_sdk_rust::{Ergo, ErgoRunError, RunOutcome};
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let ergo = Ergo::from_project("/path/to/my-ergo-project").build()?;
+//!
+//!     // Validate the project before running anything live.
+//!     let summary = ergo.validate_project()?;
+//!     println!("project {} v{}", summary.name, summary.version);
+//!
+//!     match ergo.run_profile("historical")? {
+//!         RunOutcome::Completed(run) => {
+//!             println!("ran {} events", run.events);
+//!         }
+//!         RunOutcome::Interrupted(run) => {
+//!             eprintln!("interrupted: {:?}", run.reason);
+//!         }
+//!     }
+//!     Ok(())
+//! }
+//! ```
+//!
+//! Drive a profile event-by-event with [`ProfileRunner`]:
+//!
+//! ```no_run
+//! use ergo_sdk_rust::{Ergo, EventTime, ExternalEventKind, HostedEvent};
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let ergo = Ergo::from_project("/path/to/my-ergo-project").build()?;
+//!     let mut runner = ergo.runner_for_profile("manual")?;
+//!
+//!     let _outcome = runner.step(HostedEvent {
+//!         event_id: "evt-1".to_string(),
+//!         kind: ExternalEventKind::Command,
+//!         at: EventTime::default(),
+//!         semantic_kind: Some("tick".to_string()),
+//!         payload: Some(serde_json::json!({})),
+//!     })?;
+//!
+//!     let bundle = runner.finish()?;
+//!     println!("captured {} events", bundle.events.len());
+//!     Ok(())
+//! }
+//! ```
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -33,6 +104,14 @@ use std::time::Duration;
 
 /// Fixture item data for SDK-authored in-memory fixture ingress.
 pub use ergo_adapter::fixture::FixtureItem;
+/// Adapter-owned event-shape types that appear in [`HostedEvent`] and
+/// [`HostedStepOutcome`] fields.
+///
+/// These are the same types `ergo-adapter` uses for the canonical event
+/// model; they are re-exported here so that callers constructing or
+/// inspecting hosted events do not need a direct dependency on
+/// `ergo-adapter`.
+pub use ergo_adapter::{EventTime, ExternalEventKind, RunTermination};
 use ergo_host::{
     finalize_hosted_runner_capture, load_graph_assets_from_paths,
     prepare_hosted_runner_from_paths_with_surfaces, prepare_hosted_runner_with_surfaces,
@@ -42,7 +121,7 @@ use ergo_host::{
     validate_run_graph_from_paths_with_surfaces, write_capture_bundle as host_write_capture_bundle,
     DriverConfig, HostRunError, HostStopHandle, HostedRunner, HostedStepError, LivePrepOptions,
     PrepareHostedRunnerFromPathsRequest, ReplayGraphFromAssetsRequest, ReplayGraphFromPathsRequest,
-    ReplayGraphResult, RunControl, RunGraphFromAssetsRequest, RunGraphFromPathsRequest, RunOutcome,
+    ReplayGraphResult, RunControl, RunGraphFromAssetsRequest, RunGraphFromPathsRequest,
     RuntimeSurfaces,
 };
 use ergo_loader::{
@@ -59,7 +138,7 @@ use ergo_runtime::catalog::CatalogBuilder;
 pub use ergo_host::{
     parse_egress_config_toml, AdapterInput, CaptureBundle, CaptureJsonStyle, EgressChannelConfig,
     EgressConfig, EgressConfigBuilder, EgressConfigError, EgressConfigParseError, EgressRoute,
-    HostedEvent, HostedStepOutcome, InterruptedRun, InterruptionReason, RunSummary,
+    HostedEvent, HostedStepOutcome, InterruptedRun, InterruptionReason, RunOutcome, RunSummary,
 };
 /// Runtime catalog helpers re-exported for advanced primitive registration.
 pub use ergo_runtime::catalog::{build_core, build_core_catalog, core_registries};
@@ -75,8 +154,9 @@ use error::{
     map_hosted_step_error,
 };
 pub use error::{
-    ErgoBuildError, ErgoCaptureError, ErgoConfigError, ErgoProjectConfigError, ErgoProjectError,
-    ErgoReplayError, ErgoRunError, ErgoRunnerError, ErgoStepError, ErgoValidationError,
+    ErgoBuildError, ErgoCaptureError, ErgoConfigError, ErgoErrorSource, ErgoProjectConfigError,
+    ErgoProjectError, ErgoReplayError, ErgoRunError, ErgoRunnerError, ErgoStepError,
+    ErgoValidationError,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -175,7 +255,7 @@ impl InternalProfileError {
             },
             Self::HostRun(inner) => ErgoValidationError::HostValidation {
                 profile: profile.to_string(),
-                inner,
+                source: ErgoErrorSource::new(inner),
             },
         }
     }
@@ -795,7 +875,9 @@ impl ErgoBuilder {
         let (registries, catalog) = self
             .catalog_builder
             .build()
-            .map_err(|inner| ErgoBuildError::Registration { inner })?;
+            .map_err(|inner| ErgoBuildError::Registration {
+                source: ErgoErrorSource::new(inner),
+            })?;
         Ok(Ergo {
             runtime_surfaces: RuntimeSurfaces::new(registries, catalog),
             project_source: self.project_source,
@@ -819,10 +901,22 @@ impl ErgoBuilder {
 /// One built `Ergo` handle may be reused for multiple operations on the
 /// same thread. Reuse preserves the existing primitive instances behind
 /// the handle under the current in-process trust model.
+///
+/// `Ergo` is **not** `Send + Sync` in v1. Build one handle per thread, or
+/// wrap a shared handle in `std::sync::Mutex` to serialize access. See the
+/// crate-level *Threading model* section for the rationale and roadmap.
 pub struct Ergo {
     runtime_surfaces: RuntimeSurfaces,
     project_source: ProjectSource,
 }
+
+// Compile-time guarantee that `StopHandle` remains thread-mobile. The
+// supervising-thread stop pattern documented on `StopHandle` requires this
+// even though `Ergo` itself is single-threaded today.
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<StopHandle>();
+};
 
 impl Ergo {
     /// Starts an [`ErgoBuilder`].
@@ -1293,15 +1387,24 @@ impl Ergo {
     /// setup, but does not launch process ingress.
     ///
     /// ```no_run
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let ergo = ergo_sdk_rust::Ergo::from_project("/path/to/my-ergo-project").build()?;
-    /// let mut runner = ergo.runner_for_profile("manual")?;
-    /// # let event: ergo_sdk_rust::HostedEvent = unimplemented!();
-    /// let outcome = runner.step(event)?;
-    /// let capture = runner.finish()?;
-    /// # let _ = (outcome, capture);
-    /// # Ok(())
-    /// # }
+    /// use ergo_sdk_rust::{Ergo, EventTime, ExternalEventKind, HostedEvent};
+    ///
+    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let ergo = Ergo::from_project("/path/to/my-ergo-project").build()?;
+    ///     let mut runner = ergo.runner_for_profile("manual")?;
+    ///
+    ///     let _outcome = runner.step(HostedEvent {
+    ///         event_id: "evt-1".to_string(),
+    ///         kind: ExternalEventKind::Command,
+    ///         at: EventTime::default(),
+    ///         semantic_kind: Some("tick".to_string()),
+    ///         payload: Some(serde_json::json!({})),
+    ///     })?;
+    ///
+    ///     let capture = runner.finish()?;
+    ///     let _ = capture;
+    ///     Ok(())
+    /// }
     /// ```
     pub fn runner_for_profile(&self, profile_name: &str) -> Result<ProfileRunner, ErgoRunnerError> {
         let plan = self
@@ -1351,16 +1454,52 @@ impl Ergo {
 /// [`ProfileRunner::finish`] or [`ProfileRunner::finish_and_write_capture`]
 /// to recover the capture bundle.
 ///
+/// # Lifecycle
+///
+/// A runner moves through four internal states. Callers interact with them
+/// only through the return values of `step`, `finish`, and
+/// `finish_and_write_capture`; transitions are driven entirely by those
+/// return values.
+///
+/// 1. **Active** — the initial state after [`Ergo::runner_for_profile`].
+///    [`ProfileRunner::step`] accepts events. Recoverable input or binding
+///    errors (see [`ErgoStepError::is_recoverable`]) leave the runner in
+///    `Active`.
+/// 2. **Finalizable-after-dispatch-failure** — entered when
+///    [`ProfileRunner::step`] returns an [`ErgoStepError`] whose
+///    [`ErgoStepError::can_finish`] is `true` (typically an egress dispatch
+///    failure mid-step). Further `step` calls fail with a lifecycle error;
+///    the only legal next call is `finish` or `finish_and_write_capture`.
+/// 3. **Failed** — entered when [`ProfileRunner::step`] returns a
+///    non-recoverable, non-finalizable error. Both `step` and `finish` then
+///    fail with a lifecycle error. The runner cannot be revived; drop it.
+/// 4. **Finished** — entered after a successful `finish` or
+///    `finish_and_write_capture`. Any further call returns a lifecycle
+///    [`ErgoStepError`].
+///
+/// `finish` additionally requires at least one successful step before it
+/// will produce a capture bundle; calling `finish` from `Active` with zero
+/// successful steps returns a lifecycle error rather than transitioning.
+///
 /// ```no_run
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let ergo = ergo_sdk_rust::Ergo::from_project("/path/to/my-ergo-project").build()?;
-/// let mut runner = ergo.runner_for_profile("manual")?;
-/// # let event: ergo_sdk_rust::HostedEvent = unimplemented!();
-/// let step = runner.step(event)?;
-/// let capture = runner.finish()?;
-/// # let _ = (step, capture);
-/// # Ok(())
-/// # }
+/// use ergo_sdk_rust::{Ergo, EventTime, ExternalEventKind, HostedEvent};
+///
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let ergo = Ergo::from_project("/path/to/my-ergo-project").build()?;
+///     let mut runner = ergo.runner_for_profile("manual")?;
+///
+///     let _step = runner.step(HostedEvent {
+///         event_id: "evt-1".to_string(),
+///         kind: ExternalEventKind::Command,
+///         at: EventTime::default(),
+///         semantic_kind: Some("tick".to_string()),
+///         payload: Some(serde_json::json!({})),
+///     })?;
+///
+///     let capture = runner.finish()?;
+///     let _ = capture;
+///     Ok(())
+/// }
 /// ```
 pub struct ProfileRunner {
     runner: Option<HostedRunner>,
@@ -1500,7 +1639,7 @@ impl ProfileRunner {
         match host_write_capture_bundle(&capture_path, &bundle, style) {
             Ok(()) => Ok(bundle),
             Err(inner) => Err(ErgoCaptureError::Write {
-                inner,
+                source: ErgoErrorSource::new(inner),
                 bundle: Some(bundle),
             }),
         }
@@ -1518,7 +1657,7 @@ pub fn write_capture_bundle(
 ) -> Result<(), ErgoCaptureError> {
     host_write_capture_bundle(path.as_ref(), bundle, style).map_err(|inner| {
         ErgoCaptureError::Write {
-            inner,
+            source: ErgoErrorSource::new(inner),
             bundle: None,
         }
     })
@@ -1770,13 +1909,13 @@ fn ingress_to_driver(ingress: &IngressConfig) -> Result<DriverConfig, ErgoConfig
 }
 
 fn load_egress_config(path: &Path) -> Result<EgressConfig, ErgoConfigError> {
-    let raw = fs::read_to_string(path).map_err(|inner| ErgoConfigError::EgressConfigRead {
+    let raw = fs::read_to_string(path).map_err(|source| ErgoConfigError::EgressConfigRead {
         path: path.to_path_buf(),
-        inner,
+        source,
     })?;
-    parse_egress_config_toml(&raw).map_err(|inner| ErgoConfigError::EgressConfigParse {
+    parse_egress_config_toml(&raw).map_err(|source| ErgoConfigError::EgressConfigParse {
         path: path.to_path_buf(),
-        inner,
+        source,
     })
 }
 
