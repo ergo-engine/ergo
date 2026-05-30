@@ -27,32 +27,35 @@ if [[ -z "$PYTHON_BIN" ]]; then
   fi
 fi
 
-echo "[1/8] cargo fmt --check"
+echo "[1/9] cargo fmt --check"
 cargo fmt --check
 
-echo "[2/8] cargo test --workspace"
+echo "[2/9] cargo test --workspace"
 cargo test --workspace
 
-echo "[3/8] replay-naming drift guard"
+echo "[3/9] replay-naming drift guard"
 bash tools/verify_replay_naming.sh
 
-echo "[4/8] doctrine gate guard"
+echo "[4/9] doctrine gate guard"
 bash tools/verify_doctrine_gate.sh
 
-echo "[5/8] layer boundary guard"
+echo "[5/9] layer boundary guard"
 bash tools/verify_layer_boundaries.sh
 
-echo "[6/8] invariant-index count guard"
+echo "[6/9] invariant-index count guard"
 bash tools/verify_invariant_index.sh
 
-echo "[7/8] ergo-mcp invariant parser tests"
+echo "[7/9] CODE_MAP drift guard (kernel + prod)"
+bash tools/verify_code_map_drift.sh
+
+echo "[8/9] ergo-mcp invariant parser tests"
 if [[ -d "tools/ergo-mcp" ]]; then
   "$PYTHON_BIN" -m unittest discover -s tools/ergo-mcp -p "test_*.py"
 else
   echo "skipping ergo-mcp invariant parser tests (tools/ergo-mcp not present)"
 fi
 
-echo "[8/8] windows compile guard (${WINDOWS_TARGET})"
+echo "[9/9] windows compile guard (${WINDOWS_TARGET})"
 HOST_OS="$(uname -s 2>/dev/null || echo unknown)"
 STRICT_WINDOWS_GUARD="${ERGO_STRICT_WINDOWS_GUARD:-0}"
 

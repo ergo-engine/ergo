@@ -1050,10 +1050,11 @@ fn replay_profile_on_in_memory_project_returns_unsupported_operation(
 
     match err {
         ErgoReplayError::Config {
-            inner: ErgoConfigError::UnsupportedOperation {
-                operation,
-                transport,
-            },
+            inner:
+                ErgoConfigError::UnsupportedOperation {
+                    operation,
+                    transport,
+                },
         } => {
             assert_eq!(operation, "replay_profile");
             assert_eq!(transport, "in-memory");
@@ -1624,9 +1625,9 @@ outputs:
         .expect_err("missing fixture should fail run_profile");
     match &run_err {
         ErgoRunError::Ingress { source } => match downcast_source::<HostRunError>(source) {
-            HostRunError::Driver(HostDriverError::Input(
-                HostDriverInputError::FixtureParse(detail),
-            )) => {
+            HostRunError::Driver(HostDriverError::Input(HostDriverInputError::FixtureParse(
+                detail,
+            ))) => {
                 assert!(detail.to_string().contains("read fixture"));
             }
             other => panic!("unexpected run_profile error: {other:?}"),
@@ -1910,8 +1911,8 @@ fixture = "fixtures/historical.jsonl"
 }
 
 #[test]
-fn run_profile_classifies_yaml_decode_error_as_graph_load(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn run_profile_classifies_yaml_decode_error_as_graph_load() -> Result<(), Box<dyn std::error::Error>>
+{
     let root = make_temp_dir("graph_load_yaml_decode");
     write_file(
         &root,

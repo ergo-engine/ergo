@@ -398,16 +398,12 @@ impl std::fmt::Display for ErgoConfigError {
                 f,
                 "explicit run configuration is invalid: process ingress command must not be empty"
             ),
-            Self::EgressConfigRead { path, .. } => write!(
-                f,
-                "failed to read egress config '{}'",
-                path.display()
-            ),
-            Self::EgressConfigParse { path, .. } => write!(
-                f,
-                "failed to parse egress config '{}'",
-                path.display()
-            ),
+            Self::EgressConfigRead { path, .. } => {
+                write!(f, "failed to read egress config '{}'", path.display())
+            }
+            Self::EgressConfigParse { path, .. } => {
+                write!(f, "failed to parse egress config '{}'", path.display())
+            }
             Self::FilesystemProfileCannotUseInMemoryCapture { profile } => write!(
                 f,
                 "filesystem profile '{profile}' cannot use in-memory capture"
@@ -571,14 +567,20 @@ impl std::fmt::Display for ErgoStepError {
             Self::Lifecycle { .. } => write!(f, "runner used outside its prepared lifecycle"),
             Self::EffectApply { .. } => write!(f, "runtime effect application failed"),
             Self::HandlerCoverage { .. } => {
-                write!(f, "produced handler is not covered by configured adapter or egress")
+                write!(
+                    f,
+                    "produced handler is not covered by configured adapter or egress"
+                )
             }
             Self::EgressValidation { .. } => {
                 write!(f, "egress intent validation rejected the step output")
             }
             Self::EgressProcess { .. } => write!(f, "egress process channel failed"),
             Self::EgressDispatch { .. } => {
-                write!(f, "egress dispatch failed after the step produced an intent")
+                write!(
+                    f,
+                    "egress dispatch failed after the step produced an intent"
+                )
             }
             Self::Internal { .. } => write!(f, "step failed an internal SDK or host invariant"),
             Self::EventBuild { .. } => write!(f, "hosted event could not be built"),
@@ -1032,7 +1034,10 @@ impl std::fmt::Display for ErgoRunnerError {
             Self::EgressStartup { .. } => write!(f, "egress channel startup failed"),
             Self::Initialization { .. } => write!(f, "hosted runner initialization failed"),
             Self::Internal { .. } => {
-                write!(f, "runner preparation failed an internal SDK or host invariant")
+                write!(
+                    f,
+                    "runner preparation failed an internal SDK or host invariant"
+                )
             }
         }
     }
@@ -1276,7 +1281,10 @@ impl std::fmt::Display for ErgoReplayError {
             Self::CaptureParse { .. } => write!(f, "capture data could not be parsed"),
             Self::GraphLoad { .. } => write!(f, "graph or cluster assets could not be loaded"),
             Self::GraphPreparation { .. } => {
-                write!(f, "graph preparation rejected the resolved graph for replay")
+                write!(
+                    f,
+                    "graph preparation rejected the resolved graph for replay"
+                )
             }
             Self::AdapterComposition { .. } => write!(f, "adapter manifest composition failed"),
             Self::AdapterSetup { .. } => write!(f, "adapter setup failed"),
@@ -1285,7 +1293,10 @@ impl std::fmt::Display for ErgoReplayError {
                 write!(f, "replay observed a deterministic mismatch")
             }
             Self::ReplayOwnership { .. } => {
-                write!(f, "capture uses external event kinds the replay path cannot represent")
+                write!(
+                    f,
+                    "capture uses external event kinds the replay path cannot represent"
+                )
             }
             Self::Step { .. } => write!(f, "per-event replay stepping failed"),
             Self::Internal { .. } => {

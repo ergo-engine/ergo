@@ -195,7 +195,10 @@ fn scaffold_matches_expected_tree_and_templates() -> Result<(), String> {
 #[test]
 fn scaffolded_project_builds_runs_and_validates() -> Result<(), String> {
     let root = make_workspace_temp_dir("e2e");
-    let project_root = root.join("sample-app");
+    // Unique per-test package name so concurrent tests that share
+    // CARGO_TARGET_DIR (see `scaffold_test_cargo_target_dir`) do not
+    // race on the same `debug/<pkg>` binary path.
+    let project_root = root.join("e2e-app");
     init_command(&[project_root.display().to_string()])?;
 
     let run = run_cargo_project(&project_root, &["run", "--quiet"])?;
@@ -347,7 +350,7 @@ fn init_accepts_explicit_sdk_path_outside_workspace_checkout() -> Result<(), Str
 #[test]
 fn doctor_reports_missing_scaffold_file() -> Result<(), String> {
     let root = make_workspace_temp_dir("doctor_missing");
-    let project_root = root.join("sample-app");
+    let project_root = root.join("doctor-missing-app");
     init_command(&[project_root.display().to_string()])?;
 
     fs::remove_file(project_root.join("graphs/strategy.yaml"))
@@ -371,7 +374,7 @@ fn doctor_reports_missing_scaffold_file() -> Result<(), String> {
 #[test]
 fn doctor_reports_python_channel_syntax_error() -> Result<(), String> {
     let root = make_workspace_temp_dir("doctor_python_syntax");
-    let project_root = root.join("sample-app");
+    let project_root = root.join("doctor-python-app");
     init_command(&[project_root.display().to_string()])?;
 
     fs::write(

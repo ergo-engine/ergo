@@ -521,5 +521,3 @@ fn format_replay_error_effect_mismatch_surfaces_expected_actual() {
         "actual effect detail with key 'volume': {err}"
     );
 }
-
-

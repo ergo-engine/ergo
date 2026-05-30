@@ -872,12 +872,12 @@ impl ErgoBuilder {
                     inner: ErgoProjectError::Config { inner },
                 })?;
         }
-        let (registries, catalog) = self
-            .catalog_builder
-            .build()
-            .map_err(|inner| ErgoBuildError::Registration {
-                source: ErgoErrorSource::new(inner),
-            })?;
+        let (registries, catalog) =
+            self.catalog_builder
+                .build()
+                .map_err(|inner| ErgoBuildError::Registration {
+                    source: ErgoErrorSource::new(inner),
+                })?;
         Ok(Ergo {
             runtime_surfaces: RuntimeSurfaces::new(registries, catalog),
             project_source: self.project_source,

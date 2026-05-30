@@ -447,6 +447,11 @@ use implementations::{PublishSampleAction, SampleMessageSource};
 fn main() {
     if let Err(err) = run() {
         eprintln!("{err}");
+        let mut source = err.source();
+        while let Some(cause) = source {
+            eprintln!("caused by: {cause}");
+            source = cause.source();
+        }
         std::process::exit(1);
     }
 }
