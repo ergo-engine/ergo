@@ -1,68 +1,77 @@
 # ergo-cli
 
-`ergo-cli` is the workspace CLI surface over host, loader, fixtures, and
-project scaffolding.
+`ergo-cli` provides the `ergo` command-line interface for project scaffolding,
+graph runs, replay, manifest validation, fixture tooling, and graph
+visualization.
 
-It owns:
+Use this crate when you want the shipped binary. Rust applications that embed
+Ergo directly usually want `ergo-sdk-rust` instead.
 
-- command parsing and dispatch
-- scaffold/template generation for `ergo init`
-- CLI-only fixture, render, and conversion helpers
-- text and JSON output formatting
+## Current command surface
 
-It does not own:
+The canonical help command is:
 
-- runtime semantics
-- loader decode/discovery rules
-- adapter registration or composition policy
-- host run/replay orchestration truth
-
-Those remain owned by `ergo-runtime`, `ergo-loader`, `ergo-adapter`, and
-`ergo-host`.
-
-## Current Structure
-
-```text
-ergo-cli/
-  src/
-    main.rs                 # binary entrypoint
-    lib.rs                  # shared CLI test surface
-    cli/
-      args.rs               # option parsing helpers
-      dispatch.rs           # top-level command routing
-      handlers.rs           # CLI use-case glue
-    output/
-      text.rs               # human-readable output and help
-      json.rs               # machine-readable output
-      errors.rs             # stderr + exit mapping
-    init_project.rs         # scaffold generation/templates for `ergo init`
-    graph_yaml.rs           # explicit path-based graph run helpers
-    graph_to_dot.rs         # DOT rendering
-    render.rs               # SVG rendering via Graphviz
-    validate.rs             # manifest validation helpers
-    fixture_ops.rs          # fixture inspect/validate helpers
-    csv_fixture.rs          # CSV -> fixture conversion
-    gen_docs.rs             # generated docs wrapper
-    error_format.rs         # typed CLI error rendering
-    exit_codes.rs           # stable exit codes
+```sh
+ergo help
 ```
 
-## Placement Rules
+Common v1 commands:
 
-- `main.rs` stays wiring-only: parse, dispatch, render, exit.
-- `cli/` owns command grammar and top-level routing, not semantic rules.
-- `init_project.rs` owns scaffold templates and init-time path checks.
-- `graph_yaml.rs`, `validate.rs`, `fixture_ops.rs`, and `render.rs` may call
-  host, loader, or fixtures use-cases, but they should not redefine product
-  policy.
-- `output/` and `error_format.rs` own presentation only.
+```sh
+ergo init my-project
+ergo run graph.yaml -f events.jsonl
+ergo replay capture.json -g graph.yaml
+ergo fixture inspect events.jsonl
+ergo fixture validate events.jsonl
+ergo validate adapter.yaml
+ergo csv-to-fixture prices.csv events.jsonl
+ergo graph-to-dot graph.yaml -o graph.dot
+ergo render graph graph.yaml -o graph.svg
+```
 
-## Current CLI Notes
+`ergo render` currently dispatches through the `graph` target, so the rendering
+form is `ergo render graph <graph.yaml> ...`.
 
-- The workspace binary uses `ergo help`; top-level `--help` is not a canonical
-  command.
-- `ergo init` generates Python 3 sample ingress/egress channels, not POSIX `sh`
-  scripts.
-- The generated sample app exposes `cargo run -- profiles` and
-  `cargo run -- doctor`; those are scaffolded app commands, not workspace
-  `ergo-cli` subcommands.
+## What this crate owns
+
+- The `ergo` binary entrypoint, command parsing, dispatch, exit behavior, and
+  text/JSON output rendering.
+- `ergo init` scaffold generation and its CLI-facing path checks.
+- CLI wrappers for host run/replay/validation, graph visualization, fixture
+  inspection/validation, CSV-to-fixture conversion, and generated-doc checks.
+
+## What this crate does not own
+
+- Runtime primitive semantics or graph execution rules.
+- Loader decode/discovery behavior.
+- Adapter manifests, adapter composition policy, or capture/replay semantics.
+- Host orchestration truth; the CLI calls host use cases rather than
+  reimplementing them.
+
+Those responsibilities live in `ergo-runtime`, `ergo-loader`, `ergo-adapter`,
+`ergo-supervisor`, and `ergo-host`.
+
+## Fixture tooling
+
+The shipped binary uses `ergo-fixtures` for:
+
+- `ergo fixture inspect`
+- `ergo fixture validate`
+- `ergo csv-to-fixture`
+
+`ergo-fixtures` is therefore a real publishable tooling crate, not hidden test
+support.
+
+## Notes
+
+- Use `ergo help` or `ergo help <topic>`; bare top-level `--help` is not
+  dispatched as the maintained help surface.
+- `ergo init` generates a sample Rust app. Commands such as
+  `cargo run -- profiles` and `cargo run -- doctor` belong to that generated
+  app; they are not top-level `ergo` commands.
+- SVG rendering uses Graphviz `dot` at runtime.
+
+## More information
+
+- Prod layer map: [`crates/prod/CODE_MAP.md`](../../CODE_MAP.md)
+- SDK getting started guide: [`docs/authoring/getting-started-sdk.md`](../../../../docs/authoring/getting-started-sdk.md)
