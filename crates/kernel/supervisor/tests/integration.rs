@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+mod support;
+
 use ergo_adapter::{
     AdapterProvides, EventId, EventTime, ExternalEvent, ExternalEventKind, FaultRuntimeHandle,
     GraphId, RunTermination, RuntimeHandle,
@@ -15,12 +17,12 @@ use ergo_runtime::cluster::{
     OutputPortSpec, OutputRef, ParameterValue,
 };
 use ergo_runtime::provenance::{compute_runtime_provenance, RuntimeProvenanceScheme};
-use ergo_supervisor::demo::demo_1;
 use ergo_supervisor::replay::compare_decisions;
 use ergo_supervisor::replay::replay;
 use ergo_supervisor::{
     CapturingSession, Constraints, Decision, DecisionLog, DecisionLogEntry, Supervisor,
 };
+use support::demo_1;
 
 /// Test-only DecisionLog that captures entries for verification.
 #[derive(Clone)]

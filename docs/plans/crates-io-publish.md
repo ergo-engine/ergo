@@ -166,14 +166,14 @@ item is an accident, not a decision. Accidents get pruned or
 This is the filter that distinguishes "thin SDK by design" from "thin
 SDK by neglect."
 
-### Validation case: `ergo-supervisor` `demo` feature leak
+### Validation case: historical `ergo-supervisor` `demo` feature leak
 
-`crates/prod/core/host/Cargo.toml` enables
-`ergo-supervisor = { features = ["demo"] }` as a non-test dependency.
-The `demo` feature gates `pub mod demo;` in
+Earlier publish prep found that `crates/prod/core/host/Cargo.toml`
+enabled `ergo-supervisor = { features = ["demo"] }` as a non-test
+dependency. The `demo` feature gated `pub mod demo;` in
 `crates/kernel/supervisor/src/lib.rs` behind
 `#[cfg(any(test, feature = "demo"))]`. Result: `ergo_supervisor::demo`
-is compiled into every consumer of the published host crate.
+was compiled into every consumer of the published host crate.
 
 Under the methodology above, `demo` items have no defensible answer to
 "what does Sebastian do with this when he writes his app against
@@ -194,6 +194,12 @@ module, which together were the sole production-side consumers of the
 lands, `cargo tree -e features -p ergo-host | rg demo` returns no matches
 on production paths, and `ergo_supervisor::demo` is no longer reachable
 from the published host crate.
+
+**PUB-6 follow-up (2026-05-31):** first-publish dry-run prep found that
+`ergo-supervisor` still had a self dev-dependency to expose the same
+feature to its own integration tests. The feature, `src/demo/`, and
+`src/fixture_runner.rs` were removed before first publish; the demo graph
+helper now lives under `crates/kernel/supervisor/tests/support/`.
 
 - Decision: [`docs/ledger/decisions/remove-vestigial-fixture-run.md`](../ledger/decisions/remove-vestigial-fixture-run.md)
 - Plan: [`docs/plans/remove-vestigial-fixture-run.md`](remove-vestigial-fixture-run.md)

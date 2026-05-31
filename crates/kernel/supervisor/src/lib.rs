@@ -2,7 +2,7 @@
 //!
 //! Purpose:
 //! - Define the kernel supervisor surface for deterministic execution, capture,
-//!   replay, and demo helpers.
+//!   and replay.
 //!
 //! Owns:
 //! - The public kernel replay/capture APIs and the typed errors they expose.
@@ -50,15 +50,10 @@ pub fn compute_effect_hash(effect: &ActionEffect) -> String {
 pub const NO_ADAPTER_PROVENANCE: &str = "none";
 
 mod capture;
-#[cfg(any(test, feature = "demo"))]
-pub mod fixture_runner;
 // ReplayError carries rich diagnostic context; boxing would complicate call sites
 // for minimal benefit on error-only paths.
 #[allow(clippy::result_large_err)]
 pub mod replay;
-
-#[cfg(any(test, feature = "demo"))]
-pub mod demo;
 
 pub use capture::{
     write_capture_bundle, CaptureJsonStyle, CaptureWriteError, CapturingDecisionLog,

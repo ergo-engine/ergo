@@ -2,7 +2,7 @@
 //!
 //! Purpose:
 //! - Provides a canonical 2-source, 2-compute, 2-trigger, 2-action
-//!   demo graph used by integration tests and the fixture runner.
+//!   demo graph used by integration tests.
 //! - Includes `summarize_report` and `compute_summary` helpers for
 //!   asserting execution results.
 //!
@@ -23,13 +23,12 @@ use ergo_runtime::runtime::{
     run, ExecutionContext, ExecutionReport, Registries, RuntimeEvent, RuntimeValue,
 };
 
-use crate::EpisodeId;
+use ergo_supervisor::EpisodeId;
 
 const LEFT_A: f64 = 4.0;
 const LEFT_B: f64 = 2.0;
 const RIGHT_A: f64 = 1.0;
 const RIGHT_B: f64 = 1.0;
-pub const CONTEXT_NUMBER_KEY: &str = "x";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Demo1Summary {
@@ -481,39 +480,6 @@ pub fn try_summarize_report(report: &ExecutionReport) -> Result<Demo1Summary, St
     })
 }
 
-/// Convenience wrapper — panics on unexpected report shape.
-/// Preserves the original public API for demo/test callers.
-pub fn summarize_report(report: &ExecutionReport) -> Demo1Summary {
-    try_summarize_report(report).expect("demo report should contain expected outputs")
-}
-
-pub fn summary_for_context_value(context_value: Option<f64>) -> Demo1Summary {
-    let sum_left = LEFT_A + LEFT_B;
-    let sum_right = RIGHT_A + RIGHT_B;
-    let sum_total = sum_left + sum_right;
-    let context = context_value.unwrap_or(0.0);
-    let right_with_context = sum_right + context;
-
-    let action_a_outcome = if sum_left > right_with_context {
-        ActionOutcome::Completed
-    } else {
-        ActionOutcome::Skipped
-    };
-
-    let action_b_outcome = if right_with_context > sum_left {
-        ActionOutcome::Completed
-    } else {
-        ActionOutcome::Skipped
-    };
-
-    Demo1Summary {
-        sum_left,
-        sum_total,
-        action_a_outcome,
-        action_b_outcome,
-    }
-}
-
 pub fn try_compute_summary(
     graph: &ExpandedGraph,
     catalog: &CorePrimitiveCatalog,
@@ -536,7 +502,6 @@ pub fn try_compute_summary(
 }
 
 /// Convenience wrapper — panics on execution or report errors.
-/// Preserves the original public API for demo/test callers.
 pub fn compute_summary(
     graph: &ExpandedGraph,
     catalog: &CorePrimitiveCatalog,

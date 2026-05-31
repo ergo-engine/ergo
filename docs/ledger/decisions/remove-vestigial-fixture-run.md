@@ -12,6 +12,12 @@ Unblocks: PUB-1 validation case in docs/plans/crates-io-publish.md
 
 # Decision: Remove the `ergo fixture run` CLI Subcommand
 
+> PUB-6 follow-up (2026-05-31): the later first-publish prep removed the
+> supervisor `demo` feature, `supervisor::demo`, and
+> `supervisor::fixture_runner` entirely. The `demo_1` helper is now
+> integration-test support under
+> `crates/kernel/supervisor/tests/support/`.
+
 **Status:** Proposed
 **Author:** Auggie (Structural Auditor), with Sebastian
 **Date:** 2026-05-13

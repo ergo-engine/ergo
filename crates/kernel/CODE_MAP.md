@@ -65,9 +65,9 @@ Each crate states the same boundary explicitly in its `lib.rs` header
 - `crates/kernel/adapter/src/lib.rs::ergo_adapter` — full §4A header.
 - `crates/kernel/supervisor/src/lib.rs::ergo_supervisor` — full §4A header.
 
-**Cargo `[features]`:** only `ergo-supervisor` carries one. The
-`demo` feature gates `crates/kernel/supervisor/src/demo/` and the
-`fixture_runner` module; production callers never enable it.
+**Cargo `[features]`:** none of the kernel crates publish Cargo
+features. The former supervisor demo scaffolding now lives only under
+`crates/kernel/supervisor/tests/support/` for integration tests.
 
 ### Stdlib primitives shipped
 

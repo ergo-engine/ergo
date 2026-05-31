@@ -21,7 +21,6 @@ fi
 
 if "${SEARCH_CMD[@]}" "demo-1-replay\\.json|fixture-replay\\.json|println!\\(\\\"replay artifact:" \
   crates/prod/clients/cli/src/main.rs \
-  crates/kernel/supervisor/src/fixture_runner.rs \
   crates/kernel/adapter/src/fixture.rs; then
   echo "error: stale replay-oriented run artifact naming found"
   exit 1

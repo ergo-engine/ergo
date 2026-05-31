@@ -16,6 +16,12 @@ Touches-Kernel-Surface: no (only removes a `feature = "demo"` enablement; no
 
 # Plan: Remove Vestigial `ergo fixture run` Command
 
+> PUB-6 follow-up (2026-05-31): this plan is historical for the earlier
+> CLI/host removal. The later first-publish prep removed the supervisor
+> `demo` feature, `supervisor::demo`, and `supervisor::fixture_runner`
+> entirely; the `demo_1` helper now lives under
+> `crates/kernel/supervisor/tests/support/`.
+
 This plan defines the removal of the `ergo fixture run` CLI subcommand:
 technical scope, preservation invariants, doc sync, ledger entries, PUB-1
 sequencing, verification gates, and the cross-link to
