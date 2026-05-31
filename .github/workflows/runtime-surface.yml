@@ -40,6 +40,10 @@ jobs:
         shell: bash
         run: bash tools/verify_invariant_index.sh
 
+      - name: Verify CODE_MAP drift (kernel + prod)
+        shell: bash
+        run: bash tools/verify_code_map_drift.sh
+
       - name: Verify ergo-mcp parser tests
         shell: bash
         run: |
