@@ -24,6 +24,6 @@ need the lower-level kernel capture/replay or supervisor APIs.
 
 ## More information
 
-- Supervisor contract: [`docs/orchestration/supervisor.md`](../../../docs/orchestration/supervisor.md)
-- Kernel layer map: [`crates/kernel/CODE_MAP.md`](../CODE_MAP.md)
-- Canonical system docs start at [`docs/INDEX.md`](../../../docs/INDEX.md)
+- Supervisor contract: [`docs/orchestration/supervisor.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/docs/orchestration/supervisor.md)
+- Kernel layer map: [`crates/kernel/CODE_MAP.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/crates/kernel/CODE_MAP.md)
+- Canonical system docs start at [`docs/INDEX.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/docs/INDEX.md)

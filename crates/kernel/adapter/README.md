@@ -29,6 +29,6 @@ adapter surfaces.
 
 ## More information
 
-- Adapter contract: [`docs/orchestration/adapter.md`](../../../docs/orchestration/adapter.md)
-- Kernel layer map: [`crates/kernel/CODE_MAP.md`](../CODE_MAP.md)
-- Canonical system docs start at [`docs/INDEX.md`](../../../docs/INDEX.md)
+- Adapter contract: [`docs/orchestration/adapter.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/docs/orchestration/adapter.md)
+- Kernel layer map: [`crates/kernel/CODE_MAP.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/crates/kernel/CODE_MAP.md)
+- Canonical system docs start at [`docs/INDEX.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/docs/INDEX.md)

@@ -26,5 +26,5 @@ than depending on this crate directly.
 
 ## More information
 
-- CLI README: [`crates/prod/clients/cli/README.md`](../../prod/clients/cli/README.md)
-- Prod layer map: [`crates/prod/CODE_MAP.md`](../../prod/CODE_MAP.md)
+- CLI README: [`crates/prod/clients/cli/README.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/crates/prod/clients/cli/README.md)
+- Prod layer map: [`crates/prod/CODE_MAP.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/crates/prod/CODE_MAP.md)

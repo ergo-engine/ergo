@@ -17,6 +17,13 @@ decision record: SDK package `ergo-sdk` and first publish version
   stability inventory: resolved by `4bb584c`.
 - `ergo-supervisor` demo feature / self dev-dependency publish blocker: resolved
   by `84e277c`.
+- CLI scaffold external-user default: resolved by `7dd6a80`.
+- Crate README cross-repo links: resolved by tag-pinned GitHub links for
+  `v0.1.0-alpha.1`.
+- `ergo-host` intra-doc rustdoc links: resolved; workspace rustdoc passes with
+  broken intra-doc links denied.
+- Package inclusion sanity: verified for all ten publishable crates; READMEs and
+  both license files are included, with no obvious bulk package entries.
 
 ## Critical — CLI scaffold ships broken for external users
 

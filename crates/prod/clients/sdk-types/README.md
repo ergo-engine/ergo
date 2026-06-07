@@ -23,4 +23,4 @@ Rust SDK engine.
 
 ## More information
 
-- Prod layer map: [`crates/prod/CODE_MAP.md`](../../CODE_MAP.md)
+- Prod layer map: [`crates/prod/CODE_MAP.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/crates/prod/CODE_MAP.md)

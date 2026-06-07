@@ -395,10 +395,10 @@ impl HostedRunner {
     /// that production sessions always provide an `adapter`.
     ///
     /// **Preferred API paths** (which enforce the gate automatically):
-    /// - [`prepare_hosted_runner_from_paths`] / [`prepare_hosted_runner`]
+    /// - [`crate::prepare_hosted_runner_from_paths`] / [`crate::prepare_hosted_runner`]
     ///   (via the host usecases layer)
-    /// - [`LivePrepOptions::for_production`] /
-    ///   [`PrepareHostedRunnerFromPathsRequest::for_production`]
+    /// - [`crate::LivePrepOptions::for_production`] /
+    ///   [`crate::PrepareHostedRunnerFromPathsRequest::for_production`]
     ///   (structurally require a non-optional adapter)
     ///
     /// Passing `adapter: None` is valid only for fixture/replay sessions

@@ -47,6 +47,6 @@ adapter, supervisor, loader, and host layers.
 
 ## More information
 
-- Kernel layer map: [`crates/kernel/CODE_MAP.md`](../CODE_MAP.md)
-- Kernel overview: [`docs/system/kernel.md`](../../../docs/system/kernel.md)
-- Execution model: [`docs/system/execution.md`](../../../docs/system/execution.md)
+- Kernel layer map: [`crates/kernel/CODE_MAP.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/crates/kernel/CODE_MAP.md)
+- Kernel overview: [`docs/system/kernel.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/docs/system/kernel.md)
+- Execution model: [`docs/system/execution.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/docs/system/execution.md)

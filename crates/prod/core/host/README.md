@@ -35,6 +35,6 @@ described in the prod CODE_MAP; this README is only a crates.io landing page.
 
 ## More information
 
-- Host boundary: [`docs/system/host-boundary.md`](../../../../docs/system/host-boundary.md)
-- Kernel/prod separation: [`docs/system/kernel-prod-separation.md`](../../../../docs/system/kernel-prod-separation.md)
-- Prod layer map: [`crates/prod/CODE_MAP.md`](../../CODE_MAP.md)
+- Host boundary: [`docs/system/host-boundary.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/docs/system/host-boundary.md)
+- Kernel/prod separation: [`docs/system/kernel-prod-separation.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/docs/system/kernel-prod-separation.md)
+- Prod layer map: [`crates/prod/CODE_MAP.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/crates/prod/CODE_MAP.md)

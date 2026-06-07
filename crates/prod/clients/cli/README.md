@@ -73,5 +73,5 @@ support.
 
 ## More information
 
-- Prod layer map: [`crates/prod/CODE_MAP.md`](../../CODE_MAP.md)
-- SDK getting started guide: [`docs/authoring/getting-started-sdk.md`](../../../../docs/authoring/getting-started-sdk.md)
+- Prod layer map: [`crates/prod/CODE_MAP.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/crates/prod/CODE_MAP.md)
+- SDK getting started guide: [`docs/authoring/getting-started-sdk.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/docs/authoring/getting-started-sdk.md)

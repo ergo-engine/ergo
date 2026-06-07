@@ -44,6 +44,6 @@ is not the semantic lookup identity.
 
 ## More information
 
-- Prod layer map: [`crates/prod/CODE_MAP.md`](../../CODE_MAP.md)
-- Loader contract: [`docs/authoring/loader.md`](../../../../docs/authoring/loader.md)
-- Project convention: [`docs/authoring/project-convention.md`](../../../../docs/authoring/project-convention.md)
+- Prod layer map: [`crates/prod/CODE_MAP.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/crates/prod/CODE_MAP.md)
+- Loader contract: [`docs/authoring/loader.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/docs/authoring/loader.md)
+- Project convention: [`docs/authoring/project-convention.md`](https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/docs/authoring/project-convention.md)
