@@ -1,7 +1,38 @@
+#[allow(dead_code)]
+mod support;
+
 use std::fs;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use support::run_ergo;
+
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+fn run_cli_command(command: &str, args: &[String]) -> Result<String, String> {
+    let mut owned_args = vec![command.to_string()];
+    owned_args.extend(args.iter().cloned());
+    let refs: Vec<&str> = owned_args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = run_ergo(&refs, Path::new(env!("CARGO_MANIFEST_DIR")));
+
+    if code == 0 {
+        Ok(stdout)
+    } else {
+        Err(stderr)
+    }
+}
+
+fn validate_command(args: &[String]) -> Result<String, String> {
+    run_cli_command("validate", args)
+}
+
+fn check_compose_command(args: &[String]) -> Result<String, String> {
+    run_cli_command("check-compose", args)
+}
+
+fn gen_docs_command(args: &[String]) -> Result<String, String> {
+    run_cli_command("gen-docs", args)
+}
 
 fn write_temp_file(name: &str, contents: &str) -> std::path::PathBuf {
     let index = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -18,7 +49,7 @@ fn write_temp_file(name: &str, contents: &str) -> std::path::PathBuf {
 
 fn validate_json_error(manifest_name: &str, manifest: &str) -> serde_json::Value {
     let path = write_temp_file(manifest_name, manifest);
-    let err = ergo_cli::validate::validate_command(&[
+    let err = validate_command(&[
         "--format".to_string(),
         "json".to_string(),
         path.to_string_lossy().to_string(),
@@ -64,8 +95,7 @@ side_effects: false
 "#;
 
     let path = write_temp_file("compute.yaml", manifest);
-    let out = ergo_cli::validate::validate_command(&[path.to_string_lossy().to_string()])
-        .expect("expected success");
+    let out = validate_command(&[path.to_string_lossy().to_string()]).expect("expected success");
     assert!(out.contains("Manifest valid"), "out: {out}");
     assert!(out.contains("Kind: compute"), "out: {out}");
 }
@@ -103,7 +133,7 @@ side_effects: false
 "#;
 
     let path = write_temp_file("bad-compute.yaml", manifest);
-    let err = ergo_cli::validate::validate_command(&[
+    let err = validate_command(&[
         "--format".to_string(),
         "json".to_string(),
         path.to_string_lossy().to_string(),
@@ -169,7 +199,7 @@ side_effects: false
 
     let adapter_path = write_temp_file("adapter.yaml", adapter);
     let source_path = write_temp_file("source.yaml", source);
-    let err = ergo_cli::validate::check_compose_command(&[
+    let err = check_compose_command(&[
         adapter_path.to_string_lossy().to_string(),
         source_path.to_string_lossy().to_string(),
     ])
@@ -201,8 +231,7 @@ capture:
 "#;
 
     let path = write_temp_file("adapter-valid.yaml", adapter);
-    let out = ergo_cli::validate::validate_command(&[path.to_string_lossy().to_string()])
-        .expect("expected success");
+    let out = validate_command(&[path.to_string_lossy().to_string()]).expect("expected success");
     assert!(out.contains("Kind: adapter"), "out: {out}");
 }
 
@@ -236,8 +265,7 @@ side_effects: false
 "#;
 
     let path = write_temp_file("trigger-valid.yaml", trigger);
-    let out = ergo_cli::validate::validate_command(&[path.to_string_lossy().to_string()])
-        .expect("expected success");
+    let out = validate_command(&[path.to_string_lossy().to_string()]).expect("expected success");
     assert!(out.contains("Kind: trigger"), "out: {out}");
 }
 
@@ -274,8 +302,7 @@ side_effects: true
 "#;
 
     let path = write_temp_file("action-valid.yaml", action);
-    let out = ergo_cli::validate::validate_command(&[path.to_string_lossy().to_string()])
-        .expect("expected success");
+    let out = validate_command(&[path.to_string_lossy().to_string()]).expect("expected success");
     assert!(out.contains("Kind: action"), "out: {out}");
 }
 
@@ -338,7 +365,7 @@ side_effects: true
 
     let adapter_path = write_temp_file("adapter-action.yaml", adapter);
     let action_path = write_temp_file("action-write.yaml", action);
-    let err = ergo_cli::validate::check_compose_command(&[
+    let err = check_compose_command(&[
         "--format".to_string(),
         "json".to_string(),
         adapter_path.to_string_lossy().to_string(),
@@ -409,7 +436,7 @@ side_effects: false
 
     let adapter_path = write_temp_file("adapter-dollar-source-success.yaml", adapter);
     let source_path = write_temp_file("source-dollar-default-success.yaml", source);
-    let out = ergo_cli::validate::check_compose_command(&[
+    let out = check_compose_command(&[
         adapter_path.to_string_lossy().to_string(),
         source_path.to_string_lossy().to_string(),
     ])
@@ -487,7 +514,7 @@ side_effects: true
 
     let adapter_path = write_temp_file("adapter-dollar-action-success.yaml", adapter);
     let action_path = write_temp_file("action-dollar-default-success.yaml", action);
-    let out = ergo_cli::validate::check_compose_command(&[
+    let out = check_compose_command(&[
         adapter_path.to_string_lossy().to_string(),
         action_path.to_string_lossy().to_string(),
     ])
@@ -552,7 +579,7 @@ side_effects: false
 
     let adapter_path = write_temp_file("adapter-dollar-source-missing-default.yaml", adapter);
     let source_path = write_temp_file("source-dollar-missing-default.yaml", source);
-    let err = ergo_cli::validate::check_compose_command(&[
+    let err = check_compose_command(&[
         adapter_path.to_string_lossy().to_string(),
         source_path.to_string_lossy().to_string(),
     ])
@@ -618,7 +645,7 @@ side_effects: false
 
     let adapter_path = write_temp_file("adapter-dollar-source-wrong-type-default.yaml", adapter);
     let source_path = write_temp_file("source-dollar-wrong-type-default.yaml", source);
-    let err = ergo_cli::validate::check_compose_command(&[
+    let err = check_compose_command(&[
         adapter_path.to_string_lossy().to_string(),
         source_path.to_string_lossy().to_string(),
     ])
@@ -663,7 +690,7 @@ side_effects: true
 "#;
 
     let path = write_temp_file("action-no-from-input.yaml", manifest);
-    let result = ergo_cli::validate::validate_command(&[path.to_string_lossy().to_string()]);
+    let result = validate_command(&[path.to_string_lossy().to_string()]);
     assert!(
         result.is_err(),
         "action write without from_input must fail validation"
@@ -762,8 +789,7 @@ side_effects: false
 "#;
 
     let path = write_temp_file("compute-good-default.yaml", manifest);
-    let out = ergo_cli::validate::validate_command(&[path.to_string_lossy().to_string()])
-        .expect("expected success");
+    let out = validate_command(&[path.to_string_lossy().to_string()]).expect("expected success");
     assert!(out.contains("Manifest valid"), "out: {out}");
     assert!(out.contains("Kind: compute"), "out: {out}");
 }
@@ -835,8 +861,7 @@ side_effects: false
 "#;
 
     let path = write_temp_file("source-good-default.yaml", manifest);
-    let out = ergo_cli::validate::validate_command(&[path.to_string_lossy().to_string()])
-        .expect("expected success");
+    let out = validate_command(&[path.to_string_lossy().to_string()]).expect("expected success");
     assert!(out.contains("Manifest valid"), "out: {out}");
     assert!(out.contains("Kind: source"), "out: {out}");
 }
@@ -914,8 +939,7 @@ side_effects: false
 "#;
 
     let path = write_temp_file("trigger-good-default.yaml", manifest);
-    let out = ergo_cli::validate::validate_command(&[path.to_string_lossy().to_string()])
-        .expect("expected success");
+    let out = validate_command(&[path.to_string_lossy().to_string()]).expect("expected success");
     assert!(out.contains("Manifest valid"), "out: {out}");
     assert!(out.contains("Kind: trigger"), "out: {out}");
 }
@@ -999,15 +1023,13 @@ side_effects: true
 "#;
 
     let path = write_temp_file("action-good-default.yaml", manifest);
-    let out = ergo_cli::validate::validate_command(&[path.to_string_lossy().to_string()])
-        .expect("expected success");
+    let out = validate_command(&[path.to_string_lossy().to_string()]).expect("expected success");
     assert!(out.contains("Manifest valid"), "out: {out}");
     assert!(out.contains("Kind: action"), "out: {out}");
 }
 
 #[test]
 fn gen_docs_check_passes() {
-    let out = ergo_cli::gen_docs::gen_docs_command(&["--check".to_string()])
-        .expect("expected docs to be up-to-date");
+    let out = gen_docs_command(&["--check".to_string()]).expect("expected docs to be up-to-date");
     assert!(out.contains("Docs up-to-date"), "out: {out}");
 }

@@ -52,7 +52,7 @@ Disposition labels used below:
 | 6. Scaffold SDK version stamping | Resolved for first publish | No |
 | 7. `jsonschema` dependency weight | Accepted for alpha | No |
 | 7A. Host rustdoc links | Resolved pre-publish | No |
-| 8. CLI library surface | Accepted for alpha | No |
+| 8. CLI library surface | Resolved pre-publish | No |
 | 8A. `ergo-sdk-types` consumer gap | Accepted for alpha | No |
 | 8B. Demo/test-shaped adapter names | Accepted for alpha | No |
 | 8C. SDK non-error re-exports | Accepted for alpha / classified | No |
@@ -507,23 +507,23 @@ rendering: it affects rustdoc/docs.rs directly.
 
 ### Disposition
 
-**Accepted for alpha.** `ergo-cli` is intentionally published so users can
-install and run the `ergo` binary. Its Rust library modules
-(`error_format`, `gen_docs`, and `validate`) are incidental/internal alpha
-surface, not the recommended embedding API. Rust applications should depend on
-`ergo-sdk`. A later cleanup may minimize the library surface or document it more
-explicitly, but no pre-publish restructure is required.
+**Resolved pre-publish.** `ergo-cli` is published as the package that installs
+the `ergo` binary, not as a Rust embedding API. The accidental library root was
+removed before first publish, and the phase-7 checks that previously imported
+`ergo_cli::{validate, gen_docs}` now run through the actual `ergo` binary.
+Rust applications should depend on `ergo-sdk`.
 
 ### Cause
 
-`ergo-cli` is described as the shipped binary, but it has a public library root:
+`ergo-cli` was described as the shipped binary, but it had a public library
+root:
 
 - `src/lib.rs`
   - `pub mod error_format;`
   - `pub mod gen_docs;`
   - `pub mod validate;`
 
-That means consumers can depend on `ergo-cli` as a library and import those
+That meant consumers could depend on `ergo-cli` as a library and import those
 modules, even though the README positions the crate as a binary front door.
 
 ### What is gained by rectifying it
@@ -533,9 +533,8 @@ modules, even though the README positions the crate as a binary front door.
 - Reduces future semver risk when refactoring CLI internals.
 - Prevents users from depending on surfaces not meant for stable consumption.
 
-Options: accept the public library surface for the first publish and document it as
-unstable/internal; minimize or hide the library surface before publish; or
-restructure if binary-only publication is intended.
+Resolution: remove the library target before first publish and keep validation
+coverage by exercising the binary command forms.
 
 ## 8A. `ergo-sdk-types` has no downstream workspace consumers today
 
