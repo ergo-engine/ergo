@@ -10,6 +10,14 @@ state being diagnosed. Recommended publish-target wording should follow the
 decision record: SDK package `ergo-sdk` and first publish version
 `0.1.0-alpha.1` unless a later decision changes it.
 
+## Resolved since this review
+
+- SDK package name/version mismatch: resolved by `5c84cd4`.
+- SDK opaque-source replacement gate and reachable lower-crate public error enum
+  stability inventory: resolved by `4bb584c`.
+- `ergo-supervisor` demo feature / self dev-dependency publish blocker: resolved
+  by `84e277c`.
+
 ## Critical — CLI scaffold ships broken for external users
 
 ### Cause
