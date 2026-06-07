@@ -54,7 +54,7 @@ Disposition labels used below:
 | 7A. Host rustdoc links | Resolved pre-publish | No |
 | 8. CLI library surface | Resolved pre-publish | No |
 | 8A. `ergo-sdk-types` consumer gap | Accepted for alpha | No |
-| 8B. Demo/test-shaped adapter names | Accepted for alpha | No |
+| 8B. Demo/test-shaped adapter names | Demo residue resolved; fault harness accepted | No |
 | 8C. SDK non-error re-exports | Accepted for alpha / classified | No |
 | 9. Scaffold-used SDK entrypoints | Accepted for alpha / scaffold-stable | No |
 | 10. CLI help text | Resolved pre-publish | No |
@@ -569,43 +569,56 @@ the dependency shape.
 
 ### Disposition
 
-**Accepted for alpha; post-alpha naming cleanup candidate.** These names are
-not accidental dead code:
+**Split disposition.** The demo-source-context pair was removed pre-publish;
+`FaultRuntimeHandle` is kept for alpha unchanged.
 
 - `DemoSourceContextError` and
-  `ensure_demo_sources_have_no_required_context(...)` are used through host
-  setup for adapterless/demo/fixture-style preparation where no adapter provides
-  context keys.
-- `FaultRuntimeHandle` is the kernel runtime-invoker fault harness used by
-  supervisor replay/integration tests and documented in invariants around
-  deterministic replay behavior.
+  `ensure_demo_sources_have_no_required_context(...)` were orphaned demo/fixture
+  residue, not live host setup. Workspace grep found zero callers for the
+  helper, and the host's `HostAdapterSetupError::DemoSourceContext` variant had
+  no construction site. The pair was removed from `ergo-adapter`, and the dead
+  host variant/import/trait arms were removed from `ergo-host`.
+- `FaultRuntimeHandle` is separate and explicitly out of scope for that
+  removal. It remains live supervisor replay/integration test-harness machinery
+  and is documented in invariants around deterministic replay behavior.
 
-The names are somewhat test/demo-shaped, but changing them after the
-`v0.1.0-alpha.1` tag would require a fresh API rename, doc sweep, retag, and
-full dry-run. For the first alpha, keep them as low-level kernel/adapter alpha
-surface and avoid presenting them as product API. Revisit naming/visibility in
-a post-alpha API polish pass.
+The corrected decision is recorded in
+`docs/ledger/decisions/remove-demo-source-context-residue.md`. No
+PHASE_INVARIANTS ID is involved: this was dead-code cleanup, not an invariant
+fix. The duplicated safety rule was not removed from the live run path; the
+no-adapter context-requirement check remains enforced by
+`scan_adapter_dependencies` plus `ensure_adapter_requirement_satisfied`.
 
 ### Cause
 
-`ergo-adapter` publicly exposes names that read as demo/test scaffolding:
+`ergo-adapter` publicly exposed names that read as demo/test scaffolding:
 
 - `DemoSourceContextError`
 - `ensure_demo_sources_have_no_required_context(...)`
 - `FaultRuntimeHandle`
 
-`crates/kernel/CODE_MAP.md` explicitly describes `FaultRuntimeHandle` as a
-test-only injector. Once the crate is published, these names are part of the
-public API surface unless visibility or naming changes before first publish.
+The first two were residue from prior demo/fixture cleanups. History shows the
+helper was introduced with callers, later gained another caller, and then all
+callers were removed across `e383d8f3`, `d32a60f7`, and `84e277c1`; the
+kernel-side definition survived because it lived outside each deleted caller's
+file. Findings commit `c8abc84` incorrectly asserted that they were still used
+through host setup and were not accidental dead code.
+
+`FaultRuntimeHandle` remains a different case. `crates/kernel/CODE_MAP.md`
+explicitly describes it as a test-only injector, and supervisor tests actively
+use it. Once the crate is published, that name is part of the public API surface
+unless visibility or naming changes before first publish.
 
 ### What is gained by rectifying it
 
-- Prevents a kernel crate from looking like it shipped demo/test helpers as
+- Removes dead demo/fixture residue before the first public `ergo-adapter` and
+  `ergo-host` releases.
+- Prevents a kernel crate from looking like it shipped unused demo helpers as
   product API.
-- Allows renaming, restricting visibility, or documenting intentional exposure
-  before the first publish makes the names harder to change.
-- Clarifies whether these are kernel contract helpers, host validation helpers,
-  or test fixtures that leaked into public API.
+- Records the disposition-drift correction visibly instead of silently
+  overwriting the stale rationale.
+- Keeps the live `FaultRuntimeHandle` test harness separate from the removed
+  demo pair so it can be judged on its own merits.
 
 ## 8C. SDK transparent re-exports increase semver coupling to lower layers
 

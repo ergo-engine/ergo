@@ -426,7 +426,6 @@ pub enum HostAdapterSetupError {
     Validation(InvalidAdapter),
     Composition(HostAdapterCompositionError),
     BinderCompile(EventBindingError),
-    DemoSourceContext(DemoSourceContextError),
 }
 
 impl std::fmt::Display for HostAdapterSetupError {
@@ -455,7 +454,6 @@ impl std::fmt::Display for HostAdapterSetupError {
             Self::BinderCompile(source) => {
                 write!(f, "adapter event binder compilation failed: {source}")
             }
-            Self::DemoSourceContext(source) => write!(f, "{source}"),
         }
     }
 }
@@ -469,7 +467,6 @@ impl std::error::Error for HostAdapterSetupError {
             Self::Validation(source) => Some(source),
             Self::Composition(source) => Some(source),
             Self::BinderCompile(source) => Some(source),
-            Self::DemoSourceContext(source) => Some(source),
             Self::ManifestSourceLabelEmpty => None,
         }
     }
