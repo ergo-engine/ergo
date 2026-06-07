@@ -300,6 +300,13 @@ pub fn describe_replay_error(err: &ergo_supervisor::replay::ReplayError) -> Host
 
             info
         }
+        _ => HostErrorDescriptor::new(
+            HostErrorCode::ReplayHostSetupFailed,
+            "unclassified supervisor replay failure",
+        )
+        .with_where("supervisor replay")
+        .with_fix("upgrade host replay diagnostics or inspect the source error")
+        .with_detail(err.to_string()),
     }
 }
 

@@ -12,6 +12,7 @@ mod tests;
 use crate::cluster::{ExpandedGraph, PrimitiveCatalog};
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum RuntimeError {
     Validation(types::GraphValidationError),
     Execution(types::ExecError),

@@ -23,6 +23,7 @@ impl RuntimeProvenanceScheme {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RuntimeProvenanceError {
     MissingPrimitiveMetadata { impl_id: String, version: String },
     NonFiniteFloat { context: String },

@@ -26,6 +26,7 @@ use std::collections::{BTreeSet, HashSet};
 use ergo_adapter::AdapterProvides;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HandlerCoverageError {
     MissingHandler { effect_kind: String },
     ConflictingCoverage { effect_kind: String },

@@ -26,6 +26,7 @@ pub fn resolve_manifest_name(
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ManifestNameError {
     MissingParameter { binding: String },
     WrongParameterType { binding: String },

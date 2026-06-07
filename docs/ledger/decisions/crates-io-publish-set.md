@@ -33,8 +33,8 @@ this record resolves, and the PUB-1 plan:
 - Q-SURFACE:
   [`sdk-error-surface-wrapping.md`](sdk-error-surface-wrapping.md)
   decides thick SDK wrapping, collapsed `Ergo*` error categories,
-  `#[source]` preservation, sparse parent-only accessors, and applies
-  that rule to all non-SDK error sources.
+  opaque source-chain preservation through `ErgoErrorSource`, and applies
+  that rule to lower-crate diagnostic error sources.
 - Q-USER:
   [`crates-io-publish.md`](../../plans/crates-io-publish.md)
   names Sebastian as the concrete audit user and calibrates PUB-1 to
@@ -151,35 +151,43 @@ Semver rule:
 This posture preserves honest semver for every published crate without
 turning every lower-layer public symbol into SDK vocabulary.
 
-### Accessor-Reachable Host Enum Growth
+### Reachable Lower-Crate Public Error Enum Stability
 
-Sparse parent accessors such as
-`ErgoRunError::as_host_run_error() -> Option<&ergo_host::HostRunError>`
-make the returned host enum part of the SDK method signature. To avoid
-forcing an SDK semver bump for every future host enum variant addition,
-the accessor-reachable host enums must be marked `#[non_exhaustive]`
-before first publish.
+The typed parent-accessor model is superseded before first publish. The
+SDK no longer makes lower-crate error enums part of its public method
+signatures through helpers such as host-run or hosted-step accessors.
+Lower-crate diagnostic detail is instead reachable through
+`std::error::Error::source`, `ErgoErrorSource::as_dyn_error()`, direct SDK
+reexports classified as authoring/configuration surface, or direct SDK
+exception fields.
+
+The old accessor-reachable host enum gate is therefore replaced, not
+deleted. Before publishing, PUB-1/PUB-6 must inventory public lower-crate
+error enums reachable from the SDK by any of these routes:
+
+- source-chain traversal from `Ergo*` errors;
+- `ErgoErrorSource::as_dyn_error()` downcasting;
+- direct SDK root reexports classified as intentional SDK surface;
+- direct SDK exception fields such as `EgressConfigError` or
+  `EgressConfigParseError`.
 
 Required posture:
 
-- Variant additions to accessor-reachable host enums are host semver
-  events, not SDK semver events, as long as the SDK accessor signature
-  and SDK-owned error categories do not change.
-- The relevant host enums exposed through SDK parent accessors, including
-  direct accessor return types and public nested enums matchable through
-  those parent errors, must be inventoried during PUB-1 and marked
-  `#[non_exhaustive]` before first publish unless PUB-1 explicitly
-  decides the enum's variant set is stable for the first published
-  contract.
-- If a future host change alters the accessor signature itself, removes
-  an accessor, or changes SDK-owned category mapping, that is an SDK
-  semver event.
+- The inventory covers host, adapter, supervisor, loader, and runtime error
+  enums, including nested public enums matchable after downcasting a parent
+  source.
+- Extensible public lower-crate error enums are marked `#[non_exhaustive]`
+  before first publish.
+- Any enum deliberately left exhaustive is recorded as frozen/exhaustive for
+  the first published contract, with a reason.
+- Variant additions to lower-crate enums are lower-crate semver events
+  unless the SDK directly names, reexports, or documents that enum as SDK
+  API. SDK semver still changes if SDK-owned categories, source-chain
+  behavior, direct exception fields, or dependency constraints change.
 
-This creates a host-side PUB-1/PUB-6 requirement: before publishing,
-the host enums reachable through SDK accessors must be inventoried,
-audited, and annotated `#[non_exhaustive]` where needed. PUB-6 dry-runs
-are not sufficient evidence by themselves; the final go/no-go must also
-confirm that PUB-1 recorded and executed this host enum audit.
+PUB-6 dry-runs are not sufficient evidence by themselves. The final
+go/no-go must confirm that PUB-1 recorded and resolved the reachable
+lower-crate public error enum stability inventory.
 
 ## Publish Gate
 
@@ -196,8 +204,9 @@ PUB-7 cannot execute until all gates below are satisfied:
 The final go/no-go requires explicit evidence that:
 
 - PUB-1's implemented SDK surface matches its classification table;
-- PUB-1's accessor-reachable host enum inventory was completed and the
-  required `#[non_exhaustive]` annotations landed;
+- PUB-1's reachable lower-crate public error enum stability inventory was
+  completed, and required `#[non_exhaustive]` annotations or documented
+  frozen/exhaustive exceptions landed;
 - PUB-2's manifest/license/path-dependency blockers are complete;
 - PUB-4/PUB-5 documentation reflects the post-PUB-1 surface; and
 - PUB-6 produced clean dry-runs for all ten crates in the order below.

@@ -60,6 +60,7 @@ pub struct ValidatedGraph {
 pub type ValidationError = GraphValidationError;
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum GraphValidationError {
     CycleDetected,
     UnknownNode(String),
@@ -222,6 +223,7 @@ impl ErrorInfo for GraphValidationError {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ExecError {
     UnknownPrimitive {
         id: String,

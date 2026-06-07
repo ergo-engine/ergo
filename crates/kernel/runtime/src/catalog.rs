@@ -56,6 +56,7 @@ use crate::trigger::{
 };
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum CoreRegistrationError {
     Source(SourceValidationError),
     Compute(ValidationError),

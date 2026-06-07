@@ -64,6 +64,7 @@ const PENDING_ACK_STRAGGLER_PROBE_WINDOW: Duration = Duration::from_millis(20);
 const PENDING_ACK_STRAGGLER_PROBE_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum EgressProcessError {
     InvalidConfig(String),
     Startup {

@@ -12,6 +12,7 @@ use std::fmt;
 
 use ergo_runtime::common::{doc_anchor_for_rule, ErrorInfo, Phase};
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum InvalidAdapter {
     InvalidId {
         id: String,

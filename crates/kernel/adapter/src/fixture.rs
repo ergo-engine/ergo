@@ -64,6 +64,7 @@ struct FixtureEvent {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum FixtureParseError {
     Open {
         path: PathBuf,

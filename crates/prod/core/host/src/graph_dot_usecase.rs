@@ -62,6 +62,7 @@ pub struct GraphToDotFromAssetsRequest {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum GraphToDotError {
     Load(LoaderError),
     Expansion(GraphToDotExpansionError),

@@ -50,6 +50,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::Digest;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EgressConfigError {
     EmptyChannelId,
     DuplicateChannelId {
@@ -116,6 +117,7 @@ impl std::fmt::Display for EgressConfigError {
 impl std::error::Error for EgressConfigError {}
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum EgressConfigParseError {
     Toml(toml::de::Error),
     Config(EgressConfigError),

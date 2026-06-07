@@ -55,6 +55,7 @@ pub struct ErrorSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ErrorType {
     DivisionByZero,
     NonFiniteResult,
@@ -80,6 +81,7 @@ pub struct PrimitiveState {
 ///
 /// See: B.2 in PHASE_INVARIANTS.md
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ComputeError {
     /// B.2: Division by zero is undefined.
     DivisionByZero,

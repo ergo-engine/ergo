@@ -58,7 +58,7 @@ through the SDK's public surface must publish.
 | `ergo-loader` | Yes | Used by SDK directly |
 | `ergo-host` | Yes | Used by SDK and CLI directly |
 | `ergo-sdk-types` | Yes | Stand-alone SDK-adjacent type crate in the publish set |
-| `ergo-sdk` | Yes | Primary user-facing library; source crate is currently `ergo-sdk-rust` until PUB-7 prep |
+| `ergo-sdk` | Yes | Primary user-facing library; source path remains `crates/prod/clients/sdk-rust` |
 | `ergo-cli` | Yes | User-installable binary (`ergo`) |
 | `ergo-fixtures` | Yes | Non-optional dep of `ergo-cli` (CLI's `csv-fixture` and fixture-report subcommands). Publishing required unless cli's fixture surface is feature-gated as a separate refactor. |
 | `ergo-test-support` | No | Workspace-internal test scaffolding; explicit `publish = false` to enforce. |
@@ -68,8 +68,8 @@ discovered `ergo-fixtures` was non-optional).
 
 ## Naming Decision (Q-NAMING)
 
-`ergo-sdk-rust` makes user code read `use ergo_sdk_rust::Ergo`. Two real
-candidates:
+The pre-rename `ergo-sdk-rust` package made user code read
+`use ergo_sdk_rust::Ergo`. Two real candidates:
 
 - **`ergo`** — most idiomatic; requires that the name be available on
   crates.io. Needs a check before commitment.
@@ -97,7 +97,7 @@ land before PUB-7.
 The SDK's behavioral closure is decided (SDK-CANON-1/2/3 — SDK delegates
 orchestration to host, doesn't invent a second execution model). The
 SDK's surface closure is not. PUB-1 cannot classify `pub use` items
-without first pinning which philosophy `ergo-sdk-rust` follows:
+without first pinning which philosophy `ergo-sdk` follows:
 
 - **Thin facade.** Host types ARE the SDK's public contract. Re-exports
   are intentional. The SDK is a curated window into host; users get
@@ -106,8 +106,10 @@ without first pinning which philosophy `ergo-sdk-rust` follows:
   overhead; no drift between SDK and underlying system.
 - **Thick wrapper.** SDK exposes branded types (`SdkError`,
   `SdkConfig`, etc.) that hold or convert from host types. Host types
-  are not part of the SDK contract. Wrapping code and conversion
-  ceremony; SDK can evolve independently of host.
+  are not part of the SDK's normal public matching contract. Explicit
+  authoring/configuration carve-outs can still remain direct SDK API
+  where documented. Wrapping code and conversion ceremony; SDK can evolve
+  independently of host.
 
 Q-SURFACE is load-bearing for PUB-1's classification table. Must land
 before classification has meaning. Feeds PUB-3.
@@ -151,7 +153,7 @@ drift.
 
 ## PUB-1 Audit Methodology
 
-For each public item reachable from `ergo-sdk-rust` (direct or via
+For each public item reachable from `ergo-sdk` (direct or via
 `pub use`), require **per-type intent justification**, not just intent
 declaration. The justification must answer concretely:
 
@@ -281,8 +283,9 @@ content waits for Q-SURFACE.
    [`sdk-error-surface-wrapping.md`](../ledger/decisions/sdk-error-surface-wrapping.md)
    and consumed by
    [`crates-io-publish-set.md`](../ledger/decisions/crates-io-publish-set.md):
-   the SDK uses thick, `Ergo*` wrapped errors with sparse parent
-   accessors.
+   the SDK uses thick, `Ergo*` wrapped errors with opaque
+   `ErgoErrorSource` source-chain preservation. The typed parent-accessor
+   model was superseded before first publish.
 2. **Host-crate semver propagation.** Resolved by
    [`crates-io-publish-set.md`](../ledger/decisions/crates-io-publish-set.md):
    non-SDK crates are public crates with their own semver, but they are

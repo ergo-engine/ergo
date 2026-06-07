@@ -20,6 +20,7 @@ use crate::schema_materialization::{
 use crate::{AdapterProvides, EventId, EventPayload, EventTime, ExternalEvent, ExternalEventKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EventBindingError {
     UnknownSemanticKind {
         kind: String,

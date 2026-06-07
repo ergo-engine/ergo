@@ -23,10 +23,13 @@
 //!
 //! Errors at this boundary use SDK-branded `Ergo*` types such as
 //! [`ErgoRunError`] and [`ErgoReplayError`]. Match those categories first.
-//! Host, loader, and runtime error taxonomies are not part of the SDK's
-//! public surface; advanced callers reach them only as `&dyn Error` through
-//! the [`std::error::Error::source`] chain (and `downcast_ref` against the
-//! relevant Ergo crate they already depend on).
+//! Lower-crate diagnostic error taxonomies are not part of the SDK's normal
+//! public matching surface; advanced callers reach host, adapter, supervisor,
+//! loader, or runtime detail only as `&dyn Error` through the
+//! [`std::error::Error::source`] chain (and `downcast_ref` against the relevant
+//! Ergo crate they already depend on). Explicit authoring/configuration
+//! carve-outs, such as [`EgressConfigError`] and [`EgressConfigParseError`],
+//! remain direct SDK API where documented.
 //!
 //! # Threading model
 //!

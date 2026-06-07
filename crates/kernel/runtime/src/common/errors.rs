@@ -29,6 +29,7 @@ use crate::common::value::{PrimitiveKind, ValueType};
 use crate::common::{doc_anchor_for_rule, ErrorInfo, Phase};
 
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ValidationError {
     InvalidId {
         id: String,

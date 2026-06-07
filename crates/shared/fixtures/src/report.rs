@@ -128,6 +128,7 @@ fn fixture_parse_issue_message(err: &FixtureParseError) -> String {
         FixtureParseError::PayloadMustBeObject { line, got, .. } => {
             format!("fixture parse error at line {line}: payload must be a JSON object, got {got}")
         }
+        _ => format!("fixture parse error: {err}"),
     }
 }
 

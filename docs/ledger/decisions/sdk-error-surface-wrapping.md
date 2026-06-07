@@ -14,8 +14,9 @@ Resolves: Q-SURFACE from docs/plans/crates-io-publish.md
 The SDK currently re-exports roughly 25 host error types transparently
 through `pub use ergo_host::{...}`. Documented intent (per
 `docs/ledger/dev-work/closed/ergo-init.md`, SDK README, `ergo init`
-scaffold output, and `host/src/lib.rs` header) names `ergo-sdk-rust` as
-the primary user-facing product surface. `ergo-host` remains the
+scaffold output, and `host/src/lib.rs` header) names the Rust SDK (then
+planned for publication as `ergo-sdk-rust`) as the primary user-facing
+product surface. `ergo-host` remains the
 canonical orchestration layer and may be used directly by in-tree
 clients or advanced callers, but its detailed error taxonomy is not SDK
 vocabulary.
@@ -30,6 +31,26 @@ types-thin (re-export host types directly).
 The SDK wraps non-SDK error types at the boundary. SDK consumers match
 against SDK-branded error categories; lower-layer error taxonomy is
 preserved underneath but is not part of the SDK public vocabulary.
+
+## Amendment 2026-06-07: Opaque Source Envelope Supersedes Typed Accessors
+
+The original Q-SURFACE ruling allowed sparse typed parent accessors as an
+advanced escape hatch. During the pre-publish PUB-4 hardening pass, that
+accessor design was superseded by an SDK-owned opaque source envelope:
+`ErgoErrorSource`.
+
+This amendment is historical and prospective: it records that the earlier
+typed-accessor design existed, and that the first published SDK contract no
+longer uses it. Typed SDK helpers that name lower-crate taxonomies in their
+method signatures are not canonical. Lower-layer diagnostic detail remains
+available through the standard error source chain and opt-in downcasting by
+callers that explicitly depend on the lower crate.
+
+The supersession applies to lower-crate diagnostic errors from host,
+adapter, supervisor, loader, and runtime surfaces. It does not erase direct
+SDK-facing authoring/configuration carve-outs such as `EgressConfigError` or
+`EgressConfigParseError`, which remain SDK vocabulary when PUB-1 classifies
+them as intentional public authoring surface.
 
 ## Rule 1: Collapsed Categories, Not 1:1 Mirror
 
@@ -83,34 +104,26 @@ recoverable, should be reported as an SDK/host bug, and must not become
 a lazy bucket for unmapped host variants. Mapping code must exhaust
 known user-facing categories before using `Internal`.
 
-## Rule 2: Preserve Detail Via `#[source]` + Sparse Explicit Accessors
+## Rule 2: Preserve Detail Via Opaque Source Envelope + Source Chain
 
-Every SDK error variant that wraps a non-SDK error preserves the
-underlying error as a `#[source] inner: XxxError` field. This rule was
-prompted by host errors, but it applies to all non-SDK crate errors
-reachable through SDK error variants, including loader and runtime
-errors.
+Every SDK error variant that wraps lower-crate diagnostic detail preserves
+that detail without naming the lower-crate type on the SDK public surface.
+The standard wrapper for host, adapter, supervisor, loader, and runtime
+diagnostics is the SDK-owned `ErgoErrorSource` opaque source envelope.
 
-Explicit accessors are an advanced escape hatch, not the primary
-matching model. They intentionally make the returned non-SDK type part
-of the SDK method signature, so they must stay sparse and parent-only:
-expose the nearest owning source object a caller can reasonably
-pattern-match, not one helper per nested host leaf type.
+`ErgoErrorSource` participates in `std::error::Error::source` and exposes a
+dynamic error reference for advanced diagnostics. Users who need structured
+access to a lower-crate taxonomy depend on that lower crate explicitly and
+use `downcast_ref` against the source chain. SDK tutorials should treat that
+as diagnostic escape-hatch behavior, not the normal application matching
+model.
 
-```rust
-impl ErgoRunError {
-    pub fn as_host_run_error(&self) -> Option<&ergo_host::HostRunError> { ... }
-}
-```
-
-Users who need structured access to host taxonomy depend on `ergo-host`
-explicitly and pattern-match through the parent accessor. The SDK does
-not re-export host error types from its root, and SDK tutorials should
-not treat host accessors as the normal application path.
-
-Loader and runtime errors follow the same rule: they may appear as
-`#[source]` fields inside `Ergo*` errors, but they should not be
-casually promoted into root SDK vocabulary.
+SDK-owned nested errors may still appear as direct `inner` fields when they
+are part of SDK vocabulary, such as `ErgoConfigError`, `ErgoCaptureError`,
+or `ErgoStepError`. Direct SDK-facing authoring/configuration types may also
+remain direct when PUB-1 classifies them as intentional SDK surface; examples
+include `EgressConfigError` and `EgressConfigParseError`. These exceptions do
+not authorize arbitrary lower-crate diagnostic enums to become SDK API.
 
 ## Rule 3: `Ergo*` Prefix Naming Convention
 
@@ -148,8 +161,8 @@ Provisional carve-outs (PUB-1 should re-examine):
 - `HostedEventBuildError` -- candidate for wrapping as a variant of
   `ErgoStepError`.
 
-The PUB-1 audit classifies any host re-export not on the keep-set as:
-wrap-type, wrap-function, hide behind parent accessor, keep as direct
+The PUB-1 audit classifies any lower-crate re-export not on the keep-set as:
+wrap-type, wrap-function, hide behind opaque source chain, keep as direct
 authoring surface, or remove from SDK surface entirely.
 
 ## What This Does Not Change
@@ -158,14 +171,14 @@ authoring surface, or remove from SDK surface entirely.
 - Host's internal structure -- unchanged.
 - CLI's direct use of `ergo-host` -- unchanged. CLI is in-tree;
   LAYER-3 governs in-tree client behavior.
-- The `ergo init` scaffold's `Cargo.toml` (only `ergo-sdk-rust`) --
-  already correct for normal SDK use. Applications that opt into
-  host-aware accessor matching add `ergo-host` explicitly.
+- The `ergo init` scaffold's SDK dependency (`ergo-sdk`) -- already
+  correct for normal SDK use. Applications that opt into lower-crate
+  diagnostic downcasting add the relevant lower crate explicitly.
 
 ## Implementation Guidance
 
-1. Audit (PUB-1) classifies every current `pub use ergo_host::{...}` as:
-   wrap-type / wrap-function / hide-behind-parent-accessor /
+1. Audit (PUB-1) classifies every current lower-crate public re-export as:
+   wrap-type / wrap-function / hide-behind-opaque-source /
    keep-as-carve-out / remove. The starting keep-set above is the
    input; PUB-1 produces the final classification table.
 2. New `ErgoXxxError` types are defined in
@@ -174,10 +187,10 @@ authoring surface, or remove from SDK surface entirely.
    to `Result<T, ErgoXxxError>`.
 4. Conversion from host errors to SDK errors happens at the SDK method
    boundary (typically via `From` impls or explicit `.map_err(...)`).
-5. SDK internal tests that currently match on host error variants are
-   rewritten to match on SDK error variants. Where a test specifically
-   needs host detail, it uses the nearest parent accessor such as
-   `as_host_run_error()` or `as_hosted_step_error()`.
+5. SDK internal tests that currently match on lower-crate error variants
+   are rewritten to match on SDK error variants. Where a test specifically
+   needs lower-crate detail, it inspects `ErgoErrorSource` or the standard
+   error source chain and downcasts to the expected lower-crate type.
 6. Workspace `cargo test` passes before commit.
 
 ## Follow-Ups for PUB-1 and Implementation

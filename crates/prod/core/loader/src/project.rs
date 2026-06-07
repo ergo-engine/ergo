@@ -32,6 +32,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ProjectError {
     ProjectRootNotFound { start: PathBuf },
     ProjectRead { path: PathBuf, detail: String },

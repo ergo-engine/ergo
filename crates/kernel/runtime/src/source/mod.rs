@@ -131,6 +131,7 @@ pub struct SourcePrimitiveManifest {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum SourceValidationError {
     InvalidId {
         id: String,

@@ -1,16 +1,16 @@
 //! error
 //!
 //! Purpose:
-//! - Define the SDK-branded `Ergo*` error surface that wraps host, loader, and
-//!   runtime taxonomies behind stable categories for crates.io callers.
+//! - Define the SDK-branded `Ergo*` error surface that wraps lower-crate
+//!   diagnostic taxonomies behind stable categories for crates.io callers.
 //!
 //! Owns:
 //! - `ErgoBuildError`, `ErgoProjectConfigError`, `ErgoProjectError`,
 //!   `ErgoConfigError`, `ErgoRunError`, `ErgoRunnerError`, `ErgoStepError`,
 //!   `ErgoCaptureError`, `ErgoReplayError`, and `ErgoValidationError`.
-//! - The `ErgoErrorSource` opaque envelope used to attach host/loader/runtime
-//!   failure detail to SDK error variants without naming internal types on the
-//!   public surface.
+//! - The `ErgoErrorSource` opaque envelope used to attach host, adapter,
+//!   supervisor, loader, and runtime failure detail to SDK error variants
+//!   without naming internal types on the public surface.
 //! - Mapping from host taxonomies into SDK categories per the PUB-1 plan.
 //!
 //! Does not own:
@@ -20,18 +20,21 @@
 //! Connects to:
 //! - `lib.rs`, which uses these types as the public return-error surface for
 //!   `Ergo`, `ErgoBuilder`, and `ProfileRunner` operations.
-//! - `ergo_host`, `ergo_loader`, and `ergo_runtime` whose error types are
-//!   wrapped in `ErgoErrorSource` and reachable only as `&dyn Error` through
+//! - Lower crates such as `ergo_host`, `ergo_adapter`, `ergo_supervisor`,
+//!   `ergo_loader`, and `ergo_runtime` whose diagnostic error types are wrapped
+//!   in `ErgoErrorSource` and reachable only as `&dyn Error` through
 //!   `std::error::Error::source` and `downcast_ref`.
 //!
 //! Safety notes:
 //! - Mapping from host taxonomies is exhaustive over today's variants and
 //!   collapses unknown variants to an `Internal` SDK category so semver growth
 //!   in host enums does not silently change SDK categorization.
-//! - The SDK never names host error types in its public API. Host types are
-//!   reachable only via the `Error::source` chain plus `downcast_ref`, which
-//!   keeps the SDK free to refactor host taxonomies post-1.0 without an SDK
-//!   semver break.
+//! - The SDK never names lower-crate diagnostic error types in its normal
+//!   public matching API. Those types are reachable only via the
+//!   `Error::source` chain plus `downcast_ref`, which keeps the SDK free to
+//!   refactor lower-crate taxonomies post-1.0 without an SDK semver break.
+//!   Explicit authoring/configuration carve-outs such as `EgressConfigError`
+//!   and `EgressConfigParseError` remain direct SDK API where documented.
 
 use std::path::PathBuf;
 
@@ -44,12 +47,14 @@ use ergo_loader::ProjectError as LoaderProjectError;
 /// Opaque source-error envelope attached to wrapped variants of the SDK's
 /// `Ergo*` error types.
 ///
-/// The SDK does not name host, loader, or runtime error types on its public
-/// surface. Failure detail from those internal layers is wrapped in
-/// `ErgoErrorSource`, which exposes only the standard [`std::error::Error`]
-/// interface: a [`Display`](std::fmt::Display) message that delegates to the
-/// wrapped error and a [`source`](std::error::Error::source) hop into the
-/// underlying error chain.
+/// The SDK does not name lower-crate diagnostic error types on its normal
+/// public matching surface. Failure detail from those internal layers is
+/// wrapped in `ErgoErrorSource`, which exposes only the standard
+/// [`std::error::Error`] interface: a [`Display`](std::fmt::Display) message
+/// that delegates to the wrapped error and a
+/// [`source`](std::error::Error::source) hop into the underlying error chain.
+/// Explicit authoring/configuration carve-outs, such as `EgressConfigError`
+/// and `EgressConfigParseError`, remain direct SDK API where documented.
 ///
 /// To inspect the underlying failure for diagnostics, call
 /// [`ErgoErrorSource::as_dyn_error`] (or walk the [`Error::source`] chain on
@@ -74,8 +79,8 @@ impl ErgoErrorSource {
 
     /// Returns the wrapped source as a `&dyn Error`.
     ///
-    /// Use this for source-chain walking and for `downcast_ref` against host
-    /// or loader error types when an advanced caller already depends on the
+    /// Use this for source-chain walking and for `downcast_ref` against
+    /// lower-crate error types when an advanced caller already depends on the
     /// relevant Ergo crate.
     pub fn as_dyn_error(&self) -> &(dyn std::error::Error + 'static) {
         &*self.inner
@@ -1373,6 +1378,7 @@ fn classify_host_replay_error(err: &HostReplayError) -> HostReplayCategory {
             HostedReplayError::Compare(_) | HostedReplayError::DecisionMismatch => {
                 HostReplayCategory::ReplayMismatch
             }
+            _ => HostReplayCategory::Internal,
         },
         _ => HostReplayCategory::Internal,
     }

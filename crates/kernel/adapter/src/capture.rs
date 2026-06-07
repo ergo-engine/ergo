@@ -30,6 +30,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum CaptureError {
     /// X.11-like guard: payload hash does not match stored hash.
     PayloadHashMismatch { expected: String, actual: String },

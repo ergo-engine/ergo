@@ -47,6 +47,7 @@ use ergo_supervisor::{CaptureBundle, Decision};
 use crate::{HostedRunner, HostedStepError};
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HostedReplayError {
     Preflight(ReplayError),
     EventRehydrate {

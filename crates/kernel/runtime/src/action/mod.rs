@@ -216,6 +216,7 @@ pub struct ActionState {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ActionValidationError {
     InvalidId {
         id: String,

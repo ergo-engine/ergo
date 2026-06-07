@@ -85,6 +85,7 @@ impl PreparedGraphAssets {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum LoaderError {
     Io(LoaderIoError),
     Decode(LoaderDecodeError),

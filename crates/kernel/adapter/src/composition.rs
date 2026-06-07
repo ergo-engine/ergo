@@ -22,6 +22,7 @@ pub use ergo_runtime::source::{ContextRequirement, SourceRequires};
 use crate::provides::AdapterProvides;
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum CompositionError {
     MissingContextKey {
         key: String,

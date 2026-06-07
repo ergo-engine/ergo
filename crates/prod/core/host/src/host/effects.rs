@@ -33,6 +33,7 @@ pub struct AppliedWrite {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum EffectApplyError {
     UnhandledEffectKind {
         kind: String,

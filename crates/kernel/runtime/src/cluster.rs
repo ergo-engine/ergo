@@ -239,6 +239,7 @@ pub enum ExpandedEndpoint {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ExpandError {
     /// A kernel expansion invariant was violated.
     InvariantViolation(String),
@@ -334,6 +335,7 @@ pub enum ExpandError {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum SignatureInferenceError {
     MissingPrimitive {
         id: String,
@@ -364,6 +366,7 @@ impl VersionTargetKind {
 
 /// D.11: Errors arising from declared signature validation
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ClusterValidationError {
     /// Declared wireability exceeds inferred wireability (D.11 violation)
     WireabilityExceedsInferred { port_name: String },

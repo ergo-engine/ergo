@@ -74,6 +74,7 @@ pub struct HostRuleViolation {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HostManifestError {
     RuleViolation(HostRuleViolation),
     UnsupportedComposeTargetKind { kind: String },

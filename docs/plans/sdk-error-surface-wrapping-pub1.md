@@ -12,7 +12,29 @@ Depends-On: docs/ledger/decisions/sdk-error-surface-wrapping.md
 
 PUB-1 applies the Q-SURFACE ruling from
 `docs/ledger/decisions/sdk-error-surface-wrapping.md` to the current
-`ergo-sdk-rust` public error surface.
+`ergo-sdk` public error surface.
+
+## Branch Reconciliation / Supersession Note 2026-06-07
+
+The original PUB-1 plan used sparse typed parent accessors as the advanced
+escape hatch for lower-crate error detail. The pre-publish PUB-4 branch
+supersedes that accessor prescription with the opaque `ErgoErrorSource`
+source-envelope design now recorded in the Q-SURFACE decision amendment.
+
+This plan remains authoritative for user-facing SDK categories, root
+re-export disposition, and method return-type targets. Its old accessor
+prescriptions are historical: lower-crate diagnostic detail is preserved
+through `ErgoErrorSource`, `std::error::Error::source`, and opt-in
+`downcast_ref` by callers that explicitly depend on the relevant lower
+crate.
+
+The old accessor-reachable host enum publish gate is replaced, not deleted:
+before first publish, PUB-1/PUB-6 must inventory public host, adapter,
+supervisor, loader, and runtime error enums reachable through SDK source
+chains, `ErgoErrorSource::as_dyn_error()`, direct SDK reexports, or direct
+SDK exception fields. Each extensible enum must be `#[non_exhaustive]`, or
+PUB-1 must deliberately record why the enum is frozen/exhaustive for the
+first published contract.
 
 This plan produces two artifacts:
 
@@ -45,9 +67,10 @@ Each classification answers:
   SDK-branded error type or variant instead.
 - `wrap-function`: replace the lower-layer function re-export with an
   SDK wrapper function that maps lower-layer errors to SDK errors.
-- `hide-behind-parent-accessor`: remove the root lower-layer type
+- `hide-behind-opaque-source`: remove the root lower-layer type
   re-export; advanced callers reach it only by depending on the lower
-  crate and walking or matching through a parent source accessor.
+  crate and inspecting the SDK error source chain, usually through
+  `ErgoErrorSource::as_dyn_error()` and `downcast_ref`.
 - `remove-function`: remove the lower-layer function re-export without a
   direct wrapper because the SDK exposes the same user question another
   way.
@@ -86,26 +109,26 @@ This table covers all 39 items in that block.
 | `EgressConfigBuilder` | keep-type | Sebastian uses the builder for programmatic egress config. |
 | `EgressConfigError` | keep-type | Direct egress config construction benefits from variant-level feedback; this is authoring surface, not host orchestration vocabulary. |
 | `EgressConfigParseError` | keep-type | Direct egress TOML parsing benefits from parse/config distinction; higher-level SDK config wraps it with path context. |
-| `EgressDispatchFailure` | hide-behind-parent-accessor | Sebastian should match SDK categories or stable `InterruptionReason`; host dispatch detail remains reachable through `as_host_run_error()` or `as_hosted_step_error()`. |
+| `EgressDispatchFailure` | hide-behind-opaque-source | Sebastian should match SDK categories or stable `InterruptionReason`; dispatch detail remains reachable only through the SDK error source chain and opt-in downcasting. |
 | `EgressRoute` | keep-type | Sebastian constructs egress routing config programmatically. |
-| `HostAdapterCompositionError` | hide-behind-parent-accessor | Adapter composition details remain diagnostics under the relevant parent accessor (`as_host_run_error()` or `as_host_replay_error()`). |
-| `HostAdapterSetupError` | hide-behind-parent-accessor | Manifest read/parse/validation details stay available through parent host sources; SDK users match adapter categories first. |
-| `HostAvailableCluster` | hide-behind-parent-accessor | This is nested diagnostic data on `HostExpandError`, not a root SDK type. |
-| `HostDependencyScanError` | hide-behind-parent-accessor | Dependency scan failures are setup diagnostics inside host orchestration. |
-| `HostDriverError` | hide-behind-parent-accessor | The SDK exposes one `Ingress` run category; driver phase detail stays behind `as_host_run_error()`. |
-| `HostDriverInputError` | hide-behind-parent-accessor | Driver input detail stays behind `as_host_run_error()`. |
-| `HostDriverIoError` | hide-behind-parent-accessor | Driver I/O detail stays behind `as_host_run_error()`. |
-| `HostDriverOutputError` | hide-behind-parent-accessor | Driver output detail stays behind `as_host_run_error()`. |
-| `HostDriverProtocolError` | hide-behind-parent-accessor | Driver protocol detail stays behind `as_host_run_error()`. |
-| `HostDriverStartError` | hide-behind-parent-accessor | Driver start detail stays behind `as_host_run_error()`. |
-| `HostExpandContext` | hide-behind-parent-accessor | This is context on `HostExpandError`, not root SDK vocabulary. |
-| `HostExpandError` | hide-behind-parent-accessor | Graph expansion is exposed as SDK graph-preparation failure; host expansion detail stays behind parent host sources. |
-| `HostGraphPreparationError` | hide-behind-parent-accessor | SDK users match `GraphPreparation`; host graph-prep phases remain parent-source detail. |
+| `HostAdapterCompositionError` | hide-behind-opaque-source | Adapter composition details remain diagnostics behind `ErgoErrorSource`; SDK users match adapter categories first. |
+| `HostAdapterSetupError` | hide-behind-opaque-source | Manifest read/parse/validation details stay available through source-chain diagnostics; SDK users match adapter categories first. |
+| `HostAvailableCluster` | hide-behind-opaque-source | This is nested diagnostic data on `HostExpandError`, not a root SDK type. |
+| `HostDependencyScanError` | hide-behind-opaque-source | Dependency scan failures are setup diagnostics inside host orchestration. |
+| `HostDriverError` | hide-behind-opaque-source | The SDK exposes one `Ingress` run category; driver phase detail stays behind source-chain diagnostics. |
+| `HostDriverInputError` | hide-behind-opaque-source | Driver input detail stays behind source-chain diagnostics. |
+| `HostDriverIoError` | hide-behind-opaque-source | Driver I/O detail stays behind source-chain diagnostics. |
+| `HostDriverOutputError` | hide-behind-opaque-source | Driver output detail stays behind source-chain diagnostics. |
+| `HostDriverProtocolError` | hide-behind-opaque-source | Driver protocol detail stays behind source-chain diagnostics. |
+| `HostDriverStartError` | hide-behind-opaque-source | Driver start detail stays behind source-chain diagnostics. |
+| `HostExpandContext` | hide-behind-opaque-source | This is context on `HostExpandError`, not root SDK vocabulary. |
+| `HostExpandError` | hide-behind-opaque-source | Graph expansion is exposed as SDK graph-preparation failure; host expansion detail stays behind source-chain diagnostics. |
+| `HostGraphPreparationError` | hide-behind-opaque-source | SDK users match `GraphPreparation`; host graph-prep phases remain source-chain detail. |
 | `HostReplayError` | wrap-type | Top-level replay failures become `ErgoReplayError` variants. Preserve the host replay error as source. |
-| `HostReplaySetupError` | hide-behind-parent-accessor | Replay setup details are nested under `HostReplayError`. |
+| `HostReplaySetupError` | hide-behind-opaque-source | Replay setup details are nested under `HostReplayError` and stay behind source-chain diagnostics. |
 | `HostRunError` | wrap-type | Top-level run and runner-prep failures become `ErgoRunError` / `ErgoRunnerError` variants. Preserve the host run error as source except where capture write normalizes to `ErgoCaptureError`. |
-| `HostSetupError` | hide-behind-parent-accessor | Setup details are nested under `HostRunError` and `HostReplayError`. |
-| `HostedEgressValidationError` | hide-behind-parent-accessor | SDK users match egress validation categories; host detail stays behind `as_hosted_step_error()` or parent host run/replay sources. |
+| `HostSetupError` | hide-behind-opaque-source | Setup details are nested under `HostRunError` and `HostReplayError` and stay behind source-chain diagnostics. |
+| `HostedEgressValidationError` | hide-behind-opaque-source | SDK users match egress validation categories; host detail stays behind source-chain diagnostics. |
 | `HostedEvent` | keep-type | Sebastian constructs hosted events when manually stepping a profile runner. |
 | `HostedEventBuildError` | wrap-type | Event-build failure is a step-time category. `ErgoStepError::EventBuild` carries this exact source directly. |
 | `HostedStepError` | wrap-type | Manual stepping returns `ErgoStepError`; run/replay methods surface step failures through operation errors. Preserve the host step error where it is the direct source. |
@@ -116,45 +139,39 @@ This table covers all 39 items in that block.
 
 ## Shared Rules for Error Wrapping
 
-All `Ergo*` errors use `#[source]` for non-SDK error detail. This
-includes host, loader, runtime, I/O, TOML, and serde sources.
+All `Ergo*` errors preserve non-SDK diagnostic detail through the standard
+error source chain. Host, adapter, supervisor, loader, and runtime
+diagnostics that should not become SDK vocabulary use `source:
+ErgoErrorSource` rather than concrete lower-crate field types.
 
-Explicit accessors are parent-only escape hatches:
+Typed SDK parent accessors are not part of the first published SDK contract.
+Do not add accessors for lower-crate parents or nested leaves such as
+`HostRunError`, `HostReplayError`, `HostedStepError`,
+`HostAdapterSetupError`, `HostDriverInputError`, or
+`EgressDispatchFailure`. Users who need those details depend on the
+relevant lower crate explicitly and downcast the source-chain detail.
 
-- `ErgoRunError::as_host_run_error()`
-- `ErgoRunnerError::as_host_run_error()`
-- `ErgoReplayError::as_host_replay_error()`
-- `ErgoValidationError::as_host_run_error()`
-- `ErgoStepError::as_hosted_step_error()`
-- `ErgoStepError::as_hosted_event_build_error()`
-- `ErgoCaptureError::as_capture_write_error()`
+Direct SDK-facing exceptions remain direct when classified as intentional
+authoring/configuration surface. In this plan, `EgressConfigError` and
+`EgressConfigParseError` stay public because programmatic egress config and
+TOML parsing are SDK-facing authoring concerns, not hidden host
+orchestration diagnostics.
 
-Do not add accessors for nested host leaves such as
-`HostDriverInputError`, `HostAdapterSetupError`, or
-`EgressDispatchFailure`. Users who need those details depend on
-`ergo-host` explicitly and pattern-match through the parent source.
+Reachable lower-crate public error enum stability inventory:
 
-Accessor-reachable host enum semver inventory:
+- Direct SDK exception/re-export error types, including
+  `EgressConfigError` and `EgressConfigParseError`.
+- Error enums wrapped behind `ErgoErrorSource`, including host, adapter,
+  supervisor, loader, and runtime errors reachable through SDK error
+  variants, source-chain traversal, and `ErgoErrorSource::as_dyn_error()`.
+- Public nested lower-crate error enums matchable after downcasting those
+  parent errors.
 
-- Direct SDK parent accessor return types:
-  `HostRunError`, `HostReplayError`, `HostedStepError`,
-  `HostedEventBuildError`, and `CaptureWriteError`.
-- Public nested host enums matchable through those parents:
-  `EgressDispatchFailure`, `HostAdapterCompositionError`,
-  `HostAdapterSetupError`, `HostAvailableCluster`,
-  `HostDependencyScanError`, `HostDriverError`,
-  `HostDriverInputError`, `HostDriverIoError`,
-  `HostDriverOutputError`, `HostDriverProtocolError`,
-  `HostDriverStartError`, `HostExpandContext`, `HostExpandError`,
-  `HostGraphPreparationError`, `HostReplaySetupError`,
-  `HostSetupError`, and `HostedEgressValidationError`.
-
-PUB-1 must audit that inventory against the semver rule in
-`crates-io-publish-set.md`: mark the relevant host enums
-`#[non_exhaustive]` before first publish unless PUB-1 explicitly records
-that an enum's variant set is stable for the first published contract.
-This is a host-side requirement created by the SDK accessor escape hatch,
-not an SDK root re-export.
+PUB-1/PUB-6 must audit that inventory against the semver rule in
+`crates-io-publish-set.md`: mark extensible public lower-crate error enums
+`#[non_exhaustive]` before first publish, or explicitly record why an enum's
+variant set is frozen/exhaustive for the first published contract. This is
+the replacement publish gate for the old accessor-reachable host enum gate.
 
 `Internal` means a host/SDK invariant failed. It is not recoverable, is
 not user-actionable configuration feedback, and should be reported as an
@@ -167,11 +184,12 @@ Purpose: engine construction failed before an `Ergo` handle exists.
 
 Proposed variants:
 
-- `Registration { #[source] inner: ergo_runtime::catalog::CoreRegistrationError }`
+- `Registration { source: ErgoErrorSource }`
 - `Project { #[source] inner: ErgoProjectError }`
 - `ProjectSourceConflict`
 
-Accessors: none. Runtime detail is preserved through `source()`.
+Runtime registration detail is preserved through `ErgoErrorSource` and the
+standard error source chain.
 
 Affected SDK methods:
 
@@ -238,7 +256,7 @@ Proposed variants:
 
 - `ProjectNotConfigured`
 - `ProfileNotFound { name: String }`
-- `ProjectLoad { #[source] inner: ergo_loader::ProjectError }`
+- `ProjectLoad { source: ErgoErrorSource }`
 - `ProjectConfig { #[source] inner: ErgoProjectConfigError }`
 - `ExplicitRunProcessCommandEmpty`
 - `EgressConfigRead { path: PathBuf, #[source] inner: std::io::Error }`
@@ -282,18 +300,18 @@ Wrap target:
 Proposed variants:
 
 - `Config { #[source] inner: ErgoConfigError }`
-- `AdapterRequired { #[source] inner: ergo_host::HostRunError }`
-- `GraphLoad { #[source] inner: ergo_host::HostRunError }`
-- `GraphPreparation { #[source] inner: ergo_host::HostRunError }`
-- `AdapterComposition { #[source] inner: ergo_host::HostRunError }`
-- `AdapterSetup { #[source] inner: ergo_host::HostRunError }`
-- `Ingress { #[source] inner: ergo_host::HostRunError }`
-- `EgressStartup { #[source] inner: ergo_host::HostRunError }`
-- `EgressValidation { #[source] inner: ergo_host::HostRunError }`
-- `EgressDispatch { #[source] inner: ergo_host::HostRunError }`
-- `Step { #[source] inner: ergo_host::HostRunError }`
+- `AdapterRequired { source: ErgoErrorSource }`
+- `GraphLoad { source: ErgoErrorSource }`
+- `GraphPreparation { source: ErgoErrorSource }`
+- `AdapterComposition { source: ErgoErrorSource }`
+- `AdapterSetup { source: ErgoErrorSource }`
+- `Ingress { source: ErgoErrorSource }`
+- `EgressStartup { source: ErgoErrorSource }`
+- `EgressValidation { source: ErgoErrorSource }`
+- `EgressDispatch { source: ErgoErrorSource }`
+- `Step { source: ErgoErrorSource }`
 - `Capture { #[source] inner: ErgoCaptureError }`
-- `Internal { #[source] inner: ergo_host::HostRunError }`
+- `Internal { source: ErgoErrorSource }`
 
 Mapping guidance from `HostRunError`:
 
@@ -320,26 +338,18 @@ Mapping guidance from `HostRunError`:
 - `Setup(HostedRunnerInitialization(_))` maps to `Internal` unless
   nested detail is clearly user-actionable config.
 - Any `Driver(_)` maps to `Ingress`; users who need driver input/start/
-  protocol/I/O/output distinctions match through `as_host_run_error()`.
+  protocol/I/O/output distinctions inspect source-chain detail after
+  explicitly depending on `ergo-host`.
 - `Step(EgressDispatchFailure(_))` maps to `EgressDispatch`.
 - `Step(EgressValidation(_))` maps to `EgressValidation`.
 - Other `Step(_)` maps to `Step` or `Internal` based on
   `ErgoStepError` category.
 - `CaptureWrite(inner)` maps to
-  `Capture { inner: ErgoCaptureError::Write { inner, bundle: None } }`.
+  `Capture { inner: ErgoCaptureError::Write { source, bundle: None } }`.
 
-Accessors:
-
-```rust
-impl ErgoRunError {
-    pub fn as_host_run_error(&self) -> Option<&ergo_host::HostRunError>;
-    pub fn as_capture_error(&self) -> Option<&ErgoCaptureError>;
-}
-```
-
-`as_host_run_error()` returns `None` for normalized capture-write
-failures because the exact `CaptureWriteError` is preserved on
-`ErgoCaptureError`.
+`ErgoRunError` exposes no typed host accessor. Host run detail is opaque
+source-chain detail. Capture-write failures normalize to the SDK-owned
+`ErgoCaptureError` so callers match `ErgoRunError::Capture` directly.
 
 Affected SDK methods:
 
@@ -367,26 +377,22 @@ Wrap target:
 Proposed runner-only variants:
 
 - `Config { #[source] inner: ErgoConfigError }`
-- `AdapterRequired { #[source] inner: ergo_host::HostRunError }`
-- `GraphLoad { #[source] inner: ergo_host::HostRunError }`
-- `GraphPreparation { #[source] inner: ergo_host::HostRunError }`
-- `AdapterComposition { #[source] inner: ergo_host::HostRunError }`
-- `AdapterSetup { #[source] inner: ergo_host::HostRunError }`
-- `EgressStartup { #[source] inner: ergo_host::HostRunError }`
-- `Initialization { #[source] inner: ergo_host::HostRunError }`
-- `Internal { #[source] inner: ergo_host::HostRunError }`
+- `AdapterRequired { source: ErgoErrorSource }`
+- `GraphLoad { source: ErgoErrorSource }`
+- `GraphPreparation { source: ErgoErrorSource }`
+- `AdapterComposition { source: ErgoErrorSource }`
+- `AdapterSetup { source: ErgoErrorSource }`
+- `EgressStartup { source: ErgoErrorSource }`
+- `Initialization { source: ErgoErrorSource }`
+- `Internal { source: ErgoErrorSource }`
 
 `GraphLoad` and `GraphPreparation` follow the same load/prep split as
 `ErgoRunError`: load-side transport failures route to `GraphLoad`, and
 post-load expansion/validation failures route to `GraphPreparation`.
 
-Accessors:
-
-```rust
-impl ErgoRunnerError {
-    pub fn as_host_run_error(&self) -> Option<&ergo_host::HostRunError>;
-}
-```
+`ErgoRunnerError` exposes no typed host accessor. Preparation detail is
+opaque source-chain detail, and runner preparation intentionally has no
+capture-write category.
 
 Affected SDK methods:
 
@@ -409,24 +415,24 @@ Wrap targets:
 
 Proposed variants:
 
-- `Input { #[source] inner: ergo_host::HostedStepError }`
-- `EventBuild { #[source] inner: ergo_host::HostedEventBuildError }`
-- `Binding { #[source] inner: ergo_host::HostedStepError }`
-- `Lifecycle { #[source] inner: ergo_host::HostedStepError }`
-- `EffectApply { #[source] inner: ergo_host::HostedStepError }`
-- `HandlerCoverage { #[source] inner: ergo_host::HostedStepError }`
-- `EgressValidation { #[source] inner: ergo_host::HostedStepError }`
-- `EgressProcess { #[source] inner: ergo_host::HostedStepError }`
-- `EgressDispatch { #[source] inner: ergo_host::HostedStepError }`
-- `Internal { #[source] inner: ergo_host::HostedStepError }`
+- `Input { source: ErgoErrorSource }`
+- `EventBuild { source: ErgoErrorSource }`
+- `Binding { source: ErgoErrorSource }`
+- `Lifecycle { source: ErgoErrorSource }`
+- `EffectApply { source: ErgoErrorSource }`
+- `HandlerCoverage { source: ErgoErrorSource }`
+- `EgressValidation { source: ErgoErrorSource }`
+- `EgressProcess { source: ErgoErrorSource }`
+- `EgressDispatch { source: ErgoErrorSource }`
+- `Internal { source: ErgoErrorSource }`
 
 Mapping guidance from `HostedStepError`:
 
 - `DuplicateEventId`, `MissingSemanticKind`, `MissingPayload`,
   `PayloadMustBeObject`, `UnknownSemanticKind` map to `Input`.
 - `Binding(_)` maps to `Binding`.
-- `EventBuild(inner)` maps to `EventBuild { inner }`, preserving the
-  exact `HostedEventBuildError` directly.
+- `EventBuild(inner)` maps to `EventBuild { source }`, preserving the
+  exact event-build detail behind `ErgoErrorSource`.
 - `LifecycleViolation` maps to `Lifecycle` when the message describes
   SDK/manual-runner misuse; `MissingDecisionEntry` and
   `EffectsWithoutAdapter` map to `Internal`.
@@ -442,10 +448,11 @@ Methods:
 impl ErgoStepError {
     pub fn is_recoverable(&self) -> bool;
     pub fn can_finish(&self) -> bool;
-    pub fn as_hosted_step_error(&self) -> Option<&ergo_host::HostedStepError>;
-    pub fn as_hosted_event_build_error(&self) -> Option<&ergo_host::HostedEventBuildError>;
 }
 ```
+
+Hosted step and hosted event-build detail is opaque source-chain detail, not
+typed SDK accessor surface.
 
 `is_recoverable()` preserves the current host predicate result: input,
 binding, and event-build failures that currently return true from
@@ -479,16 +486,17 @@ Proposed variants:
 
 - `Finalize { #[source] inner: ErgoStepError }`
 - `OutputNotConfigured`
-- `Write { #[source] inner: ergo_host::CaptureWriteError, bundle: Option<CaptureBundle> }`
-
-Accessors:
+- `Write { source: ErgoErrorSource, bundle: Option<CaptureBundle> }`
 
 ```rust
 impl ErgoCaptureError {
-    pub fn as_capture_write_error(&self) -> Option<&ergo_host::CaptureWriteError>;
     pub fn capture_bundle(&self) -> Option<&CaptureBundle>;
 }
 ```
+
+Capture-write detail is opaque source-chain detail. `capture_bundle()` is an
+SDK helper for retrying persistence after a failed write, not a typed
+lower-crate error accessor.
 
 Affected SDK methods/functions:
 
@@ -521,17 +529,17 @@ Wrap target:
 Proposed variants:
 
 - `Config { #[source] inner: ErgoConfigError }`
-- `CaptureRead { #[source] inner: ergo_host::HostReplayError }`
-- `CaptureParse { #[source] inner: ergo_host::HostReplayError }`
-- `GraphLoad { #[source] inner: ergo_host::HostReplayError }`
-- `GraphPreparation { #[source] inner: ergo_host::HostReplayError }`
-- `AdapterComposition { #[source] inner: ergo_host::HostReplayError }`
-- `AdapterSetup { #[source] inner: ergo_host::HostReplayError }`
-- `ReplayPreflight { #[source] inner: ergo_host::HostReplayError }`
-- `ReplayMismatch { #[source] inner: ergo_host::HostReplayError }`
-- `ReplayOwnership { #[source] inner: ergo_host::HostReplayError }`
-- `Step { #[source] inner: ergo_host::HostReplayError }`
-- `Internal { #[source] inner: ergo_host::HostReplayError }`
+- `CaptureRead { source: ErgoErrorSource }`
+- `CaptureParse { source: ErgoErrorSource }`
+- `GraphLoad { source: ErgoErrorSource }`
+- `GraphPreparation { source: ErgoErrorSource }`
+- `AdapterComposition { source: ErgoErrorSource }`
+- `AdapterSetup { source: ErgoErrorSource }`
+- `ReplayPreflight { source: ErgoErrorSource }`
+- `ReplayMismatch { source: ErgoErrorSource }`
+- `ReplayOwnership { source: ErgoErrorSource }`
+- `Step { source: ErgoErrorSource }`
+- `Internal { source: ErgoErrorSource }`
 
 Mapping guidance from `HostReplayError`:
 
@@ -557,13 +565,8 @@ Mapping guidance from `HostReplayError`:
   `ReplayMismatch`.
 - Any invariant breach maps to `Internal`.
 
-Accessors:
-
-```rust
-impl ErgoReplayError {
-    pub fn as_host_replay_error(&self) -> Option<&ergo_host::HostReplayError>;
-}
-```
+`ErgoReplayError` exposes no typed host replay accessor. Replay detail is
+opaque source-chain detail behind `ErgoErrorSource`.
 
 Affected SDK methods:
 
@@ -582,15 +585,11 @@ Proposed variants:
 
 - `Config { #[source] inner: ErgoConfigError }`
 - `Profile { profile: String, #[source] inner: ErgoConfigError }`
-- `HostValidation { profile: String, #[source] inner: ergo_host::HostRunError }`
+- `HostValidation { profile: String, source: ErgoErrorSource }`
 
-Accessors:
-
-```rust
-impl ErgoValidationError {
-    pub fn as_host_run_error(&self) -> Option<&ergo_host::HostRunError>;
-}
-```
+`ErgoValidationError` exposes no typed host run accessor. Host validation
+detail remains source-chain detail so validation callers match SDK profile
+and host-validation categories first.
 
 Affected SDK methods:
 
@@ -614,26 +613,31 @@ The decision record's keep-set includes items outside the audited
 - `FixtureItem`: already transparently re-exported from `ergo_adapter`;
   keep as-is.
 
-## Parent-Accessor Summary
+## Opaque Source and Stability Inventory Summary
 
 The following current root exports disappear from the SDK root and are
-reachable only through parent sources:
+reachable only through source-chain diagnostics after the caller explicitly
+depends on the relevant lower crate:
 
-- `EgressDispatchFailure` through `as_host_run_error()` or
-  `as_hosted_step_error()`.
+- `EgressDispatchFailure` through hosted step or host run detail behind
+  `ErgoErrorSource`.
 - `HostAdapterCompositionError`, `HostAdapterSetupError`,
   `HostAvailableCluster`, `HostDependencyScanError`,
   `HostExpandContext`, `HostExpandError`, `HostGraphPreparationError`,
-  and `HostSetupError` through `as_host_run_error()` or
-  `as_host_replay_error()`, depending on the operation.
-- `HostDriverError` and its leaf types through `as_host_run_error()`.
-- `HostReplaySetupError` through `as_host_replay_error()`.
-- `HostedEgressValidationError` through `as_hosted_step_error()` or the
-  parent host run/replay source.
+  and `HostSetupError` through host run or replay detail behind
+  `ErgoErrorSource`.
+- `HostDriverError` and its leaf types through host run detail behind
+  `ErgoErrorSource`.
+- `HostReplaySetupError` through host replay detail behind
+  `ErgoErrorSource`.
+- `HostedEgressValidationError` through hosted step or host run/replay
+  detail behind `ErgoErrorSource`.
 
-No `as_host_driver_*`, `as_host_adapter_*`,
-`as_host_graph_preparation_error`, or `as_egress_dispatch_failure`
-helpers should be added.
+Do not add typed SDK helpers for those parents or leaves. The replacement
+publish gate is the lower-crate public error enum stability inventory:
+public error enums reachable through SDK source chains, direct reexports, or
+direct exception fields must be `#[non_exhaustive]` if extensible or
+explicitly recorded as frozen/exhaustive for the first published contract.
 
 ## Method Return-Type Change Summary
 
@@ -659,11 +663,10 @@ Public SDK methods should land with these return types:
 PUB-1 is complete when:
 
 - Every item in the current SDK `pub use ergo_host::{...}` block has one
-  of: `wrap-type`, `wrap-function`, `hide-behind-parent-accessor`,
+  of: `wrap-type`, `wrap-function`, `hide-behind-opaque-source`,
   `keep-type`, `keep-function`, or `remove-function`.
 - Every `wrap-type` item has a target `ErgoXxxError`, proposed variant
-  names, source preservation policy, parent-only accessors, and affected
-  SDK methods.
+  names, opaque source preservation policy, and affected SDK methods.
 - Every `wrap-function` item has a replacement SDK function and mapped
   SDK error.
 - Provisional carve-outs are resolved:
@@ -675,8 +678,10 @@ PUB-1 is complete when:
   `can_finish()`.
 - Adjacent transparent keep-set items outside the audited block have a
   stated post-refactor disposition.
-- Accessor-reachable host enums have a completed direct-and-nested
-  inventory, and required `#[non_exhaustive]` annotations or explicit
-  stable-enum exceptions have landed.
+- Reachable lower-crate public error enums have a completed direct,
+  source-chain, and nested inventory covering host, adapter, supervisor,
+  loader, and runtime surfaces. Required `#[non_exhaustive]` annotations or
+  explicit frozen/exhaustive exceptions have landed or been recorded as part
+  of the publish gate.
 - No SDK refactor code or CLI changes are included in this planning
   pass.

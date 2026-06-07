@@ -105,6 +105,12 @@ fn render_graph_to_dot_error(err: &GraphToDotError) -> String {
             .with_fix("repair graph authoring or provide the missing cluster versions")
             .with_detail(expansion.to_string()),
         ),
+        _ => render_cli_error(
+            &CliErrorInfo::new("cli.graph_to_dot_failed", "failed to render graph as DOT")
+                .with_where("graph-to-dot")
+                .with_fix("inspect graph authoring and retry")
+                .with_detail(err.to_string()),
+        ),
     }
 }
 

@@ -55,6 +55,7 @@ impl std::fmt::Display for EgressValidationWarning {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EgressValidationError {
     RoutedKindNotAcceptedByAdapter { intent_kind: String },
     Coverage(HandlerCoverageError),

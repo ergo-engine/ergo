@@ -53,6 +53,7 @@ impl MemoryDecisionLog {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ReplayError {
     UnsupportedVersion {
         capture_version: String,
@@ -347,6 +348,12 @@ fn rehydrate_event(
         CaptureError::InvalidPayload { source } => ReplayError::InvalidPayload {
             event_id: record.event_id.clone(),
             source,
+        },
+        _ => ReplayError::InvalidPayload {
+            event_id: record.event_id.clone(),
+            source: ExternalEventPayloadError::InvalidJson {
+                detail: err.to_string(),
+            },
         },
     })
 }

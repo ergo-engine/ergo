@@ -66,6 +66,7 @@ pub use registry::register;
 pub use validate::validate_adapter;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DemoSourceContextError {
     MissingCatalogMetadata { primitive_id: String },
     MissingSourcePrimitive { primitive_id: String },
@@ -260,6 +261,7 @@ pub struct EventPayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ExternalEventPayloadError {
     InvalidJson { detail: String },
     PayloadMustBeJsonObject { got: String },
