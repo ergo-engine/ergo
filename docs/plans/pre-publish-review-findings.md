@@ -10,6 +10,15 @@ state being diagnosed. Recommended publish-target wording should follow the
 decision record: SDK package `ergo-sdk` and first publish version
 `0.1.0-alpha.1` unless a later decision changes it.
 
+Disposition labels used below:
+
+- **Resolved pre-publish** — fixed or verified before `v0.1.0-alpha.1`.
+- **PUB-7 procedure** — not a code/doc change; closes only during real publish.
+- **Accepted for alpha** — known surface/risk is intentionally allowed in
+  `0.1.0-alpha.1`, with rationale recorded.
+- **Post-alpha follow-up** — real work, but not a first-publish blocker.
+- **Informational** — no corrective action required.
+
 ## Resolved since this review
 
 - SDK package name/version mismatch: resolved by `5c84cd4`.
@@ -24,8 +33,55 @@ decision record: SDK package `ergo-sdk` and first publish version
   broken intra-doc links denied.
 - Package inclusion sanity: verified for all ten publishable crates; READMEs and
   both license files are included, with no obvious bulk package entries.
+- Exact release tag: `v0.1.0-alpha.1` points at the green release-candidate
+  commit `7d70ce8`.
+- Final publish dry-run: all ten publishable crates pass from the tagged state
+  with internal dependencies patched locally to model registry propagation.
+
+## Final disposition summary
+
+| Item | Disposition | Blocks PUB-7? |
+|---|---|---|
+| Critical scaffold issue | Resolved pre-publish | No |
+| Critical SDK name/version issue | Resolved pre-publish | No |
+| 1. Crate README links | Resolved pre-publish | No |
+| 2. Tagged release commit | Resolved pre-publish | No |
+| 3. Propagation / registry checks | PUB-7 procedure | Yes, procedural |
+| 4. Future `0.1.x` dependency policy | Post-alpha follow-up | No |
+| 5. Scaffold switch breadth | Resolved pre-publish | No |
+| 6. Scaffold SDK version stamping | Resolved for first publish | No |
+| 7. `jsonschema` dependency weight | Accepted for alpha | No |
+| 7A. Host rustdoc links | Resolved pre-publish | No |
+| 8. CLI library surface | Accepted for alpha | No |
+| 8A. `ergo-sdk-types` consumer gap | Accepted for alpha | No |
+| 8B. Demo/test-shaped adapter names | Accepted for alpha | No |
+| 8C. SDK non-error re-exports | Accepted for alpha / classified | No |
+| 9. Scaffold-used SDK entrypoints | Accepted for alpha / scaffold-stable | No |
+| 10. CLI help text | Resolved pre-publish | No |
+| 11. Init summary | Resolved pre-publish | No |
+| 12. Scaffold tests | Resolved pre-publish | No |
+| 13. TOML/path escaping | Post-alpha follow-up | No |
+| 14. Generated Cargo.toml comment | Resolved pre-publish | No |
+| 15. Runtime compatibility stamping | Resolved for runtime compatibility | No |
+| 16. docs.rs layer guidance | Post-publish spot-check | No |
+| 17. Package inclusion | Resolved pre-publish | No |
+| 18. Metadata polish | Post-alpha follow-up | No |
+| 19. `ergo-fixtures` publishability | Informational / accepted | No |
+| 19A. Name availability | PUB-7 procedure | Yes, procedural |
+| 20. Path + version deps | Informational / confirmed | No |
+
+After this pass, the only PUB-7 blockers remaining in this document are
+procedural: publish in the tested order, verify registry propagation between
+tiers, and stop if crates.io rejects any name during the real transaction.
 
 ## Critical — CLI scaffold ships broken for external users
+
+### Disposition
+
+**Resolved pre-publish.** Commit `7dd6a80` changed default `ergo init` output to
+`ergo-sdk = "0.1.0-alpha.1"`, kept `--sdk-path` as an explicit local-development
+override, updated CLI help/summary/docs, and added default-mode scaffold tests.
+`cargo test -p ergo-cli` and the full CI gate passed after the change.
 
 ### Cause
 
@@ -50,6 +106,12 @@ that does not build for a normal crates.io user running
   dependency shape.
 
 ## Critical — SDK package name/version disagreement with decision docs
+
+### Disposition
+
+**Resolved pre-publish.** Commit `5c84cd4` renamed the package to `ergo-sdk`,
+updated the public import examples to `ergo_sdk`, and moved all ten publishable
+crates plus internal dependency requirements to `0.1.0-alpha.1`.
 
 ### Cause
 
@@ -80,6 +142,14 @@ URL slug.
   crates.io makes the package identity irreversible.
 
 ## 1. Crates.io/docs.rs README links may break
+
+### Disposition
+
+**Resolved pre-publish.** Commit `7d70ce8` replaced crate README links to
+top-level docs/CODE_MAPs/sibling crate READMEs with
+`https://github.com/ergo-engine/ergo/blob/v0.1.0-alpha.1/...` links. A link
+check after pushing the tag confirmed each unique tag-pinned URL returned HTTP
+200.
 
 ### Cause
 
@@ -125,6 +195,12 @@ for links to `docs/...`, `crates/kernel/CODE_MAP.md`,
 
 ## 2. Publish should happen from an exact tagged release commit
 
+### Disposition
+
+**Resolved pre-publish.** The release tag `v0.1.0-alpha.1` is pushed and peels
+to `7d70ce8`. CI completed successfully for that commit. The final full dry-run
+sweep was run after the tag was created and from that tagged state.
+
 ### Cause
 
 The current plan says push branch, confirm CI green, then publish. But the
@@ -153,21 +229,41 @@ from that state.
 
 ## 3. Ten-crate publish set needs explicit propagation and registry-resolution gates
 
+### Disposition
+
+**PUB-7 procedure.** No code change remains. This closes only during the real
+publish by publishing in dependency order, waiting for crates.io propagation,
+and verifying registry resolution from a fresh external crate before publishing
+each dependent tier.
+
+Use the dependency order proven by the final dry-run sweep:
+
+1. `ergo-runtime`
+2. `ergo-prod-duration`
+3. `ergo-sdk-types`
+4. `ergo-adapter`
+5. `ergo-loader`
+6. `ergo-fixtures`
+7. `ergo-supervisor`
+8. `ergo-host`
+9. `ergo-sdk`
+10. `ergo-cli`
+
 ### Cause
 
 The publish order is correct, but a ten-crate interdependent stack amplifies any
 low-tier mistake.
 
-Decision-record publish order:
+Tested publish order:
 
 1. `ergo-runtime`
 2. `ergo-prod-duration`
-3. `ergo-adapter`
-4. `ergo-supervisor`
+3. `ergo-sdk-types`
+4. `ergo-adapter`
 5. `ergo-loader`
-6. `ergo-host`
-7. `ergo-sdk-types`
-8. `ergo-fixtures`
+6. `ergo-fixtures`
+7. `ergo-supervisor`
+8. `ergo-host`
 9. `ergo-sdk`
 10. `ergo-cli`
 
@@ -190,6 +286,20 @@ fresh `cargo new` that depends on the just-published crate, over relying on a
 crates.io page reload.
 
 ## 4. Future `0.1.x` dependency-range policy is load-bearing
+
+### Disposition
+
+**Post-alpha follow-up.** This does not block the first
+`0.1.0-alpha.1` publish because all crates in the stack publish together at the
+same pre-release version and dry-run manifests normalize internal path
+dependencies to `version = "0.1.0-alpha.1"`. It must be decided before the first
+follow-up stack release. The default policy should be either:
+
+- patch compatibility across already-published `0.1.x` dependents, or
+- bump the whole affected stack to `0.2.0` for breaking internal-stack changes.
+
+Exact pins remain an option only if the project later chooses strict lockstep
+stack releases.
 
 ### Cause
 
@@ -232,6 +342,13 @@ Policy options:
    should be locked together.
 
 ## 5. Post-publish scaffold switch is broader than `cargo_toml_contents()`
+
+### Disposition
+
+**Resolved pre-publish.** Commit `7dd6a80` introduced an explicit scaffold SDK
+dependency mode, made published `ergo-sdk = "0.1.0-alpha.1"` the default,
+retained `--sdk-path` as a local override, updated help/summary/docs, and
+covered published-mode content plus local-path build/run behavior in CLI tests.
 
 ### Cause
 
@@ -277,6 +394,15 @@ error messages, docs, tests, and an outside-checkout scaffold smoke test.
 
 ## 6. Scaffold SDK version stamping can drift if tied blindly to CLI version
 
+### Disposition
+
+**Resolved pre-publish for the first publish; future release policy is tracked
+by item 4.** `SCAFFOLD_SDK_VERSION` is a dedicated constant and is not derived
+from `env!("CARGO_PKG_VERSION")`. This prevents the immediate scaffold from
+blindly coupling the CLI crate version to the SDK dependency version. Before a
+future CLI-only or SDK-only release, item 4 must still decide the broader
+versioning policy.
+
 ### Cause
 
 There is discussion of version-stamping the scaffold from the CLI's own build
@@ -303,6 +429,16 @@ version hardcoded for the immediate switch with a test, or adopt explicit
 lockstep release policy before using the CLI crate version.
 
 ## 7. `jsonschema` pulls in `reqwest`/`rustls`/`aws-lc-sys`
+
+### Disposition
+
+**Accepted for alpha; post-alpha follow-up.** Re-checking the dependency tree
+confirmed that `jsonschema` default features still pull `reqwest`, `rustls`, and
+`aws-lc-sys`. Current Ergo adapter use remains local schema compilation, and
+the full publish dry-run plus workspace rustdoc pass on the tagged state. This
+is therefore a build-weight/docs.rs risk to trim after alpha, not a
+first-publish blocker. Changing feature flags now would create fresh validation
+risk after the publish gate is already clean.
 
 ### Cause
 
@@ -340,6 +476,12 @@ this as a docs.rs/build-weight risk.
 
 ## 7A. `ergo-host` has unresolved intra-doc rustdoc links
 
+### Disposition
+
+**Resolved pre-publish.** Commit `7d70ce8` changed the links to crate-root
+qualified intra-doc links. `RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links"
+cargo doc --workspace --no-deps` passes.
+
 ### Cause
 
 The host runner docs contain intra-doc links that are likely unresolved by
@@ -362,6 +504,15 @@ rendering: it affects rustdoc/docs.rs directly.
 - Makes `cargo doc --workspace --no-deps` a cleaner pre-publish signal.
 
 ## 8. `ergo-cli` publishes a library surface in addition to the binary
+
+### Disposition
+
+**Accepted for alpha.** `ergo-cli` is intentionally published so users can
+install and run the `ergo` binary. Its Rust library modules
+(`error_format`, `gen_docs`, and `validate`) are incidental/internal alpha
+surface, not the recommended embedding API. Rust applications should depend on
+`ergo-sdk`. A later cleanup may minimize the library surface or document it more
+explicitly, but no pre-publish restructure is required.
 
 ### Cause
 
@@ -388,6 +539,14 @@ restructure if binary-only publication is intended.
 
 ## 8A. `ergo-sdk-types` has no downstream workspace consumers today
 
+### Disposition
+
+**Accepted for alpha.** `ergo-sdk-types` remains in the publish set as a small
+SDK-adjacent DTO/namespace reservation for future bindings and cross-client
+types. Its current surface is intentionally tiny (`SdkVersion`), and publishing
+it does not add dependency risk to the rest of the stack. Revisit when a real
+non-Rust or cross-SDK consumer appears.
+
 ### Cause
 
 `ergo-sdk-types` is in the publish set and exposes the small shared DTO surface
@@ -408,6 +567,25 @@ the dependency shape.
 - If kept, documents the reason as intentional rather than incidental.
 
 ## 8B. Public adapter/kernel surfaces expose demo or test-shaped names
+
+### Disposition
+
+**Accepted for alpha; post-alpha naming cleanup candidate.** These names are
+not accidental dead code:
+
+- `DemoSourceContextError` and
+  `ensure_demo_sources_have_no_required_context(...)` are used through host
+  setup for adapterless/demo/fixture-style preparation where no adapter provides
+  context keys.
+- `FaultRuntimeHandle` is the kernel runtime-invoker fault harness used by
+  supervisor replay/integration tests and documented in invariants around
+  deterministic replay behavior.
+
+The names are somewhat test/demo-shaped, but changing them after the
+`v0.1.0-alpha.1` tag would require a fresh API rename, doc sweep, retag, and
+full dry-run. For the first alpha, keep them as low-level kernel/adapter alpha
+surface and avoid presenting them as product API. Revisit naming/visibility in
+a post-alpha API polish pass.
 
 ### Cause
 
@@ -431,6 +609,27 @@ public API surface unless visibility or naming changes before first publish.
   or test fixtures that leaked into public API.
 
 ## 8C. SDK transparent re-exports increase semver coupling to lower layers
+
+### Disposition
+
+**Accepted for alpha with explicit classification.** The error-surface portion
+is already resolved by the opaque `ErgoErrorSource` model. The remaining
+non-error SDK re-exports are intentional because they appear in SDK-authored
+configuration, custom primitive registration, manual-runner event construction,
+or returned run/replay outcomes:
+
+- `FixtureItem` supports SDK-authored in-memory fixture ingress.
+- `EventTime`, `ExternalEventKind`, `HostedEvent`, `HostedStepOutcome`, and
+  `RunTermination` support manual runner input/output and hosted event
+  inspection.
+- `AdapterInput`, `CaptureBundle`, `CaptureJsonStyle`, `Egress*`,
+  `InterruptedRun`, `InterruptionReason`, `RunOutcome`, and `RunSummary` are
+  SDK-facing config/outcome vocabulary.
+- `build_core`, `build_core_catalog`, `core_registries`, `ExecutionContext`,
+  and the primitive modules are advanced custom-primitive registration surface.
+
+These re-exports are semver-sensitive SDK alpha surface. They should be treated
+as intentional until a later SDK facade narrowing pass removes or wraps them.
 
 Status update: the SDK error-surface replacement gate is no longer an open
 item in this finding. The typed-accessor gate was reconciled to the opaque
@@ -465,6 +664,17 @@ stale typed-accessor wording forward as unresolved action items from this plan.
 - Aligns implementation with the publish decision record's Q-SURFACE rules.
 
 ## 9. Generated scaffold code freezes SDK entrypoints as de facto stable
+
+### Disposition
+
+**Accepted for alpha and classified as scaffold-stable.** The generated
+scaffold uses `Ergo`, `ProjectSummary`, `StopHandle`,
+`Ergo::from_project(".")`, `.add_source(...)`, `.add_action(...)`, `.build()`,
+`.run_profile_with_stop(...)`, `.validate_project()`, and
+`.replay_profile(...)`. Those entrypoints are now treated as scaffold-stable for
+the `0.1.x` alpha line unless a later release intentionally migrates generated
+projects. The CLI scaffold tests compile and run the generated project through
+the local `--sdk-path` mode and check the published-mode generated contents.
 
 ### Cause
 
@@ -501,6 +711,12 @@ add tests around the generated code path if not already sufficient.
 
 ## 10. CLI help text still describes pre-publish scaffold behavior
 
+### Disposition
+
+**Resolved pre-publish.** CLI usage/help now describes the published
+`ergo-sdk` default, keeps `--sdk-path` as a local-development override, and names
+Python 3 as the sample channel runtime.
+
 ### Cause
 
 Current help text for `ergo init` says:
@@ -525,6 +741,12 @@ or checkouts only, if retained.
 
 ## 11. Generated init summary still assumes a path dependency
 
+### Disposition
+
+**Resolved pre-publish.** `render_init_summary(...)` now reports the dependency
+mode: `ergo-sdk = "0.1.0-alpha.1"` for default published mode, or `path <...>`
+for explicit `--sdk-path`.
+
 ### Cause
 
 `render_init_summary(...)` currently prints `sdk dependency: <path>`. This is
@@ -542,6 +764,12 @@ Likely fix shape: change summary rendering to describe the dependency mode:
 `sdk dependency: path <...>` for explicit local override.
 
 ## 12. Scaffold tests must cover published mode, not only checkout mode
+
+### Disposition
+
+**Resolved pre-publish.** CLI scaffold tests now cover default published-mode
+generation outside the workspace, local `--sdk-path` build/run behavior, help
+text, stale-comment absence, and runtime-compatibility drift.
 
 ### Cause
 
@@ -566,6 +794,15 @@ Specific gaps:
 
 ## 13. Generated TOML/path escaping is narrow
 
+### Disposition
+
+**Post-alpha follow-up, low blast radius.** Default scaffolds no longer render a
+path dependency, so this affects only explicit `--sdk-path` local-development
+overrides. The current helper escapes backslashes and quotes, which covers the
+most common TOML-breaking path characters. A later hardening pass should add
+path edge-case tests or switch generated dependency rendering to a TOML
+serializer if the template grows.
+
 ### Cause
 
 `cargo_toml_contents()` currently escapes only backslashes and quotes in the SDK
@@ -589,6 +826,11 @@ the template grows.
 
 ## 14. `cargo_toml_contents()` generated comment will become stale
 
+### Disposition
+
+**Resolved pre-publish.** The generated `Cargo.toml` no longer contains the
+local-checkout/until-publish comment.
+
 ### Cause
 
 Generated `Cargo.toml` currently includes a comment saying the scaffold points
@@ -605,6 +847,16 @@ That comment becomes wrong as soon as the default dependency is versioned.
 - Avoids confusing new users about whether the SDK is actually published.
 
 ## 15. Adapter manifest/runtime compatibility stamping in scaffold may drift
+
+### Disposition
+
+**Resolved for runtime compatibility; residual template-version audit accepted
+for alpha.** The generated adapter manifest now uses
+`SCAFFOLD_RUNTIME_COMPATIBILITY`, and
+`scaffold_runtime_compatibility_matches_runtime_version` asserts it matches
+`ergo_runtime::runtime_version()`. Remaining generated `version = "0.1.0"` or
+`version: 1.0.0` values are sample/user-artifact versions, not registry package
+versions. A later authoring-doc pass can make that distinction more explicit.
 
 ### Cause
 
@@ -632,6 +884,16 @@ applicable; document which versions are user-owned versus Ergo-owned.
 
 ## 16. docs.rs rustdoc may not carry the same internal-layer warnings as README
 
+### Disposition
+
+**Accepted for alpha; post-publish spot-check.** Workspace rustdoc builds clean
+with broken intra-doc links denied, and crate READMEs now carry the main
+crates.io landing guidance. Crate-root rustdoc does not yet systematically
+duplicate every README warning that most users should start with SDK/CLI. This
+is documentation polish, not a mechanical publish blocker. Spot-check rendered
+docs.rs pages after publish and tighten crate-root rustdoc in a follow-up if
+users land in the wrong layer.
+
 ### Cause
 
 Crates.io READMEs now warn that internal crates are internal layers and most
@@ -654,6 +916,13 @@ pre-publish via local rustdoc, to ensure they carry equivalent "most users want
 SDK/CLI" guidance where needed.
 
 ## 17. Package inclusion should be verified for docs and licenses
+
+### Disposition
+
+**Resolved pre-publish.** `cargo package --list --allow-dirty` was inspected for
+all ten publishable crates. Each package includes `README.md`, `LICENSE-MIT`,
+and `LICENSE-APACHE`, with no obvious bulk entries such as `target/`, `.git/`,
+top-level `docs/`, or crate archives.
 
 ### Cause
 
@@ -681,6 +950,13 @@ Likely fix shape: for each crate, inspect `cargo package --list` or
 reported clean, the main remaining concern is external README link targets.
 
 ## 18. Metadata polish is intentionally deferred and should not block
+
+### Disposition
+
+**Post-alpha follow-up, explicitly non-blocking.** Required crates.io metadata
+is present and dry-runs pass. Keywords, categories, homepage, documentation,
+authors, and explicit `readme = "README.md"` can be added in a later polish
+release after choosing valid category/keyword slugs deliberately.
 
 ### Cause
 
@@ -715,6 +991,12 @@ behavior, dependency-range policy, or docs.rs/native dependency risk.
 
 ## 19. `ergo-fixtures` being publishable is correct
 
+### Disposition
+
+**Informational / accepted.** Keep `ergo-fixtures` in the publish set because
+`ergo-cli` depends on it for shipped fixture commands. No corrective action is
+needed.
+
 ### Cause
 
 There was earlier uncertainty because it lives under `crates/shared/fixtures`,
@@ -734,6 +1016,14 @@ Conclusion: do not remove `ergo-fixtures` from the publish set.
 
 ## 19A. Name availability is not guaranteed until the publish transaction
 
+### Disposition
+
+**PUB-7 procedure.** Exact-name availability was re-checked immediately before
+the final dry-run summary and all ten names were free. This still cannot be
+closed until crates.io accepts each real publish transaction. During PUB-7,
+publish name-sensitive low-tier crates promptly and stop if any name collision
+appears.
+
 ### Cause
 
 Searches or absence of local conflicts can suggest that intended crate names are
@@ -750,6 +1040,13 @@ decided SDK package name `ergo-sdk` before crates.io reserves it.
   accepts the package.
 
 ## 20. Path + version dependencies are not themselves a publish blocker
+
+### Disposition
+
+**Informational / confirmed.** Final packaged manifests normalize internal
+workspace dependencies to version-only requirements at `0.1.0-alpha.1`; the only
+remaining `path =` entries in packaged manifests are Cargo target paths for
+lib/bin/test entries, not dependency paths.
 
 ### Cause
 
