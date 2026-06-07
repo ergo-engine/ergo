@@ -53,7 +53,7 @@ mod tests {
             kind: "adapter".to_string(),
             id: "demo".to_string(),
             version: "1.0.0".to_string(),
-            runtime_compatibility: "0.1.0".to_string(),
+            runtime_compatibility: "0.1.0-alpha.1".to_string(),
             context_keys: vec![ContextKeySpec {
                 name: "x".to_string(),
                 ty: "Number".to_string(),

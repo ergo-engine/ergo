@@ -40,11 +40,11 @@ ergo init my-project
 - `captures/`
 
 The generated `Cargo.toml` currently points at a local
-`ergo-sdk-rust` checkout.
+`ergo-sdk` checkout.
 
 - Inside the Ergo repository, `ergo init` wires that dependency
   automatically with a relative path.
-- Outside the repository, pass `--sdk-path <path-to-ergo-sdk-rust>`
+- Outside the repository, pass `--sdk-path <path-to-ergo-sdk>`
   until the SDK is published outside the repo.
 
 ## 2. Run the Sample Project

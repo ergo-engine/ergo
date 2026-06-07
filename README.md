@@ -35,7 +35,7 @@ Every Ergo project is a Rust crate. Depending on the profile, you may author up 
 4. **Ingress channels** — optional programs that bring external data into the engine
 5. **Egress channels** — optional programs that realize external effects (e.g., placing orders)
 
-The SDK (`ergo-sdk-rust`) is the primary product surface. The CLI is development tooling.
+The SDK (`ergo-sdk`) is the primary product surface. The CLI is development tooling.
 
 ## Project Layout
 
@@ -66,7 +66,7 @@ my-project/
 │  User Project (Rust crate)                              │
 │  implementations, graphs, adapters, channels            │
 ├─────────────────────────────────────────────────────────┤
-│  SDK  (ergo-sdk-rust)                                   │
+│  SDK  (ergo-sdk)                                   │
 │  builder API, profile resolution, primitive registration│
 ├─────────────────────────────────────────────────────────┤
 │  Host  (ergo-host + ergo-loader)                        │

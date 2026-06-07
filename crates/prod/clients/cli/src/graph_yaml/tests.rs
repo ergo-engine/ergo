@@ -45,7 +45,7 @@ fn write_minimal_adapter(base: &std::path::Path) -> Result<std::path::PathBuf, S
         r#"kind: adapter
 id: minimal_test_adapter
 version: 1.0.0
-runtime_compatibility: 0.1.0
+runtime_compatibility: 0.1.0-alpha.1
 context_keys: []
 event_kinds:
   - name: tick

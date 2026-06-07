@@ -247,7 +247,7 @@ fn intent_adapter_manifest_text() -> &'static str {
 kind: adapter
 id: replay_intent_adapter
 version: 1.0.0
-runtime_compatibility: 0.1.0
+runtime_compatibility: 0.1.0-alpha.1
 context_keys:
   - name: last_qty
     type: Number
@@ -416,7 +416,7 @@ fn minimal_adapter_manifest_text() -> &'static str {
 kind: adapter
 id: minimal_test_adapter
 version: 1.0.0
-runtime_compatibility: 0.1.0
+runtime_compatibility: 0.1.0-alpha.1
 context_keys: []
 event_kinds:
   - name: tick

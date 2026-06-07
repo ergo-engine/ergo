@@ -8,7 +8,7 @@ This is a real publishable tooling crate, not hidden test support.
 `ergo-cli` depends on it as a normal dependency for `ergo fixture inspect`,
 `ergo fixture validate`, and `ergo csv-to-fixture`.
 
-Most application users should start with `ergo-sdk-rust` or `ergo-cli` rather
+Most application users should start with `ergo-sdk` or `ergo-cli` rather
 than depending on this crate directly.
 
 ## What this crate owns

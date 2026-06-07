@@ -335,7 +335,7 @@ fn init_accepts_explicit_sdk_path_outside_workspace_checkout() -> Result<(), Str
         "Cargo.toml should not write an absolute SDK path, got:\n{cargo_toml}"
     );
     assert!(
-        cargo_toml.contains("ergo-sdk-rust = { path = "),
+        cargo_toml.contains("ergo-sdk = { path = "),
         "expected local SDK dependency, got:\n{cargo_toml}"
     );
     assert!(

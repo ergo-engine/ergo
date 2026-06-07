@@ -175,7 +175,7 @@ fn make_temp_dir(label: &str) -> PathBuf {
         .expect("system time")
         .as_nanos();
     let dir = std::env::temp_dir().join(format!(
-        "ergo_sdk_rust_{label}_{}_{}_{}",
+        "ergo_sdk_{label}_{}_{}_{}",
         std::process::id(),
         index,
         nanos
@@ -232,7 +232,7 @@ fn write_intent_adapter_manifest(base: &Path) -> PathBuf {
 kind: adapter
 id: sdk_trading_adapter
 version: 1.0.0
-runtime_compatibility: 0.1.0
+runtime_compatibility: 0.1.0-alpha.1
 context_keys:
   - name: last_qty
     type: Number
@@ -293,7 +293,7 @@ fn write_minimal_adapter_file(base: &Path) -> PathBuf {
 kind: adapter
 id: minimal_test_adapter
 version: 1.0.0
-runtime_compatibility: 0.1.0
+runtime_compatibility: 0.1.0-alpha.1
 context_keys: []
 event_kinds:
   - name: tick
@@ -502,7 +502,7 @@ fn minimal_adapter_for_process_tests() -> AdapterInput {
 kind: adapter
 id: minimal_test_adapter
 version: 1.0.0
-runtime_compatibility: 0.1.0
+runtime_compatibility: 0.1.0-alpha.1
 context_keys: []
 event_kinds:
   - name: tick
@@ -1394,7 +1394,7 @@ outputs:
 kind: adapter
 id: sdk_trading_adapter
 version: 1.0.0
-runtime_compatibility: 0.1.0
+runtime_compatibility: 0.1.0-alpha.1
 context_keys:
   - name: last_qty
     type: Number

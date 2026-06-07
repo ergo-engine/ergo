@@ -4,7 +4,7 @@
 filesystem or in-memory graph sources, decodes YAML/JSON authoring text, resolves
 cluster trees, and hands sealed graph assets to the host.
 
-Most users should start with `ergo-sdk-rust` for embedded Rust usage or
+Most users should start with `ergo-sdk` for embedded Rust usage or
 `ergo-cli` for command-line usage. Depend on this crate directly only when you
 need lower-level project discovery, graph decode, or asset-loading surfaces.
 

@@ -15,7 +15,7 @@ Change Rule: Additive only
 **Current CLI contract:** `ergo run <graph.yaml> (-f|--fixture <events.jsonl> | --driver-cmd <program> [--driver-arg <value> ...]) [-a|--adapter <adapter.yaml>] [--egress-config <egress.toml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path|--search-path <path> ...]` (current flag names retain legacy `driver` terminology). For graph-agnostic fixture operability, see `ergo fixture inspect` and `ergo fixture validate`.
 **Related ingress guidance:** [ingress-channel-guide](ingress-channel-guide.md) documents `HostedEvent`, process-channel protocol, and fixture/process authoring expectations.
 **Future work:** Workspace-level project discovery now exists through
-`ergo-loader` + `ergo-sdk-rust` and `ergo init` now scaffolds the
+`ergo-loader` + `ergo-sdk` and `ergo init` now scaffolds the
 project layout. Optional CLI project-mode convenience commands remain a
 future extension.
 

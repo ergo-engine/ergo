@@ -52,7 +52,7 @@ fn parse_init_options(args: &[String]) -> Result<InitOptions, String> {
                             "--sdk-path requires a path",
                         )
                         .with_where("arg '--sdk-path'")
-                        .with_fix("provide --sdk-path <path-to-ergo-sdk-rust>"),
+                        .with_fix("provide --sdk-path <path-to-ergo-sdk>"),
                     )
                 })?;
                 sdk_path = Some(PathBuf::from(value));
@@ -395,9 +395,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# This scaffold points at a local ergo-sdk-rust checkout until the SDK
+# This scaffold points at a local ergo-sdk checkout until the SDK
 # is published outside the repository.
-ergo-sdk-rust = {{ path = "{sdk_dependency_path}" }}
+ergo-sdk = {{ path = "{sdk_dependency_path}" }}
 ctrlc = "3.4"
 
 [workspace]
@@ -438,7 +438,7 @@ fn main_rs_contents() -> String {
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use ergo_sdk_rust::{Ergo, ProjectSummary, StopHandle};
+use ergo_sdk::{Ergo, ProjectSummary, StopHandle};
 
 mod implementations;
 
@@ -607,7 +607,7 @@ pub use sources::SampleMessageSource;
 fn sources_rs_contents() -> String {
     r#"use std::collections::HashMap;
 
-use ergo_sdk_rust::{common, source, ExecutionContext};
+use ergo_sdk::{common, source, ExecutionContext};
 
 pub struct SampleMessageSource {
     manifest: source::SourcePrimitiveManifest,
@@ -679,7 +679,7 @@ impl source::SourcePrimitive for SampleMessageSource {
 fn actions_rs_contents() -> String {
     r#"use std::collections::HashMap;
 
-use ergo_sdk_rust::{action, common};
+use ergo_sdk::{action, common};
 
 pub struct PublishSampleAction {
     manifest: action::ActionPrimitiveManifest,
@@ -832,7 +832,7 @@ fn adapter_yaml_contents() -> String {
     r#"kind: adapter
 id: sample_adapter
 version: 1.0.0
-runtime_compatibility: "0.1.0"
+runtime_compatibility: "0.1.0-alpha.1"
 
 context_keys:
   - name: message
@@ -971,7 +971,7 @@ fn default_sdk_dependency_path(target_dir: &Path) -> Result<String, String> {
             )
             .with_where("init command")
             .with_fix(
-                "run 'ergo init' inside this checkout or provide --sdk-path <path-to-ergo-sdk-rust>",
+                "run 'ergo init' inside this checkout or provide --sdk-path <path-to-ergo-sdk>",
             ),
         ));
     }

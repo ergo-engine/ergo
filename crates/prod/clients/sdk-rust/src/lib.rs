@@ -1,6 +1,6 @@
 //! Rust SDK for embedding Ergo in an application.
 //!
-//! `ergo-sdk-rust` is the Rust application boundary for Ergo. Most users
+//! `ergo-sdk` is the Rust application boundary for Ergo. Most users
 //! build an [`Ergo`] engine, point it at a project, then run or replay a
 //! named profile from that project.
 //!
@@ -56,7 +56,7 @@
 //! Run a named profile from a filesystem project:
 //!
 //! ```no_run
-//! use ergo_sdk_rust::{Ergo, ErgoRunError, RunOutcome};
+//! use ergo_sdk::{Ergo, ErgoRunError, RunOutcome};
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let ergo = Ergo::from_project("/path/to/my-ergo-project").build()?;
@@ -80,7 +80,7 @@
 //! Drive a profile event-by-event with [`ProfileRunner`]:
 //!
 //! ```no_run
-//! use ergo_sdk_rust::{Ergo, EventTime, ExternalEventKind, HostedEvent};
+//! use ergo_sdk::{Ergo, EventTime, ExternalEventKind, HostedEvent};
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let ergo = Ergo::from_project("/path/to/my-ergo-project").build()?;
@@ -771,8 +771,8 @@ struct ResolvedProfilePlan {
 /// filesystem project discovered from a path.
 ///
 /// ```
-/// # fn main() -> Result<(), ergo_sdk_rust::ErgoBuildError> {
-/// let ergo = ergo_sdk_rust::Ergo::builder().build()?;
+/// # fn main() -> Result<(), ergo_sdk::ErgoBuildError> {
+/// let ergo = ergo_sdk::Ergo::builder().build()?;
 /// # let _ = ergo;
 /// # Ok(())
 /// # }
@@ -925,8 +925,8 @@ impl Ergo {
     /// Starts an [`ErgoBuilder`].
     ///
     /// ```
-    /// # fn main() -> Result<(), ergo_sdk_rust::ErgoBuildError> {
-    /// let ergo = ergo_sdk_rust::Ergo::builder().build()?;
+    /// # fn main() -> Result<(), ergo_sdk::ErgoBuildError> {
+    /// let ergo = ergo_sdk::Ergo::builder().build()?;
     /// # let _ = ergo;
     /// # Ok(())
     /// # }
@@ -942,7 +942,7 @@ impl Ergo {
     ///
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let ergo = ergo_sdk_rust::Ergo::from_project("/path/to/my-ergo-project").build()?;
+    /// let ergo = ergo_sdk::Ergo::from_project("/path/to/my-ergo-project").build()?;
     /// let summary = ergo.validate_project()?;
     /// # let _ = summary;
     /// # Ok(())
@@ -1002,7 +1002,7 @@ impl Ergo {
     ///
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let ergo = ergo_sdk_rust::Ergo::from_project("/path/to/my-ergo-project").build()?;
+    /// let ergo = ergo_sdk::Ergo::from_project("/path/to/my-ergo-project").build()?;
     /// let outcome = ergo.run_profile("historical")?;
     /// # let _ = outcome;
     /// # Ok(())
@@ -1062,10 +1062,10 @@ impl Ergo {
     ///
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let bundle: ergo_sdk_rust::CaptureBundle = unimplemented!();
-    /// let ergo = ergo_sdk_rust::Ergo::builder().build()?;
+    /// # let bundle: ergo_sdk::CaptureBundle = unimplemented!();
+    /// let ergo = ergo_sdk::Ergo::builder().build()?;
     /// let replay = ergo.replay_bundle(
-    ///     ergo_sdk_rust::ReplayBundleConfig::new(bundle, "graphs/strategy.yaml"),
+    ///     ergo_sdk::ReplayBundleConfig::new(bundle, "graphs/strategy.yaml"),
     /// )?;
     /// # let _ = replay;
     /// # Ok(())
@@ -1097,7 +1097,7 @@ impl Ergo {
     ///
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let ergo = ergo_sdk_rust::Ergo::from_project("/path/to/my-ergo-project").build()?;
+    /// let ergo = ergo_sdk::Ergo::from_project("/path/to/my-ergo-project").build()?;
     /// let replay = ergo.replay_profile("historical", "captures/historical.capture.json")?;
     /// # let _ = replay;
     /// # Ok(())
@@ -1390,7 +1390,7 @@ impl Ergo {
     /// setup, but does not launch process ingress.
     ///
     /// ```no_run
-    /// use ergo_sdk_rust::{Ergo, EventTime, ExternalEventKind, HostedEvent};
+    /// use ergo_sdk::{Ergo, EventTime, ExternalEventKind, HostedEvent};
     ///
     /// fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///     let ergo = Ergo::from_project("/path/to/my-ergo-project").build()?;
@@ -1485,7 +1485,7 @@ impl Ergo {
 /// successful steps returns a lifecycle error rather than transitioning.
 ///
 /// ```no_run
-/// use ergo_sdk_rust::{Ergo, EventTime, ExternalEventKind, HostedEvent};
+/// use ergo_sdk::{Ergo, EventTime, ExternalEventKind, HostedEvent};
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let ergo = Ergo::from_project("/path/to/my-ergo-project").build()?;

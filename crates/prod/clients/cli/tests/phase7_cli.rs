@@ -121,7 +121,7 @@ fn check_compose_source_adapter_failure_text_shows_comp_rule() {
 kind: adapter
 id: test_adapter
 version: 0.1.0
-runtime_compatibility: 0.1.0
+runtime_compatibility: 0.1.0-alpha.1
 
 context_keys:
   - name: y
@@ -185,7 +185,7 @@ fn validate_adapter_success_text() {
 kind: adapter
 id: test_adapter
 version: 0.1.0
-runtime_compatibility: 0.1.0
+runtime_compatibility: 0.1.0-alpha.1
 
 context_keys:
   - name: price
@@ -285,7 +285,7 @@ fn check_compose_action_adapter_failure_json_includes_rule_id() {
 kind: adapter
 id: test_adapter
 version: 0.1.0
-runtime_compatibility: 0.1.0
+runtime_compatibility: 0.1.0-alpha.1
 
 context_keys:
   - name: x
@@ -358,7 +358,7 @@ fn check_compose_source_dollar_key_uses_manifest_default() {
 kind: adapter
 id: test_adapter
 version: 0.1.0
-runtime_compatibility: 0.1.0
+runtime_compatibility: 0.1.0-alpha.1
 
 context_keys:
   - name: price
@@ -424,7 +424,7 @@ fn check_compose_action_dollar_key_uses_manifest_default() {
 kind: adapter
 id: test_adapter
 version: 0.1.0
-runtime_compatibility: 0.1.0
+runtime_compatibility: 0.1.0-alpha.1
 
 context_keys:
   - name: target_price
@@ -502,7 +502,7 @@ fn check_compose_dollar_key_without_default_still_fails_comp16() {
 kind: adapter
 id: test_adapter
 version: 0.1.0
-runtime_compatibility: 0.1.0
+runtime_compatibility: 0.1.0-alpha.1
 
 context_keys:
   - name: price
@@ -567,7 +567,7 @@ fn check_compose_source_dollar_key_non_string_default_still_fails_comp16() {
 kind: adapter
 id: test_adapter
 version: 0.1.0
-runtime_compatibility: 0.1.0
+runtime_compatibility: 0.1.0-alpha.1
 
 context_keys:
   - name: price

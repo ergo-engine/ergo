@@ -10,7 +10,7 @@ fn baseline_manifest() -> AdapterManifest {
         kind: "adapter".to_string(),
         id: "good_id".to_string(),
         version: "1.0.0".to_string(),
-        runtime_compatibility: "0.1.0".to_string(), // matches validate.rs placeholder RUNTIME_VERSION
+        runtime_compatibility: "0.1.0-alpha.1".to_string(), // matches ergo_runtime::runtime_version()
         context_keys: vec![ContextKeySpec {
             name: "foo".to_string(),
             ty: "String".to_string(),
@@ -63,7 +63,7 @@ fn adp_2_invalid_version_rejected() {
 #[test]
 fn adp_3_incompatible_runtime_rejected() {
     let mut m = baseline_manifest();
-    m.runtime_compatibility = "9.9.9".to_string(); // higher than placeholder 0.1.0
+    m.runtime_compatibility = "9.9.9".to_string(); // higher than current runtime version
     assert_rule(&m, "ADP-3", Some("$.runtime_compatibility"));
 }
 

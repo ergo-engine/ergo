@@ -13,7 +13,7 @@
 //! - Host egress config semantics or validation rules themselves.
 //!
 //! Connects to:
-//! - `ergo_sdk_rust` public exports, which should mirror the intended
+//! - `ergo_sdk` public exports, which should mirror the intended
 //!   programmatic egress authoring surface.
 //!
 //! Safety notes:
@@ -22,7 +22,7 @@
 
 use std::time::Duration;
 
-use ergo_sdk_rust::{
+use ergo_sdk::{
     parse_egress_config_toml, EgressChannelConfig, EgressConfig, EgressConfigBuilder,
     EgressConfigError, EgressRoute,
 };

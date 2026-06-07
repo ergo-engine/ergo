@@ -5,7 +5,7 @@ graph runs, replay, manifest validation, fixture tooling, and graph
 visualization.
 
 Use this crate when you want the shipped binary. Rust applications that embed
-Ergo directly usually want `ergo-sdk-rust` instead.
+Ergo directly usually want `ergo-sdk` instead.
 
 ## Current command surface
 

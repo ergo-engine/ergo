@@ -4,7 +4,7 @@
 ontology, bundled deterministic standard library, graph expansion/validation
 pipeline, and synchronous execution engine.
 
-Most users should start with `ergo-sdk-rust` for embedded Rust usage or
+Most users should start with `ergo-sdk` for embedded Rust usage or
 `ergo-cli` for command-line usage. Depend on this crate directly only when you
 are building lower-level kernel integrations, custom primitive registration
 surfaces, or runtime-focused tooling.

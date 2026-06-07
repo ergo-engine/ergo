@@ -4,7 +4,7 @@
 adapter, supervisor, runtime, egress, and capture surfaces into the canonical
 run, replay, validation, and manual-step use cases consumed by the SDK and CLI.
 
-Most users should start with `ergo-sdk-rust` for embedded Rust usage or
+Most users should start with `ergo-sdk` for embedded Rust usage or
 `ergo-cli` for command-line usage. Depend on this crate directly only for
 advanced host integration or tooling that needs lower-level orchestration
 surfaces.

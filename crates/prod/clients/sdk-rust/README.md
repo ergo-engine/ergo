@@ -1,6 +1,6 @@
-# ergo-sdk-rust
+# ergo-sdk
 
-`ergo-sdk-rust` is the primary Rust API for embedding Ergo in an application.
+`ergo-sdk` is the primary Rust API for embedding Ergo in an application.
 It builds an `Ergo` handle, resolves filesystem or in-memory project profiles,
 and delegates run, replay, validation, and manual stepping to the production
 host layer.
@@ -12,7 +12,7 @@ the `ergo` binary from `ergo-cli`.
 
 ```toml
 [dependencies]
-ergo-sdk-rust = "0.1.0"
+ergo-sdk = "0.1.0-alpha.1"
 ```
 
 ## Minimal filesystem project example
@@ -23,7 +23,7 @@ created by `ergo init`; in your own project, replace `historical` with a profile
 that exists in your `ergo.toml`.
 
 ```rust,no_run
-use ergo_sdk_rust::{Ergo, RunOutcome};
+use ergo_sdk::{Ergo, RunOutcome};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ergo = Ergo::from_project(".").build()?;

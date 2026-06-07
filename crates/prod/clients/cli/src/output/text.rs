@@ -19,7 +19,7 @@ pub fn usage() -> String {
         "  ergo fixture validate <events.jsonl> [--format text|json]",
         "",
         "Project scaffolding",
-        "  ergo init <project-dir> [--sdk-path <path-to-ergo-sdk-rust>] [--force]",
+        "  ergo init <project-dir> [--sdk-path <path-to-ergo-sdk>] [--force]",
         "    note: default SDK path works inside this Ergo checkout; generated sample channels target POSIX 'sh'",
         "",
         "Graph visualization",
@@ -61,11 +61,11 @@ pub fn help_topic(topic: &str, fixture_usage: &str) -> Option<String> {
         "init" => Some(
             [
                 "usage:",
-                "  ergo init <project-dir> [--sdk-path <path-to-ergo-sdk-rust>] [--force]",
+                "  ergo init <project-dir> [--sdk-path <path-to-ergo-sdk>] [--force]",
                 "",
                 "notes:",
                 "  - default SDK path works when scaffolding inside this Ergo checkout",
-                "  - use --sdk-path outside the checkout until ergo-sdk-rust is published",
+                "  - use --sdk-path outside the checkout until ergo-sdk is published",
                 "  - generated sample ingress/egress channels currently target POSIX 'sh'",
             ]
             .join("\n"),

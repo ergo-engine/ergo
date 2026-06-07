@@ -4,7 +4,7 @@
 manifests, event binding, source/action composition checks, adapter provenance,
 capture helpers, and runtime-facing external event types.
 
-Most users should start with `ergo-sdk-rust` for embedded Rust usage or
+Most users should start with `ergo-sdk` for embedded Rust usage or
 `ergo-cli` for command-line usage. Depend on this crate directly only when you
 are building lower-level Ergo adapter tooling or integrating with kernel-facing
 adapter surfaces.

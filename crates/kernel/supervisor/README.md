@@ -3,7 +3,7 @@
 `ergo-supervisor` is the kernel supervisor crate for deterministic episode
 scheduling, decision logging, capture, and replay over a `RuntimeInvoker`.
 
-Most users should start with `ergo-sdk-rust` for embedded Rust usage or
+Most users should start with `ergo-sdk` for embedded Rust usage or
 `ergo-cli` for command-line usage. Depend on this crate directly only when you
 need the lower-level kernel capture/replay or supervisor APIs.
 

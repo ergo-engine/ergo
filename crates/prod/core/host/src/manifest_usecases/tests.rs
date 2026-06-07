@@ -75,7 +75,7 @@ fn check_compose_text_accepts_in_memory_manifests() -> Result<(), String> {
 kind: adapter
 id: demo_adapter
 version: "0.1.0"
-runtime_compatibility: "0.1.0"
+runtime_compatibility: "0.1.0-alpha.1"
 context_keys:
   - name: auth_token
     type: String
@@ -120,7 +120,7 @@ fn check_compose_values_rejects_unsupported_target_kind_with_current_projection(
             "kind": "adapter",
             "id": "demo_adapter",
             "version": "0.1.0",
-            "runtime_compatibility": "0.1.0",
+            "runtime_compatibility": "0.1.0-alpha.1",
             "context_keys": [{
                 "name": "auth_token",
                 "type": "String",

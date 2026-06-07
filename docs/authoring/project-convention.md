@@ -12,7 +12,7 @@ Change Rule: Tracks implementation
 This document explains the current v1 Ergo project model.
 
 The primary product surface is the Rust SDK. A production Ergo
-application is a Rust crate that depends on `ergo-sdk-rust`,
+application is a Rust crate that depends on `ergo-sdk`,
 may register custom primitives in-process, and runs named profiles from
 either `ergo.toml` on disk or an SDK-owned in-memory project snapshot.
 

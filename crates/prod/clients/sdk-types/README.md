@@ -5,7 +5,7 @@ across Ergo SDK clients and bindings.
 
 Today the public surface is intentionally small: it exports `SdkVersion`.
 
-Most Rust application users should depend on `ergo-sdk-rust` instead. Use this
+Most Rust application users should depend on `ergo-sdk` instead. Use this
 crate directly only when you need the shared transport/version DTOs without the
 Rust SDK engine.
 
