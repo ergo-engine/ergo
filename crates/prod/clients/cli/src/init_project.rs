@@ -4,6 +4,21 @@
 //! - Implements the `ergo init` command, generating project directory
 //!   structure, graph YAML templates, adapter stubs, and profile
 //!   configuration from user prompts.
+//!
+//! Scaffold SDK dependency mode:
+//! - Default mode emits a published version dependency on `ergo-sdk`
+//!   at `SCAFFOLD_SDK_VERSION`. The SDK and CLI do not release in
+//!   lockstep, so this constant is intentionally not derived from
+//!   `CARGO_PKG_VERSION`.
+//! - Explicit `--sdk-path <path>` mode emits a local path dependency
+//!   and is reserved for local development against an unpublished SDK
+//!   checkout.
+//!
+//! Scaffold runtime compatibility:
+//! - Generated adapter manifests stamp `runtime_compatibility` with
+//!   `SCAFFOLD_RUNTIME_COMPATIBILITY`. A drift-guard test in
+//!   `init_project::tests` asserts this constant equals
+//!   `ergo_runtime::runtime_version()`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,17 +26,37 @@ use std::path::{Path, PathBuf};
 use crate::error_format::{render_cli_error, CliErrorInfo};
 use ergo_host::PROCESS_DRIVER_PROTOCOL_VERSION;
 
+/// Published `ergo-sdk` version used in default-mode scaffolds.
+///
+/// Not derived from `env!("CARGO_PKG_VERSION")` because the CLI and SDK
+/// are not guaranteed to release in lockstep.
+pub(crate) const SCAFFOLD_SDK_VERSION: &str = "0.1.0-alpha.1";
+
+/// Runtime compatibility stamp written into generated adapter manifests.
+///
+/// A drift-guard test asserts this equals `ergo_runtime::runtime_version()`.
+pub(crate) const SCAFFOLD_RUNTIME_COMPATIBILITY: &str = "0.1.0-alpha.1";
+
+#[derive(Debug, Clone)]
+enum SdkDependency {
+    /// Default mode: published `ergo-sdk = "<version>"` dependency.
+    Published { version: &'static str },
+    /// Explicit `--sdk-path` override: local path dependency, rendered
+    /// relative to the generated project root when possible.
+    LocalPath { rendered_path: String },
+}
+
 #[derive(Debug, Clone)]
 struct InitOptions {
     target_dir: PathBuf,
-    sdk_dependency_path: String,
+    sdk_dependency: SdkDependency,
     force: bool,
 }
 
 #[derive(Debug, Clone)]
 struct InitSummary {
     root: PathBuf,
-    sdk_dependency_path: String,
+    sdk_dependency: SdkDependency,
 }
 
 #[derive(Debug, Clone)]
@@ -102,14 +137,18 @@ fn parse_init_options(args: &[String]) -> Result<InitOptions, String> {
 
     let target_dir = absolutize_path(&target_dir, "target project directory")?;
 
-    let sdk_dependency_path = match sdk_path {
-        Some(path) => resolve_explicit_sdk_dependency_path(&target_dir, &path)?,
-        None => default_sdk_dependency_path(&target_dir)?,
+    let sdk_dependency = match sdk_path {
+        Some(path) => SdkDependency::LocalPath {
+            rendered_path: resolve_explicit_sdk_dependency_path(&target_dir, &path)?,
+        },
+        None => SdkDependency::Published {
+            version: SCAFFOLD_SDK_VERSION,
+        },
     };
 
     Ok(InitOptions {
         target_dir,
-        sdk_dependency_path,
+        sdk_dependency,
         force,
     })
 }
@@ -119,7 +158,7 @@ fn scaffold_project(options: &InitOptions) -> Result<InitSummary, String> {
     create_project_directories(&options.target_dir)?;
 
     let names = derive_project_names(&options.target_dir)?;
-    let files = scaffold_files(&names, &options.sdk_dependency_path);
+    let files = scaffold_files(&names, &options.sdk_dependency);
 
     for (relative, contents) in files {
         write_scaffold_file(&options.target_dir.join(relative), &contents)?;
@@ -127,7 +166,7 @@ fn scaffold_project(options: &InitOptions) -> Result<InitSummary, String> {
 
     Ok(InitSummary {
         root: options.target_dir.clone(),
-        sdk_dependency_path: options.sdk_dependency_path.clone(),
+        sdk_dependency: options.sdk_dependency.clone(),
     })
 }
 
@@ -305,14 +344,14 @@ fn sanitize_package_name(raw_name: &str) -> String {
     }
 }
 
-fn scaffold_files(names: &ProjectNames, sdk_dependency_path: &str) -> Vec<(&'static str, String)> {
+fn scaffold_files(
+    names: &ProjectNames,
+    sdk_dependency: &SdkDependency,
+) -> Vec<(&'static str, String)> {
     vec![
         (".gitignore", gitignore_contents()),
         ("README.md", readme_contents(names)),
-        (
-            "Cargo.toml",
-            cargo_toml_contents(names, sdk_dependency_path),
-        ),
+        ("Cargo.toml", cargo_toml_contents(names, sdk_dependency)),
         ("ergo.toml", ergo_toml_contents(names)),
         ("src/main.rs", main_rs_contents()),
         ("src/implementations/mod.rs", implementations_mod_contents()),
@@ -386,8 +425,18 @@ cargo run -- replay historical captures/historical.capture.json
     )
 }
 
-fn cargo_toml_contents(names: &ProjectNames, sdk_dependency_path: &str) -> String {
-    let sdk_dependency_path = escape_toml_string(sdk_dependency_path);
+fn cargo_toml_contents(names: &ProjectNames, sdk_dependency: &SdkDependency) -> String {
+    let sdk_line = match sdk_dependency {
+        SdkDependency::Published { version } => {
+            format!("ergo-sdk = \"{}\"", escape_toml_string(version))
+        }
+        SdkDependency::LocalPath { rendered_path } => {
+            format!(
+                "ergo-sdk = {{ path = \"{}\" }}",
+                escape_toml_string(rendered_path)
+            )
+        }
+    };
     format!(
         r#"[package]
 name = "{package_name}"
@@ -395,15 +444,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# This scaffold points at a local ergo-sdk checkout until the SDK
-# is published outside the repository.
-ergo-sdk = {{ path = "{sdk_dependency_path}" }}
+{sdk_line}
 ctrlc = "3.4"
 
 [workspace]
 "#,
         package_name = names.package_name,
-        sdk_dependency_path = sdk_dependency_path,
+        sdk_line = sdk_line,
     )
 }
 
@@ -832,7 +879,7 @@ fn adapter_yaml_contents() -> String {
     r#"kind: adapter
 id: sample_adapter
 version: 1.0.0
-runtime_compatibility: "0.1.0-alpha.1"
+runtime_compatibility: "__SCAFFOLD_RUNTIME_COMPATIBILITY__"
 
 context_keys:
   - name: message
@@ -875,7 +922,10 @@ capture:
     - meta.adapter_version
     - meta.timestamp
 "#
-    .to_string()
+    .replace(
+        "__SCAFFOLD_RUNTIME_COMPATIBILITY__",
+        SCAFFOLD_RUNTIME_COMPATIBILITY,
+    )
 }
 
 fn ingress_channel_contents() -> String {
@@ -961,28 +1011,6 @@ fn fixture_contents() -> String {
     "{\"kind\":\"episode_start\",\"id\":\"E1\"}\n{\"kind\":\"event\",\"event\":{\"type\":\"Command\",\"semantic_kind\":\"sample_event\",\"payload\":{\"message\":\"hello-from-historical\"}}}\n".to_string()
 }
 
-fn default_sdk_dependency_path(target_dir: &Path) -> Result<String, String> {
-    let workspace_root = workspace_root()?;
-    if !target_dir.starts_with(&workspace_root) {
-        return Err(render_cli_error(
-            &CliErrorInfo::new(
-                "cli.init_sdk_path_required",
-                "default SDK path works only when scaffolding inside the current Ergo checkout",
-            )
-            .with_where("init command")
-            .with_fix(
-                "run 'ergo init' inside this checkout or provide --sdk-path <path-to-ergo-sdk>",
-            ),
-        ));
-    }
-
-    let sdk_path = canonicalize_path(
-        &workspace_root.join("crates/prod/clients/sdk-rust"),
-        "default SDK path",
-    )?;
-    Ok(render_dependency_path(target_dir, &sdk_path))
-}
-
 fn resolve_explicit_sdk_dependency_path(
     target_dir: &Path,
     sdk_path: &Path,
@@ -992,6 +1020,9 @@ fn resolve_explicit_sdk_dependency_path(
     Ok(render_dependency_path(target_dir, &sdk_path))
 }
 
+// Used only by `init_project::tests` to locate the in-repo SDK
+// checkout when exercising the explicit `--sdk-path` mode.
+#[cfg(test)]
 fn workspace_root() -> Result<PathBuf, String> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let Some(root) = manifest_dir.ancestors().nth(4) else {
@@ -1120,10 +1151,18 @@ fn escape_toml_string(value: &str) -> String {
 }
 
 fn render_init_summary(summary: &InitSummary) -> String {
+    let sdk_dependency_line = match &summary.sdk_dependency {
+        SdkDependency::Published { version } => {
+            format!("ergo-sdk = \"{version}\"")
+        }
+        SdkDependency::LocalPath { rendered_path } => {
+            format!("path {rendered_path}")
+        }
+    };
     format!(
         "initialized Ergo SDK project at {}\nsdk dependency: {}\nchannel scripts: sample ingress/egress scripts target Python 3\ngenerated guide: {}/README.md\nnext steps:\n  cd {}\n  cargo run\n  cargo run -- profiles\n  cargo run -- doctor\n  cargo run -- validate\n  cargo run -- replay historical captures/historical.capture.json",
         summary.root.display(),
-        summary.sdk_dependency_path,
+        sdk_dependency_line,
         summary.root.display(),
         summary.root.display(),
     )

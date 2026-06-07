@@ -55,6 +55,18 @@ fn run_cargo_project(project_root: &Path, args: &[&str]) -> Result<std::process:
         .map_err(|err| format!("spawn cargo {:?}: {err}", args))
 }
 
+/// Scaffold a project using explicit `--sdk-path` pointing at the
+/// in-repo SDK checkout. Used by tests that compile/run the generated
+/// project, because default-mode scaffolds emit a published `ergo-sdk`
+/// dependency that cannot resolve until the SDK is on crates.io.
+fn init_command_with_local_sdk(project_root: &Path) -> Result<String, String> {
+    init_command(&[
+        project_root.display().to_string(),
+        "--sdk-path".to_string(),
+        cli_sdk_path().display().to_string(),
+    ])
+}
+
 fn collect_project_files(project_root: &Path) -> Result<BTreeSet<String>, String> {
     let mut files = BTreeSet::new();
     let mut dirs = vec![project_root.to_path_buf()];
@@ -107,6 +119,9 @@ fn init_command_creates_sdk_first_scaffold() -> Result<(), String> {
     let message = init_command(&[project_root.display().to_string()])?;
 
     assert!(message.contains("initialized Ergo SDK project"));
+    assert!(message.contains(&format!(
+        "sdk dependency: ergo-sdk = \"{SCAFFOLD_SDK_VERSION}\""
+    )));
     assert!(message.contains("channel scripts: sample ingress/egress scripts target Python 3"));
     assert!(message.contains("cargo run -- profiles"));
     assert!(message.contains("cargo run -- replay historical captures/historical.capture.json"));
@@ -123,10 +138,13 @@ fn init_command_creates_sdk_first_scaffold() -> Result<(), String> {
 
     let cargo_toml = fs::read_to_string(project_root.join("Cargo.toml"))
         .map_err(|err| format!("read Cargo.toml: {err}"))?;
-    let expected_sdk_path = render_dependency_path(&project_root, &cli_sdk_path());
     assert!(
-        cargo_toml.contains(&format!("path = \"{expected_sdk_path}\"")),
-        "expected repo-relative sdk path, got:\n{cargo_toml}"
+        cargo_toml.contains(&format!("ergo-sdk = \"{SCAFFOLD_SDK_VERSION}\"")),
+        "expected default published sdk dependency, got:\n{cargo_toml}"
+    );
+    assert!(
+        !cargo_toml.contains("ergo-sdk = { path"),
+        "default scaffold must not emit a local path dependency, got:\n{cargo_toml}"
     );
     assert!(cargo_toml.contains("ctrlc = \"3.4\""));
 
@@ -141,6 +159,15 @@ fn init_command_creates_sdk_first_scaffold() -> Result<(), String> {
     let graph_yaml = fs::read_to_string(project_root.join("graphs/strategy.yaml"))
         .map_err(|err| format!("read graph: {err}"))?;
     assert!(graph_yaml.contains("cluster: sample_message@0.1.0"));
+
+    let adapter_yaml = fs::read_to_string(project_root.join("adapters/sample.yaml"))
+        .map_err(|err| format!("read adapter: {err}"))?;
+    assert!(
+        adapter_yaml.contains(&format!(
+            "runtime_compatibility: \"{SCAFFOLD_RUNTIME_COMPATIBILITY}\""
+        )),
+        "adapter manifest should stamp scaffold runtime compatibility, got:\n{adapter_yaml}"
+    );
 
     let readme = fs::read_to_string(project_root.join("README.md"))
         .map_err(|err| format!("read README.md: {err}"))?;
@@ -162,13 +189,15 @@ fn scaffold_matches_expected_tree_and_templates() -> Result<(), String> {
     assert_eq!(generated_files, expected_scaffold_files());
 
     let names = derive_project_names(&project_root)?;
-    let expected_sdk_path = render_dependency_path(&project_root, &cli_sdk_path());
+    let expected_dependency = SdkDependency::Published {
+        version: SCAFFOLD_SDK_VERSION,
+    };
 
     let cargo_toml = fs::read_to_string(project_root.join("Cargo.toml"))
         .map_err(|err| format!("read Cargo.toml: {err}"))?;
     assert_eq!(
         cargo_toml,
-        cargo_toml_contents(&names, &expected_sdk_path),
+        cargo_toml_contents(&names, &expected_dependency),
         "Cargo.toml drifted from the scaffold template"
     );
 
@@ -193,13 +222,60 @@ fn scaffold_matches_expected_tree_and_templates() -> Result<(), String> {
 }
 
 #[test]
-fn scaffolded_project_builds_runs_and_validates() -> Result<(), String> {
+fn scaffold_runtime_compatibility_matches_runtime_version() {
+    // Hard drift guard: generated adapter manifests stamp
+    // `runtime_compatibility` from `SCAFFOLD_RUNTIME_COMPATIBILITY`.
+    // If the runtime crate version moves, this test must fail until
+    // the scaffold constant is reviewed and updated.
+    assert_eq!(
+        SCAFFOLD_RUNTIME_COMPATIBILITY,
+        ergo_runtime::runtime_version(),
+        "SCAFFOLD_RUNTIME_COMPATIBILITY drifted from ergo_runtime::runtime_version()"
+    );
+}
+
+#[test]
+fn default_mode_outside_workspace_emits_published_dependency() -> Result<(), String> {
+    // Default mode must succeed outside the Ergo checkout and must
+    // render a published `ergo-sdk` dependency. This test asserts
+    // generated content shape only; it does not invoke Cargo because
+    // the published dependency cannot resolve until ergo-sdk is on
+    // crates.io.
+    let root = make_temp_dir("default_outside_checkout");
+    let project_root = root.join("sample-app");
+
+    let message = init_command(&[project_root.display().to_string()])?;
+    assert!(message.contains("initialized Ergo SDK project"));
+    assert!(message.contains(&format!(
+        "sdk dependency: ergo-sdk = \"{SCAFFOLD_SDK_VERSION}\""
+    )));
+
+    let cargo_toml = fs::read_to_string(project_root.join("Cargo.toml"))
+        .map_err(|err| format!("read Cargo.toml: {err}"))?;
+    assert!(
+        cargo_toml.contains(&format!("ergo-sdk = \"{SCAFFOLD_SDK_VERSION}\"")),
+        "outside-checkout default must emit published sdk dependency, got:\n{cargo_toml}"
+    );
+    assert!(
+        !cargo_toml.contains("path = "),
+        "outside-checkout default must not emit a path dependency, got:\n{cargo_toml}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+    Ok(())
+}
+
+#[test]
+fn scaffolded_project_with_sdk_path_builds_runs_and_validates() -> Result<(), String> {
+    // Local override (`--sdk-path`) is the only mode that can build
+    // a generated project before `ergo-sdk` is published, so the
+    // build/run/validate/doctor/live/replay coverage lives here.
     let root = make_workspace_temp_dir("e2e");
     // Unique per-test package name so concurrent tests that share
     // CARGO_TARGET_DIR (see `scaffold_test_cargo_target_dir`) do not
     // race on the same `debug/<pkg>` binary path.
     let project_root = root.join("e2e-app");
-    init_command(&[project_root.display().to_string()])?;
+    init_command_with_local_sdk(&project_root)?;
 
     let run = run_cargo_project(&project_root, &["run", "--quiet"])?;
     if !run.status.success() {
@@ -304,18 +380,6 @@ fn scaffolded_project_builds_runs_and_validates() -> Result<(), String> {
 }
 
 #[test]
-fn init_requires_sdk_path_outside_workspace_checkout() {
-    let root = make_temp_dir("sdk_path_required");
-    let project_root = root.join("sample-app");
-
-    let err = init_command(&[project_root.display().to_string()])
-        .expect_err("outside-workspace init should require --sdk-path");
-    assert!(err.contains("--sdk-path"), "unexpected error: {err}");
-
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
 fn init_accepts_explicit_sdk_path_outside_workspace_checkout() -> Result<(), String> {
     let root = make_temp_dir("sdk_path_explicit");
     let project_root = root.join("sample-app");
@@ -327,6 +391,10 @@ fn init_accepts_explicit_sdk_path_outside_workspace_checkout() -> Result<(), Str
         sdk_path.display().to_string(),
     ])?;
     assert!(message.contains("initialized Ergo SDK project"));
+    assert!(
+        message.contains("sdk dependency: path "),
+        "summary should describe local path mode, got:\n{message}"
+    );
 
     let cargo_toml = fs::read_to_string(project_root.join("Cargo.toml"))
         .map_err(|err| format!("read Cargo.toml: {err}"))?;
@@ -337,6 +405,10 @@ fn init_accepts_explicit_sdk_path_outside_workspace_checkout() -> Result<(), Str
     assert!(
         cargo_toml.contains("ergo-sdk = { path = "),
         "expected local SDK dependency, got:\n{cargo_toml}"
+    );
+    assert!(
+        !cargo_toml.contains(&format!("ergo-sdk = \"{SCAFFOLD_SDK_VERSION}\"")),
+        "explicit --sdk-path must not emit a published version dependency, got:\n{cargo_toml}"
     );
     assert!(
         cargo_toml.contains(".."),
@@ -351,7 +423,7 @@ fn init_accepts_explicit_sdk_path_outside_workspace_checkout() -> Result<(), Str
 fn doctor_reports_missing_scaffold_file() -> Result<(), String> {
     let root = make_workspace_temp_dir("doctor_missing");
     let project_root = root.join("doctor-missing-app");
-    init_command(&[project_root.display().to_string()])?;
+    init_command_with_local_sdk(&project_root)?;
 
     fs::remove_file(project_root.join("graphs/strategy.yaml"))
         .map_err(|err| format!("remove graph: {err}"))?;
@@ -375,7 +447,7 @@ fn doctor_reports_missing_scaffold_file() -> Result<(), String> {
 fn doctor_reports_python_channel_syntax_error() -> Result<(), String> {
     let root = make_workspace_temp_dir("doctor_python_syntax");
     let project_root = root.join("doctor-python-app");
-    init_command(&[project_root.display().to_string()])?;
+    init_command_with_local_sdk(&project_root)?;
 
     fs::write(
         project_root.join("channels/ingress/live_feed.py"),

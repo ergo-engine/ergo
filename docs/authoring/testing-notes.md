@@ -179,8 +179,9 @@ integration snag while evolving a sample strategy into a real one.
 
 ### Current SDK/project ergonomics still have a few rough edges
 
-- Outside the Ergo checkout, `ergo init` still needs `--sdk-path`
-  until `ergo-sdk` is published.
+- Default-mode `ergo init` emits `ergo-sdk = "0.1.0-alpha.1"` and does
+  not require `--sdk-path`; pass `--sdk-path <path-to-ergo-sdk>` only
+  when developing against a local SDK checkout.
 - Scaffolded live sample channels assume `python3` is available.
 - The built `Ergo` handle is same-thread reusable.
 

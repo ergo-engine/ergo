@@ -16,8 +16,7 @@ project, and understand where to put your code and authored assets.
 
 ## 1. Scaffold a Project
 
-From inside an Ergo checkout, create a new Rust crate plus Ergo
-project layout:
+Create a new Rust crate plus Ergo project layout:
 
 ```text
 ergo init my-project
@@ -39,13 +38,14 @@ ergo init my-project
 - `fixtures/`
 - `captures/`
 
-The generated `Cargo.toml` currently points at a local
-`ergo-sdk` checkout.
+The generated `Cargo.toml` declares a published version dependency on
+`ergo-sdk` by default. No flag is required.
 
-- Inside the Ergo repository, `ergo init` wires that dependency
-  automatically with a relative path.
-- Outside the repository, pass `--sdk-path <path-to-ergo-sdk>`
-  until the SDK is published outside the repo.
+- Default mode: `ergo-sdk = "0.1.0-alpha.1"` is written into
+  the generated `Cargo.toml`.
+- Local development override: pass `--sdk-path <path-to-ergo-sdk>`
+  to write a local path dependency instead. This is the mode used
+  when developing against an unpublished SDK checkout.
 
 ## 2. Run the Sample Project
 

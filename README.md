@@ -129,7 +129,9 @@ Ergo v1 is shipped. The engine, SDK, CLI, and scaffold are all live.
 
 **Current limits:**
 
-- The SDK dependency is local-checkout based until the crate is published
+- Default `ergo init` writes `ergo-sdk = "0.1.0-alpha.1"`; use
+  `ergo init --sdk-path <path-to-ergo-sdk>` only when developing against
+  a local SDK checkout
 - One ingress channel per profile
 - The generated live sample ingress and egress channels require a local `python3`
 - The built `Ergo` handle is same-thread reusable across run, replay, validation, and manual-runner operations

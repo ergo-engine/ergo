@@ -1,6 +1,5 @@
 use super::*;
 use std::fs;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -13,14 +12,6 @@ fn write_temp_file(
     let path = base.join(name);
     fs::write(&path, contents).map_err(|err| format!("write {}: {err}", path.display()))?;
     Ok(path)
-}
-
-fn cli_sdk_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(4)
-        .expect("workspace root")
-        .join("crates/prod/clients/sdk-rust")
 }
 
 #[test]
@@ -153,6 +144,10 @@ outputs:
 
 #[test]
 fn init_dispatch_routes_to_scaffold_command() -> Result<(), String> {
+    // Default-mode dispatch: assert routing + generated files exist.
+    // Does not build the generated project because default mode emits
+    // a published `ergo-sdk` dependency that cannot resolve before
+    // publish.
     let index = COUNTER.fetch_add(1, Ordering::SeqCst);
     let temp_dir = std::env::temp_dir().join(format!(
         "ergo-cli-dispatch-init-{}-{}",
@@ -160,13 +155,10 @@ fn init_dispatch_routes_to_scaffold_command() -> Result<(), String> {
         index
     ));
     let project_root = temp_dir.join("sample-app");
-    let sdk_path = cli_sdk_path();
 
     let args = vec![
         "init".to_string(),
         project_root.to_string_lossy().to_string(),
-        "--sdk-path".to_string(),
-        sdk_path.to_string_lossy().to_string(),
     ];
     let result = dispatch_with_args(&args)?;
     let text = match result {
@@ -175,6 +167,7 @@ fn init_dispatch_routes_to_scaffold_command() -> Result<(), String> {
     };
 
     assert!(text.contains("initialized Ergo SDK project"));
+    assert!(text.contains("sdk dependency: ergo-sdk = \""));
     assert!(project_root.join("Cargo.toml").exists());
 
     let _ = fs::remove_dir_all(&temp_dir);
@@ -190,8 +183,9 @@ fn help_init_dispatch_returns_init_notes() -> Result<(), String> {
     };
 
     assert!(text.contains("ergo init <project-dir>"));
-    assert!(text.contains("use --sdk-path outside the checkout"));
-    assert!(text.contains("POSIX 'sh'"));
+    assert!(text.contains("default mode uses the published ergo-sdk crate dependency"));
+    assert!(text.contains("--sdk-path is a local development override"));
+    assert!(text.contains("target Python 3"));
     Ok(())
 }
 
