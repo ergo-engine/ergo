@@ -20,4 +20,5 @@ exclude = []
 [workspace.package]
 edition = "2021"
 license = "MIT OR Apache-2.0"
+homepage = "https://github.com/ergo-engine/ergo"
 repository = "https://github.com/ergo-engine/ergo"

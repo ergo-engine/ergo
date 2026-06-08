@@ -27,18 +27,23 @@ Disposition labels used below:
 - `ergo-supervisor` demo feature / self dev-dependency publish blocker: resolved
   by `84e277c`.
 - CLI scaffold external-user default: resolved by `7dd6a80`.
+- CLI accidental library surface: resolved by `3284794`.
+- Demo-source-context residue: resolved by `144fab4`.
+- SDK-adjacent DTO reservation: removed by `e69b852`.
+- SDK catalog-helper re-export overreach: resolved by `e224fac`.
 - Crate README cross-repo links: resolved by tag-pinned GitHub links for
   `v0.1.0-alpha.1`.
 - `ergo-host` intra-doc rustdoc links: resolved; workspace rustdoc passes with
   broken intra-doc links denied.
-- Package inclusion sanity: verified for the previous publish candidate; after
-  removing the SDK-adjacent DTO reservation, the nine-crate package check must
-  be refreshed in the retag/sweep stage.
-- Exact release tag: `v0.1.0-alpha.1` points at the green release-candidate
-  commit `7d70ce8`.
-- Final publish dry-run: the previous sweep passed from the tagged state, but
-  that evidence is superseded by the later CLI/demo/DTO-reservation changes. The
-  final nine-crate sweep is pending the retag stage.
+- Package inclusion sanity: verified for the previous publish candidate, but
+  superseded by later post-tag publish-set and SDK-facade changes. The nine-crate
+  package check must be refreshed in the retag/sweep stage.
+- Exact release tag: `v0.1.0-alpha.1` still points at historical commit
+  `7d70ce8`; current `main` is past that tag. The release-candidate tag must be
+  moved or recreated after the current reconciliation lands.
+- Final publish dry-run: the previous sweep passed from the old tagged state,
+  but that evidence is now stale. The final nine-crate sweep is pending the
+  retag stage.
 
 ## Final disposition summary
 
@@ -49,7 +54,7 @@ Disposition labels used below:
 | 1. Crate README links | Resolved pre-publish | No |
 | 2. Tagged release commit | Retag required after latest source changes | Yes |
 | 3. Propagation / registry checks | PUB-7 procedure after fresh nine-crate sweep | Yes |
-| 4. Future `0.1.x` dependency policy | Post-alpha follow-up | No |
+| 4. Future `0.1.x` dependency policy | Resolved pre-publish / policy recorded | No |
 | 5. Scaffold switch breadth | Resolved pre-publish | No |
 | 6. Scaffold SDK version stamping | Resolved for first publish | No |
 | 7. `jsonschema` dependency weight | Accepted for alpha | No |
@@ -67,17 +72,17 @@ Disposition labels used below:
 | 15. Runtime compatibility stamping | Resolved for runtime compatibility | No |
 | 16. docs.rs layer guidance | Post-publish spot-check | No |
 | 17. Package inclusion | Retag/sweep refresh required | Yes |
-| 18. Metadata polish | Post-alpha follow-up | No |
+| 18. Metadata polish | Resolved pre-publish | No |
 | 19. `ergo-fixtures` publishability | Informational / accepted | No |
 | 19A. Name availability | PUB-7 procedure for nine names | Yes, procedural |
 | 20. Path + version deps | Informational / confirmed | No |
 
-After the latest source changes, PUB-7 is not yet open. The next gate is to
-retag the release candidate, reconcile the release evidence to the nine-crate
-set, and rerun the full publish dry-run sweep from that tagged state. Only then
-do the remaining blockers become procedural: publish in the tested order, verify
-registry propagation between tiers, and stop if crates.io rejects any name
-during the real transaction.
+After the latest source/manifest/doc changes, PUB-7 is not yet open. The next
+gate is to retag the release candidate, reconcile the release evidence to the
+nine-crate set, and rerun the full publish dry-run sweep from that tagged state.
+Only then do the remaining blockers become procedural: publish in the tested
+order, verify registry propagation between tiers, and stop if crates.io rejects
+any name during the real transaction.
 
 ## Critical — CLI scaffold ships broken for external users
 
@@ -201,9 +206,13 @@ for links to `docs/...`, `crates/kernel/CODE_MAP.md`,
 
 ### Disposition
 
-**Resolved pre-publish.** The release tag `v0.1.0-alpha.1` is pushed and peels
-to `7d70ce8`. CI completed successfully for that commit. The final full dry-run
-sweep was run after the tag was created and from that tagged state.
+**Retag required after latest source changes.** The release tag
+`v0.1.0-alpha.1` still peels to historical commit `7d70ce8`, and CI/dry-run
+evidence for that commit was valid when recorded. That evidence is now
+superseded by later release-control, CLI, demo-residue, SDK-adjacent DTO, and
+SDK-facade changes. The release candidate must be retagged from the current
+nine-crate state, and the full dry-run sweep must be rerun from that retagged
+state before PUB-7 opens.
 
 ### Cause
 
@@ -211,12 +220,13 @@ The current plan says push branch, confirm CI green, then publish. But the
 repo's own publish decision doc says the first real publish should run from a
 tagged commit after PUB-6 is clean.
 
-Current branch state before push/publish discussion:
+The stale evidence to preserve is historical, not current:
 
-- branch: `codex-pub-4-sdk-rustdoc`
-- ahead of upstream by `84e277c`
-- last relevant commit: `84e277c fix(supervisor): remove demo feature and self
-  dev-dependency to unblock publish`
+- old release tag: `v0.1.0-alpha.1`
+- old release-candidate commit: `7d70ce8`
+- old full dry-run sweep: passed from that tagged state
+
+Current release evidence is pending retag plus fresh nine-crate sweep.
 
 ### What is gained by rectifying it
 
@@ -292,36 +302,28 @@ crates.io page reload.
 
 ### Disposition
 
-**Post-alpha follow-up.** This does not block the first
-`0.1.0-alpha.1` publish because all crates in the stack publish together at the
-same pre-release version and dry-run manifests normalize internal path
-dependencies to `version = "0.1.0-alpha.1"`. It must be decided before the first
-follow-up stack release. The default policy should be either:
-
-- patch compatibility across already-published `0.1.x` dependents, or
-- bump the whole affected stack to `0.2.0` for breaking internal-stack changes.
-
-Exact pins remain an option only if the project later chooses strict lockstep
-stack releases.
+**Resolved pre-publish.** The release policy is recorded in
+`docs/ledger/decisions/zero-one-stack-release-policy.md`: `0.1.x` patch releases
+must preserve APIs used by already-published `0.1.x` dependents. If a lower
+crate needs a breaking internal-stack change, the whole affected stack moves to
+`0.2.0` instead of publishing a compatible-looking `0.1.x` release that breaks
+existing dependents. Exact internal pins are not the first-alpha policy.
 
 ### Cause
 
-Internal workspace dependencies use `version = "0.1.0"` alongside local `path`,
-for example:
+Internal workspace dependencies now use `version = "0.1.0-alpha.1"` alongside
+local `path` for the first alpha, for example:
 
-- `ergo-adapter` -> `ergo-runtime = { path = "../runtime", version = "0.1.0" }`
-- `ergo-host` -> `ergo-supervisor = { path = "../../../kernel/supervisor", version = "0.1.0" }`
-- `ergo-sdk-rust` -> `ergo-host = { path = "../../core/host", version = "0.1.0" }`
+- `ergo-adapter` -> `ergo-runtime = { path = "../runtime", version = "0.1.0-alpha.1" }`
+- `ergo-host` -> `ergo-supervisor = { path = "../../../kernel/supervisor", version = "0.1.0-alpha.1" }`
+- `ergo-sdk` -> `ergo-host = { path = "../../core/host", version = "0.1.0-alpha.1" }`
 
-These examples describe the current manifests. If the manifests are aligned to
-the decided first-publish version `0.1.0-alpha.1`, the same policy question still
-applies to future stack releases: decide whether compatible-looking lower-crate
-updates may break already-published dependents, or whether the stack moves in
-lockstep / bumps minor for breaking changes.
+The same policy question applies to future stack releases: decide whether
+compatible-looking lower-crate updates may break already-published dependents,
+or whether the stack moves in lockstep / bumps minor for breaking changes.
 
-This is publish-compatible. The issue is semver behavior after publish:
-`version = "0.1.0"` is a caret requirement and allows compatible `0.1.x`
-versions.
+This is publish-compatible. The issue is semver behavior after publish. Normal
+`0.1.x` caret requirements allow compatible `0.1.y` versions.
 
 If a future `ergo-runtime 0.1.1` breaks APIs used by `ergo-host 0.1.0`, a fresh
 build of already-published `ergo-host 0.1.0` may resolve the newer runtime and
@@ -335,14 +337,14 @@ break.
 - Reduces pressure for emergency yanks.
 - Gives maintainers a simple policy for whether a change is `0.1.x` or `0.2.0`.
 
-Policy options:
+Recorded policy:
 
 1. Patch compatibility across the stack: `0.1.x` must preserve APIs used by
-   already-published `0.1.0` dependents.
-2. Breaking changes bump minor: any breaking internal-stack change goes to
-   `0.2.0`, not `0.1.1`.
-3. Exact internal pins: use `=0.1.0` style requirements if every stack release
-   should be locked together.
+   already-published `0.1.x` dependents.
+2. Breaking changes bump the affected stack: any breaking internal-stack change
+   goes to `0.2.0`, not `0.1.y`.
+3. Exact internal pins remain a future option only if the project later chooses
+   strict lockstep stack releases.
 
 ## 5. Post-publish scaffold switch is broader than `cargo_toml_contents()`
 
@@ -438,10 +440,11 @@ lockstep release policy before using the CLI crate version.
 **Accepted for alpha; post-alpha follow-up.** Re-checking the dependency tree
 confirmed that `jsonschema` default features still pull `reqwest`, `rustls`, and
 `aws-lc-sys`. Current Ergo adapter use remains local schema compilation, and
-the full publish dry-run plus workspace rustdoc pass on the tagged state. This
-is therefore a build-weight/docs.rs risk to trim after alpha, not a
+the previous publish-candidate dry-run plus workspace rustdoc pass did not
+surface a blocker. The fresh retag/sweep remains required for the current state.
+This is therefore a build-weight/docs.rs risk to trim after alpha, not a
 first-publish blocker. Changing feature flags now would create fresh validation
-risk after the publish gate is already clean.
+risk late in release preparation.
 
 ### Cause
 
@@ -939,7 +942,8 @@ crates.io landing guidance. Crate-root rustdoc does not yet systematically
 duplicate every README warning that most users should start with SDK/CLI. This
 is documentation polish, not a mechanical publish blocker. Spot-check rendered
 docs.rs pages after publish and tighten crate-root rustdoc in a follow-up if
-users land in the wrong layer.
+users land in the wrong layer. The current reconciliation is docs/manifests-only,
+so it deliberately does not edit crate-root rustdoc comments inside source files.
 
 ### Cause
 
@@ -995,27 +999,45 @@ root are not automatically part of the crate package.
 - Confirms no intended docs are missing from package tarballs.
 
 Likely fix shape: for each crate, inspect `cargo package --list` or
-`cargo publish --dry-run` output before actual publish. Since PUB-6 is already
-reported clean, the main remaining concern is external README link targets.
+`cargo publish --dry-run` output during the retag/sweep stage. The main
+remaining concern is confirming package shape and external README link targets
+from the current nine-crate state.
 
-## 18. Metadata polish is intentionally deferred and should not block
+## 18. Metadata polish is resolved pre-publish
 
 ### Disposition
 
-**Post-alpha follow-up, explicitly non-blocking.** Required crates.io metadata
-is present and dry-runs pass. Keywords, categories, homepage, documentation,
-authors, and explicit `readme = "README.md"` can be added in a later polish
-release after choosing valid category/keyword slugs deliberately.
+**Resolved pre-publish.** The nine publishable manifests now carry explicit
+`readme = "README.md"`, `homepage.workspace = true`, keywords, and crates.io
+categories. The workspace homepage is the repository URL because no separate
+project site is recorded.
+
+The chosen category slugs were verified against the crates.io category API
+before being added:
+
+- `ergo-runtime`: `development-tools`, `simulation`
+- `ergo-adapter`: `development-tools`, `config`, `parser-implementations`
+- `ergo-supervisor`: `development-tools`, `simulation`
+- `ergo-loader`: `development-tools`, `config`, `parsing`, `filesystem`
+- `ergo-host`: `development-tools`, `config`
+- `ergo-prod-duration`: `date-and-time`, `parser-implementations`,
+  `value-formatting`, `config`
+- `ergo-fixtures`: `development-tools`, `command-line-utilities`,
+  `parser-implementations`
+- `ergo-sdk`: `api-bindings`, `development-tools`
+- `ergo-cli`: `command-line-utilities`, `development-tools`, `visualization`
+
+`documentation` and `authors` remain omitted for the first alpha. docs.rs will
+derive documentation pages from the published crates, and repository ownership is
+clearer than embedding an author list in every crate manifest.
 
 ### Cause
 
-The workspace lacks some crates.io polish metadata:
+The workspace previously lacked some crates.io polish metadata:
 
 - keywords
 - categories
 - homepage
-- documentation
-- authors
 - explicit `readme = "README.md"` in each manifest
 
 Required metadata is present:
@@ -1023,20 +1045,19 @@ Required metadata is present:
 - description
 - license
 - repository
-- README auto-discovery
+- README auto-discovery, now made explicit with `readme = "README.md"`
 
 ### What is gained by rectifying it
-
-If done later:
 
 - better crates.io discoverability
 - clearer landing-page metadata
 - more polished crate cards
 
-### Why it should not block now
+### Why this did not need a separate publish dry-run
 
-These are not in the same risk class as broken README links, scaffold local-only
-behavior, dependency-range policy, or docs.rs/native dependency risk.
+These manifest additions are low risk once category slugs are verified. The full
+nine-crate publish dry-run is still deferred to the retag/sweep stage because
+that stage must validate the complete post-tag state, not only metadata parsing.
 
 ## 19. `ergo-fixtures` being publishable is correct
 
@@ -1103,7 +1124,7 @@ lib/bin/test entries, not dependency paths.
 Internal dependencies use the standard workspace-development form:
 
 - `path = "..."`
-- `version = "0.1.0"`
+- `version = "0.1.0-alpha.1"`
 
 This can look suspicious, but it is the correct pattern for local workspace
 development plus crates.io publish compatibility.

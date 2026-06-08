@@ -4,7 +4,11 @@ version = "0.1.0-alpha.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Production host orchestration layer for the Ergo deterministic graph execution engine"
+homepage.workspace = true
 repository.workspace = true
+readme = "README.md"
+keywords = ["ergo", "host", "workflow", "replay", "egress"]
+categories = ["development-tools", "config"]
 
 [dependencies]
 ergo-adapter = { path = "../../../kernel/adapter", version = "0.1.0-alpha.1" }

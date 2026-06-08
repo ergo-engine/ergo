@@ -6,6 +6,7 @@ Participants: Claude, Codex
 Status: DECIDED
 Scope: First-alpha SDK public facade
 Supersedes: docs/plans/pre-publish-review-findings.md §8C classification of `build_core`, `build_core_catalog`, and `core_registries`
+Implemented-By: e224fac
 ---
 
 # Decision: Remove SDK Catalog Helper Re-Exports

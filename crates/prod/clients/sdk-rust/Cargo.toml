@@ -4,7 +4,11 @@ version = "0.1.0-alpha.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Rust SDK for embedding the Ergo deterministic graph execution engine"
+homepage.workspace = true
 repository.workspace = true
+readme = "README.md"
+keywords = ["ergo", "sdk", "workflow", "graph", "embedding"]
+categories = ["api-bindings", "development-tools"]
 
 [dependencies]
 ergo-adapter = { path = "../../../kernel/adapter", version = "0.1.0-alpha.1" }

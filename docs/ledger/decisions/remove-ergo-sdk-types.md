@@ -6,6 +6,7 @@ Participants: Claude, Codex
 Status: DECIDED
 Scope: First-alpha publish set and workspace membership
 Supersedes: docs/plans/pre-publish-review-findings.md §8A accepted-for-alpha reservation disposition
+Implemented-By: e69b852
 ---
 
 # Decision: Remove `ergo-sdk-types`

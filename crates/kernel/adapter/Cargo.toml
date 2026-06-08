@@ -4,7 +4,11 @@ version = "0.1.0-alpha.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Kernel adapter surface for manifests, event binding, composition checks, and capture helpers in Ergo"
+homepage.workspace = true
 repository.workspace = true
+readme = "README.md"
+keywords = ["ergo", "adapter", "events", "manifest", "validation"]
+categories = ["development-tools", "config", "parser-implementations"]
 
 [dependencies]
 ergo-runtime = { path = "../runtime", version = "0.1.0-alpha.1" }

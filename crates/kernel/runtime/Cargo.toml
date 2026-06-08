@@ -4,7 +4,11 @@ version = "0.1.0-alpha.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Canonical primitive contracts and reference implementations for the Ergo graph execution engine"
+homepage.workspace = true
 repository.workspace = true
+readme = "README.md"
+keywords = ["ergo", "runtime", "graph", "deterministic", "workflow"]
+categories = ["development-tools", "simulation"]
 
 [dependencies]
 semver = "1.0"

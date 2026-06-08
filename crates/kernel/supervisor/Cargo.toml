@@ -4,7 +4,11 @@ version = "0.1.0-alpha.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Kernel supervisor for deterministic execution, capture, and replay in the Ergo graph engine"
+homepage.workspace = true
 repository.workspace = true
+readme = "README.md"
+keywords = ["ergo", "supervisor", "replay", "capture", "scheduler"]
+categories = ["development-tools", "simulation"]
 
 [dependencies]
 ergo-adapter = { path = "../adapter", version = "0.1.0-alpha.1" }

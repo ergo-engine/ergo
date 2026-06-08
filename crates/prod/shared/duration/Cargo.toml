@@ -4,6 +4,10 @@ version = "0.1.0-alpha.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Shared duration-literal parser for Ergo production config surfaces"
+homepage.workspace = true
 repository.workspace = true
+readme = "README.md"
+keywords = ["ergo", "duration", "parser", "config", "time"]
+categories = ["date-and-time", "parser-implementations", "value-formatting", "config"]
 
 [dependencies]

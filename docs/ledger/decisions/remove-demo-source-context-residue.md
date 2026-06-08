@@ -5,6 +5,7 @@ Decision-Owner: Sebastian
 Participants: Claude, Codex
 Status: DECIDED
 Scope: Pre-publish dead-code cleanup for demo-source-context residue
+Implemented-By: 144fab4
 ---
 
 # Decision: Remove Demo Source Context Residue
