@@ -63,13 +63,29 @@ this record resolves, and the PUB-1 plan:
 
 ## Ruling
 
-The first crates.io publish targets ten crates, uses the `ergo-sdk`
-package name for the Rust SDK, and publishes all ten crates at
+The first crates.io publish targets nine crates, uses the `ergo-sdk`
+package name for the Rust SDK, and publishes all nine crates at
 `0.1.0-alpha.1`.
 
 The publish does not happen until PUB-1, PUB-2, PUB-4, PUB-5, and PUB-6
 have landed and a final go/no-go decision explicitly says to execute
 PUB-7.
+
+## Amendment 2026-06-07: Remove `ergo-sdk-types` From First Publish
+
+The original publish-set ruling included `ergo-sdk-types` as a
+standalone SDK-adjacent DTO crate. That forward reservation is
+superseded before first publish.
+
+`ergo-sdk-types` had zero workspace consumers and exposed only
+`SdkVersion { value: String }`. The crate is removed from the workspace
+and first-alpha publish set because the reserved cross-language binding
+use has not materialized, and an unused public crate is not worth
+maintaining through `0.1.x`.
+
+This is not dead/vestigial cleanup: the crate was an intentional
+reservation. It can be reintroduced later as an additive package when a
+real binding or cross-client consumer exists.
 
 ## Publish Set
 
@@ -78,13 +94,12 @@ PUB-7.
 | 1 | `ergo-runtime` | `crates/kernel/runtime` | Kernel runtime semantics and public runtime/catalog types used by host and SDK. |
 | 2 | `ergo-prod-duration` | `crates/prod/shared/duration` | Shared duration parsing used by loader and host. |
 | 3 | `ergo-adapter` | `crates/kernel/adapter` | Adapter contract, fixture types, and host/SDK boundary inputs. |
-| 4 | `ergo-supervisor` | `crates/kernel/supervisor` | Supervisor/capture/replay support required by host. |
-| 5 | `ergo-loader` | `crates/prod/core/loader` | Project, graph, and cluster loading used directly by SDK and host; depends on `ergo-prod-duration`. |
-| 6 | `ergo-host` | `crates/prod/core/host` | Canonical orchestration layer used by SDK and CLI. |
-| 7 | `ergo-sdk-types` | `crates/prod/clients/sdk-types` | Standalone SDK-adjacent type crate. |
-| 8 | `ergo-fixtures` | `crates/shared/fixtures` | Non-optional dependency of `ergo-cli` fixture commands. |
-| 9 | `ergo-sdk` | `crates/prod/clients/sdk-rust` | Primary user-facing Rust SDK. Package rename from `ergo-sdk-rust`. |
-| 10 | `ergo-cli` | `crates/prod/clients/cli` | User-installable `ergo` binary. |
+| 4 | `ergo-loader` | `crates/prod/core/loader` | Project, graph, and cluster loading used directly by SDK and host; depends on `ergo-prod-duration`. |
+| 5 | `ergo-fixtures` | `crates/shared/fixtures` | Non-optional dependency of `ergo-cli` fixture commands. |
+| 6 | `ergo-supervisor` | `crates/kernel/supervisor` | Supervisor/capture/replay support required by host. |
+| 7 | `ergo-host` | `crates/prod/core/host` | Canonical orchestration layer used by SDK and CLI. |
+| 8 | `ergo-sdk` | `crates/prod/clients/sdk-rust` | Primary user-facing Rust SDK. Package rename from `ergo-sdk-rust`. |
+| 9 | `ergo-cli` | `crates/prod/clients/cli` | User-installable `ergo` binary. |
 
 `ergo-test-support` is not published and should be marked
 `publish = false`.
@@ -101,11 +116,11 @@ a possible future umbrella crate.
 The CLI binary remains `ergo`; it is already declared through `[[bin]]`
 in `ergo-cli`.
 
-No package rename is decided here for the other nine published crates.
+No package rename is decided here for the other eight published crates.
 
 ## Versioning
 
-All ten published crates use `0.1.0-alpha.1` for the first publish.
+All nine published crates use `0.1.0-alpha.1` for the first publish.
 The version is workspace-uniform.
 
 Rationale:
@@ -130,7 +145,7 @@ internals and should not be treated as "no independent public contract."
 They also are not the primary user-facing product surface. The
 Sebastian-as-user PUB-1 filter applies to `ergo-sdk`, because that is
 the crate an Ergo application author is expected to depend on first.
-The other nine crates' public surfaces are governed by their internal
+The other eight crates' public surfaces are governed by their internal
 role: kernel semantics, loader transport/discovery, host orchestration,
 CLI support, fixtures, or shared support.
 
@@ -209,7 +224,7 @@ The final go/no-go requires explicit evidence that:
   frozen/exhaustive exceptions landed;
 - PUB-2's manifest/license/path-dependency blockers are complete;
 - PUB-4/PUB-5 documentation reflects the post-PUB-1 surface; and
-- PUB-6 produced clean dry-runs for all ten crates in the order below.
+- PUB-6 produced clean dry-runs for all nine crates in the order below.
 
 If the final gate is no-go, stop at PUB-6. The audit and dry-runs still
 produce the publish spine, but nothing is pushed to crates.io.
@@ -219,13 +234,12 @@ If the final gate is go, PUB-7 publishes in this order:
 1. `ergo-runtime`
 2. `ergo-prod-duration`
 3. `ergo-adapter`
-4. `ergo-supervisor`
-5. `ergo-loader`
-6. `ergo-host`
-7. `ergo-sdk-types`
-8. `ergo-fixtures`
-9. `ergo-sdk`
-10. `ergo-cli`
+4. `ergo-loader`
+5. `ergo-fixtures`
+6. `ergo-supervisor`
+7. `ergo-host`
+8. `ergo-sdk`
+9. `ergo-cli`
 
 ## Follow-Ups
 

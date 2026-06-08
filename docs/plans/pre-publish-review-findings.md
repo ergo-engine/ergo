@@ -31,12 +31,14 @@ Disposition labels used below:
   `v0.1.0-alpha.1`.
 - `ergo-host` intra-doc rustdoc links: resolved; workspace rustdoc passes with
   broken intra-doc links denied.
-- Package inclusion sanity: verified for all ten publishable crates; READMEs and
-  both license files are included, with no obvious bulk package entries.
+- Package inclusion sanity: verified for the previous publish candidate; after
+  removing the SDK-adjacent DTO reservation, the nine-crate package check must
+  be refreshed in the retag/sweep stage.
 - Exact release tag: `v0.1.0-alpha.1` points at the green release-candidate
   commit `7d70ce8`.
-- Final publish dry-run: all ten publishable crates pass from the tagged state
-  with internal dependencies patched locally to model registry propagation.
+- Final publish dry-run: the previous sweep passed from the tagged state, but
+  that evidence is superseded by the later CLI/demo/DTO-reservation changes. The
+  final nine-crate sweep is pending the retag stage.
 
 ## Final disposition summary
 
@@ -45,15 +47,15 @@ Disposition labels used below:
 | Critical scaffold issue | Resolved pre-publish | No |
 | Critical SDK name/version issue | Resolved pre-publish | No |
 | 1. Crate README links | Resolved pre-publish | No |
-| 2. Tagged release commit | Resolved pre-publish | No |
-| 3. Propagation / registry checks | PUB-7 procedure | Yes, procedural |
+| 2. Tagged release commit | Retag required after latest source changes | Yes |
+| 3. Propagation / registry checks | PUB-7 procedure after fresh nine-crate sweep | Yes |
 | 4. Future `0.1.x` dependency policy | Post-alpha follow-up | No |
 | 5. Scaffold switch breadth | Resolved pre-publish | No |
 | 6. Scaffold SDK version stamping | Resolved for first publish | No |
 | 7. `jsonschema` dependency weight | Accepted for alpha | No |
 | 7A. Host rustdoc links | Resolved pre-publish | No |
 | 8. CLI library surface | Resolved pre-publish | No |
-| 8A. `ergo-sdk-types` consumer gap | Accepted for alpha | No |
+| 8A. SDK-adjacent DTO reservation | Removed pre-publish | No |
 | 8B. Demo/test-shaped adapter names | Demo residue resolved; fault harness accepted | No |
 | 8C. SDK non-error re-exports | Accepted for alpha / classified | No |
 | 9. Scaffold-used SDK entrypoints | Accepted for alpha / scaffold-stable | No |
@@ -64,15 +66,18 @@ Disposition labels used below:
 | 14. Generated Cargo.toml comment | Resolved pre-publish | No |
 | 15. Runtime compatibility stamping | Resolved for runtime compatibility | No |
 | 16. docs.rs layer guidance | Post-publish spot-check | No |
-| 17. Package inclusion | Resolved pre-publish | No |
+| 17. Package inclusion | Retag/sweep refresh required | Yes |
 | 18. Metadata polish | Post-alpha follow-up | No |
 | 19. `ergo-fixtures` publishability | Informational / accepted | No |
-| 19A. Name availability | PUB-7 procedure | Yes, procedural |
+| 19A. Name availability | PUB-7 procedure for nine names | Yes, procedural |
 | 20. Path + version deps | Informational / confirmed | No |
 
-After this pass, the only PUB-7 blockers remaining in this document are
-procedural: publish in the tested order, verify registry propagation between
-tiers, and stop if crates.io rejects any name during the real transaction.
+After the latest source changes, PUB-7 is not yet open. The next gate is to
+retag the release candidate, reconcile the release evidence to the nine-crate
+set, and rerun the full publish dry-run sweep from that tagged state. Only then
+do the remaining blockers become procedural: publish in the tested order, verify
+registry propagation between tiers, and stop if crates.io rejects any name
+during the real transaction.
 
 ## Critical — CLI scaffold ships broken for external users
 
@@ -88,7 +93,7 @@ override, updated CLI help/summary/docs, and added default-mode scaffold tests.
 `ergo init` currently generates a `Cargo.toml` with a local filesystem
 `path = "..."` dependency on `ergo-sdk-rust`, and the help text admits the
 default only works inside the Ergo checkout. The current publish sequence under
-discussion publishes all ten crates first, then switches the scaffold to a
+discussion publishes all nine crates first, then switches the scaffold to a
 version dependency afterward.
 
 That means the first published `ergo-cli` would knowingly generate a project
@@ -110,14 +115,14 @@ that does not build for a normal crates.io user running
 ### Disposition
 
 **Resolved pre-publish.** Commit `5c84cd4` renamed the package to `ergo-sdk`,
-updated the public import examples to `ergo_sdk`, and moved all ten publishable
+updated the public import examples to `ergo_sdk`, and moved the publishable
 crates plus internal dependency requirements to `0.1.0-alpha.1`.
 
 ### Cause
 
 The current manifests and source use `ergo-sdk-rust` at `0.1.0`, but the repo's
 publish decision record, `docs/ledger/decisions/crates-io-publish-set.md`, says
-the first publish targets the SDK package name `ergo-sdk` and all ten published
+the first publish targets the SDK package name `ergo-sdk` and all nine published
 crates at `0.1.0-alpha.1`.
 
 The decision record explicitly says:
@@ -153,7 +158,7 @@ check after pushing the tag confirmed each unique tag-pinned URL returned HTTP
 
 ### Cause
 
-The ten crate READMEs use repo-relative links to files outside each crate
+The nine published crate READMEs use repo-relative links to files outside each crate
 package, for example:
 
 - `../CODE_MAP.md`
@@ -177,7 +182,6 @@ Affected areas:
 - `ergo-cli`
 - `ergo-fixtures`
 - `ergo-sdk` / source crate `ergo-sdk-rust`
-- `ergo-sdk-types`
 
 ### What is gained by rectifying it
 
@@ -227,45 +231,44 @@ Likely fix shape: after CI is green, merge or otherwise settle the exact release
 commit, tag it, run/confirm PUB-6 against that exact tagged state, then publish
 from that state.
 
-## 3. Ten-crate publish set needs explicit propagation and registry-resolution gates
+## 3. Nine-crate publish set needs explicit propagation and registry-resolution gates
 
 ### Disposition
 
-**PUB-7 procedure.** No code change remains. This closes only during the real
-publish by publishing in dependency order, waiting for crates.io propagation,
-and verifying registry resolution from a fresh external crate before publishing
-each dependent tier.
+**PUB-7 procedure after the fresh nine-crate sweep.** No additional code change
+is expected for propagation itself. This closes only during the real publish by
+publishing in dependency order, waiting for crates.io propagation, and verifying
+registry resolution from a fresh external crate before publishing each dependent
+tier.
 
-Use the dependency order proven by the final dry-run sweep:
+Use this dependency order for the retagged nine-crate dry-run and publish:
 
 1. `ergo-runtime`
 2. `ergo-prod-duration`
-3. `ergo-sdk-types`
-4. `ergo-adapter`
-5. `ergo-loader`
-6. `ergo-fixtures`
-7. `ergo-supervisor`
-8. `ergo-host`
-9. `ergo-sdk`
-10. `ergo-cli`
+3. `ergo-adapter`
+4. `ergo-loader`
+5. `ergo-fixtures`
+6. `ergo-supervisor`
+7. `ergo-host`
+8. `ergo-sdk`
+9. `ergo-cli`
 
 ### Cause
 
-The publish order is correct, but a ten-crate interdependent stack amplifies any
-low-tier mistake.
+The publish order is correct, but a nine-crate interdependent stack amplifies
+any low-tier mistake.
 
-Tested publish order:
+Publish order to re-test after retag:
 
 1. `ergo-runtime`
 2. `ergo-prod-duration`
-3. `ergo-sdk-types`
-4. `ergo-adapter`
-5. `ergo-loader`
-6. `ergo-fixtures`
-7. `ergo-supervisor`
-8. `ergo-host`
-9. `ergo-sdk`
-10. `ergo-cli`
+3. `ergo-adapter`
+4. `ergo-loader`
+5. `ergo-fixtures`
+6. `ergo-supervisor`
+7. `ergo-host`
+8. `ergo-sdk`
+9. `ergo-cli`
 
 A low-tier crate problem propagates upward. If `ergo-runtime` or
 `ergo-adapter` is bad, every dependent crate can inherit the issue.
@@ -536,21 +539,23 @@ modules, even though the README positions the crate as a binary front door.
 Resolution: remove the library target before first publish and keep validation
 coverage by exercising the binary command forms.
 
-## 8A. `ergo-sdk-types` has no downstream workspace consumers today
+## 8A. SDK-adjacent DTO reservation has no downstream workspace consumers today
 
 ### Disposition
 
-**Accepted for alpha.** `ergo-sdk-types` remains in the publish set as a small
-SDK-adjacent DTO/namespace reservation for future bindings and cross-client
-types. Its current surface is intentionally tiny (`SdkVersion`), and publishing
-it does not add dependency risk to the rest of the stack. Revisit when a real
-non-Rust or cross-SDK consumer appears.
+**Removed pre-publish.** The SDK-adjacent DTO crate was removed from the
+workspace and first-alpha publish set. This reverses the earlier
+accepted-for-alpha reservation disposition: the crate was an intentional forward
+reservation for future cross-language bindings, but it had zero workspace
+consumers and only one DTO (`SdkVersion { value: String }`). The reservation can
+be reintroduced later as an additive crate when a real binding or cross-client
+consumer exists.
 
 ### Cause
 
-`ergo-sdk-types` is in the publish set and exposes the small shared DTO surface
-currently centered on `SdkVersion { value: String }`, but no other workspace
-crate currently depends on `ergo-sdk-types`.
+The SDK-adjacent DTO crate was in the publish set and exposed the small shared
+DTO surface centered on `SdkVersion { value: String }`, but no other workspace
+crate depended on it.
 
 That does not make the crate wrong: it may be an intentional reservation for a
 cross-language SDK/bindings surface. But publishing it now creates a public
@@ -559,11 +564,14 @@ the dependency shape.
 
 ### What is gained by rectifying it
 
-- Forces an explicit decision between publishing now to reserve the SDK-adjacent
-  DTO namespace or deferring until there is a real consumer.
-- Avoids accidentally maintaining an unused public crate if the type surface is
-  still speculative.
-- If kept, documents the reason as intentional rather than incidental.
+- Keeps the first-alpha publish set limited to crates with real consumers.
+- Avoids maintaining an unused public crate through `0.1.x` while the type
+  surface is still speculative.
+- Preserves the reservation as a documented future option rather than a shipped
+  idle package.
+
+Resolution: remove the idle reservation before first publish and record the
+decision in the publish-set decision ledger.
 
 ## 8B. Public adapter/kernel surfaces expose demo or test-shaped names
 
@@ -931,14 +939,16 @@ SDK/CLI" guidance where needed.
 
 ### Disposition
 
-**Resolved pre-publish.** `cargo package --list --allow-dirty` was inspected for
-all ten publishable crates. Each package includes `README.md`, `LICENSE-MIT`,
-and `LICENSE-APACHE`, with no obvious bulk entries such as `target/`, `.git/`,
-top-level `docs/`, or crate archives.
+**Retag/sweep refresh required.** `cargo package --list --allow-dirty` was
+inspected for the previous publish candidate. After removing the SDK-adjacent
+DTO reservation, the nine-crate package inclusion check must be refreshed during
+the retag/sweep stage. The expected package shape remains: each published crate includes
+`README.md`, `LICENSE-MIT`, and `LICENSE-APACHE`, with no obvious bulk entries
+such as `target/`, `.git/`, top-level `docs/`, or crate archives.
 
 ### Cause
 
-All ten publishable crate directories contain:
+All nine publishable crate directories should contain:
 
 - `README.md`
 - `LICENSE-MIT`
@@ -1030,11 +1040,12 @@ Conclusion: do not remove `ergo-fixtures` from the publish set.
 
 ### Disposition
 
-**PUB-7 procedure.** Exact-name availability was re-checked immediately before
-the final dry-run summary and all ten names were free. This still cannot be
-closed until crates.io accepts each real publish transaction. During PUB-7,
-publish name-sensitive low-tier crates promptly and stop if any name collision
-appears.
+**PUB-7 procedure.** Exact-name availability must be re-checked for the nine
+published names immediately before the retagged dry-run/publish pass. The
+previous name check is historical because the SDK-adjacent DTO reservation has
+been removed from the publish set. This still cannot be closed until crates.io
+accepts each real publish transaction. During PUB-7, publish name-sensitive low-tier crates
+promptly and stop if any name collision appears.
 
 ### Cause
 

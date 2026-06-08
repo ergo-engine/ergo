@@ -98,7 +98,6 @@ crates/
     clients/
       cli/            # ergo CLI (init, run, validate, replay)
       sdk-rust/       # Rust SDK — primary product surface
-      sdk-types/      # Standalone SDK transport/version types
   shared/
     fixtures/         # Test fixture utilities
     test-support/     # Test infrastructure

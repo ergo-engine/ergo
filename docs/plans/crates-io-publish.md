@@ -57,14 +57,14 @@ through the SDK's public surface must publish.
 | `ergo-supervisor` | Yes | Kernel; transitively required by host |
 | `ergo-loader` | Yes | Used by SDK directly |
 | `ergo-host` | Yes | Used by SDK and CLI directly |
-| `ergo-sdk-types` | Yes | Stand-alone SDK-adjacent type crate in the publish set |
 | `ergo-sdk` | Yes | Primary user-facing library; source path remains `crates/prod/clients/sdk-rust` |
 | `ergo-cli` | Yes | User-installable binary (`ergo`) |
 | `ergo-fixtures` | Yes | Non-optional dep of `ergo-cli` (CLI's `csv-fixture` and fixture-report subcommands). Publishing required unless cli's fixture surface is feature-gated as a separate refactor. |
 | `ergo-test-support` | No | Workspace-internal test scaffolding; explicit `publish = false` to enforce. |
 
-Initial publish set: **10 crates** (revised from 9 after PUB-2 dependency audit
-discovered `ergo-fixtures` was non-optional).
+Initial publish set: **9 crates** after removing the idle SDK-adjacent DTO
+forward reservation. `ergo-fixtures` remains because the PUB-2 dependency audit
+found it is a non-optional `ergo-cli` dependency.
 
 ## Naming Decision (Q-NAMING)
 

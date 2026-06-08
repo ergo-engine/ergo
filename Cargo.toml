@@ -10,7 +10,6 @@ members = [
     "crates/prod/shared/duration",
     "crates/prod/clients/cli",
     "crates/prod/clients/sdk-rust",
-    "crates/prod/clients/sdk-types",
     "crates/shared/test-support",
     "crates/shared/fixtures",
 ]
