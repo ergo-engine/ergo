@@ -632,11 +632,24 @@ unless visibility or naming changes before first publish.
 
 ### Disposition
 
-**Accepted for alpha with explicit classification.** The error-surface portion
-is already resolved by the opaque `ErgoErrorSource` model. The remaining
-non-error SDK re-exports are intentional because they appear in SDK-authored
-configuration, custom primitive registration, manual-runner event construction,
-or returned run/replay outcomes:
+**Partially resolved before alpha; remaining re-exports accepted with explicit
+classification.** The error-surface portion is already resolved by the opaque
+`ErgoErrorSource` model. This finding previously merged two different custom
+primitive concerns: surface a user needs to write custom primitives, and
+core-only catalog constructors that no SDK facade consumes. Those are now split.
+
+The SDK root re-export of `build_core`, `build_core_catalog`, and
+`core_registries` is removed before first publish. Those functions remain public
+in `ergo-runtime`, but they are core-only constructors. The SDK registration
+mechanism is `ErgoBuilder::add_*`, which feeds the SDK's private
+`CatalogBuilder` and then calls `CatalogBuilder::build()`. No SDK API accepts
+an externally built `CoreRegistries` or `CorePrimitiveCatalog`, so the old SDK
+doc comment calling these helpers "advanced primitive registration" was too
+broad and was removed with the re-export.
+
+The remaining non-error SDK re-exports are intentional because they appear in
+SDK-authored configuration, custom primitive authoring, manual-runner event
+construction, or returned run/replay outcomes:
 
 - `FixtureItem` supports SDK-authored in-memory fixture ingress.
 - `EventTime`, `ExternalEventKind`, `HostedEvent`, `HostedStepOutcome`, and
@@ -644,9 +657,14 @@ or returned run/replay outcomes:
   inspection.
 - `AdapterInput`, `CaptureBundle`, `CaptureJsonStyle`, `Egress*`,
   `InterruptedRun`, `InterruptionReason`, `RunOutcome`, and `RunSummary` are
-  SDK-facing config/outcome vocabulary.
-- `build_core`, `build_core_catalog`, `core_registries`, `ExecutionContext`,
-  and the primitive modules are advanced custom-primitive registration surface.
+  SDK-facing config/outcome vocabulary. The payload-name inconsistency for
+  `RunSummary`, `InterruptedRun`, and `InterruptionReason` is a known
+  post-alpha item tracked in GitHub issue #81.
+- `ExecutionContext` and the primitive modules (`action`, `common`, `compute`,
+  `source`, `trigger`) are retained as genuine custom-primitive authoring
+  surface: user implementations name `ExecutionContext` and `common::Value`,
+  the `ErgoBuilder::add_*` bounds name the primitive traits from those modules,
+  and the `ergo init` scaffold uses the modules directly.
 
 These re-exports are semver-sensitive SDK alpha surface. They should be treated
 as intentional until a later SDK facade narrowing pass removes or wraps them.
@@ -661,9 +679,14 @@ not the lower-crate public error-enum stability gate.
 
 ### Cause
 
-`ergo-sdk-rust` transparently re-exports lower-layer types, including adapter
-event types and `RunTermination`, and also exposes host/config/outcome-style
-types through its public API surface.
+`ergo-sdk` transparently re-exports lower-layer types, including adapter event
+types and `RunTermination`, and also exposes host/config/outcome-style types
+through its public API surface.
+
+The catalog helper trio was an over-broad classification inside that bucket:
+`build_core`, `build_core_catalog`, and `core_registries` build the default
+runtime core, not the SDK facade's custom-registration path. They remain
+available from `ergo-runtime`; they are no longer SDK-root surface.
 
 The publish decision record already warns that transparent root re-exports need
 PUB-1 classification. If any re-export remains unclassified, the SDK semver
@@ -678,6 +701,10 @@ stale typed-accessor wording forward as unresolved action items from this plan.
 
 - Confirms that each lower-layer re-export is intentionally part of the SDK
   authoring/config/outcome vocabulary.
+- Removes three core-only catalog constructors from the SDK root before they
+  become a published facade promise.
+- Keeps `ExecutionContext` and the primitive modules available for real custom
+  primitive authoring.
 - Reduces accidental SDK semver pressure from internal kernel/prod type changes.
 - Gives special attention to `RunTermination`, which is visible through SDK
   tests and public re-export paths.

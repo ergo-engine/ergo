@@ -143,8 +143,6 @@ pub use ergo_host::{
     EgressConfig, EgressConfigBuilder, EgressConfigError, EgressConfigParseError, EgressRoute,
     HostedEvent, HostedStepOutcome, InterruptedRun, InterruptionReason, RunOutcome, RunSummary,
 };
-/// Runtime catalog helpers re-exported for advanced primitive registration.
-pub use ergo_runtime::catalog::{build_core, build_core_catalog, core_registries};
 /// Runtime execution context visible to custom primitive implementations.
 pub use ergo_runtime::runtime::ExecutionContext;
 /// Runtime primitive modules used when implementing custom sources, computes,
