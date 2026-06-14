@@ -103,7 +103,8 @@ version dependency afterward.
 
 That means the first published `ergo-cli` would knowingly generate a project
 that does not build for a normal crates.io user running
-`cargo install ergo-cli && ergo init myproject` outside the author checkout.
+`cargo install ergo-cli --version 0.1.0-alpha.2 && ergo init myproject`
+outside the author checkout.
 
 ### What is gained by rectifying it
 

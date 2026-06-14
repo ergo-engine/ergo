@@ -8,7 +8,33 @@ Ergo is industry-agnostic by design. The primitives and execution model are doma
 
 ## Quick Start
 
-Scaffold a new project inside an Ergo checkout:
+Install the published prerelease CLI and scaffold a project:
+
+```text
+cargo install ergo-cli --version 0.1.0-alpha.2
+ergo init my-project
+cd my-project
+cargo run
+```
+
+The current crates.io releases are prereleases. Cargo does not select
+prerelease versions for bare requirements, so `cargo install ergo-cli`
+and `cargo add ergo-sdk` will not find the alpha line by default. Use
+explicit versions until a non-prerelease `0.1.0` ships:
+
+```text
+cargo install ergo-cli --version 0.1.0-alpha.2
+cargo add ergo-sdk@0.1.0-alpha.1
+```
+
+Or write the SDK dependency directly:
+
+```toml
+ergo-sdk = "0.1.0-alpha.1"
+```
+
+From a local Ergo checkout, the same scaffold flow can be run without
+installing the published CLI:
 
 ```text
 cargo run -p ergo-cli -- init my-project
@@ -124,7 +150,13 @@ Documentation lives in `docs/` with a single-source rule: every fact has exactly
 
 ## Current State
 
-Ergo v1 is shipped. The engine, SDK, CLI, and scaffold are all live.
+The v1 architecture is implemented, and the nine public crates are live
+on crates.io as alpha prereleases. The initial stack published at
+`0.1.0-alpha.1`; `ergo-cli` is currently `0.1.0-alpha.2` with the same
+published dependency stack underneath it.
+
+This is an early alpha release, not a stable semver commitment. APIs may
+change before the first non-prerelease `0.1.0`.
 
 **Current limits:**
 

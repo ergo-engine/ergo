@@ -16,6 +16,20 @@ project, and understand where to put your code and authored assets.
 
 ## 1. Scaffold a Project
 
+Install the published prerelease CLI if it is not already available:
+
+```text
+cargo install ergo-cli --version 0.1.0-alpha.2
+```
+
+The current crates.io packages are prereleases. Cargo does not select
+prerelease versions for bare requirements, so use explicit versions
+until a non-prerelease `0.1.0` ships:
+
+- CLI: `cargo install ergo-cli --version 0.1.0-alpha.2`
+- SDK: `cargo add ergo-sdk@0.1.0-alpha.1` or
+  `ergo-sdk = "0.1.0-alpha.1"`
+
 Create a new Rust crate plus Ergo project layout:
 
 ```text
