@@ -1,8 +1,8 @@
 //! dispatch.rs — CLI command dispatch and argument parsing
 //!
 //! Purpose:
-//! - Defines the top-level CLI argument structure using clap and
-//!   dispatches subcommands to their respective handlers.
+//! - Defines the hand-written top-level CLI command map and dispatches
+//!   subcommands to their respective handlers.
 
 use std::path::Path;
 
@@ -31,25 +31,29 @@ pub fn run() -> Result<DispatchOutput, String> {
     dispatch_with_args(&args)
 }
 
+fn dispatch_help(args: impl Iterator<Item = String>) -> Result<DispatchOutput, String> {
+    let topic_parts: Vec<String> = args.collect();
+    if topic_parts.is_empty() {
+        return Ok(DispatchOutput::Text(output::text::usage()));
+    }
+    let topic = topic_parts.join(" ").to_ascii_lowercase();
+    if let Some(help_text) = output::text::help_topic(&topic, &crate::fixture_ops::fixture_usage()) {
+        Ok(DispatchOutput::Text(help_text))
+    } else {
+        Err(output::errors::unknown_help_topic(&topic_parts.join(" ")))
+    }
+}
+
 pub(crate) fn dispatch_with_args(args: &[String]) -> Result<DispatchOutput, String> {
     let mut args_it = args.iter().cloned();
     match args_it.next() {
         None => Ok(DispatchOutput::Text(output::text::usage())),
         Some(command) => match command.as_str() {
-            "help" => {
-                let topic_parts: Vec<String> = args_it.collect();
-                if topic_parts.is_empty() {
-                    return Ok(DispatchOutput::Text(output::text::usage()));
-                }
-                let topic = topic_parts.join(" ").to_ascii_lowercase();
-                if let Some(help_text) =
-                    output::text::help_topic(&topic, &crate::fixture_ops::fixture_usage())
-                {
-                    Ok(DispatchOutput::Text(help_text))
-                } else {
-                    Err(output::errors::unknown_help_topic(&topic_parts.join(" ")))
-                }
-            }
+            "--version" | "-V" => Ok(DispatchOutput::Text(format!(
+                "ergo {}",
+                env!("CARGO_PKG_VERSION")
+            ))),
+            "--help" | "-h" | "help" => dispatch_help(args_it),
             "fixture" => {
                 let target = args_it
                     .next()

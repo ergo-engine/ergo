@@ -190,6 +190,48 @@ fn help_init_dispatch_returns_init_notes() -> Result<(), String> {
 }
 
 #[test]
+fn top_level_version_flags_return_package_version() -> Result<(), String> {
+    for flag in ["--version", "-V"] {
+        let result = dispatch_with_args(&[flag.to_string()])?;
+        let text = match result {
+            DispatchOutput::Text(text) => text,
+            DispatchOutput::Json(_) => return Err("expected text output".to_string()),
+        };
+        assert_eq!(text, format!("ergo {}", env!("CARGO_PKG_VERSION")));
+    }
+    Ok(())
+}
+
+#[test]
+fn top_level_help_flags_match_help_subcommand() -> Result<(), String> {
+    let help = match dispatch_with_args(&["help".to_string()])? {
+        DispatchOutput::Text(text) => text,
+        DispatchOutput::Json(_) => return Err("expected text output".to_string()),
+    };
+    for flag in ["--help", "-h"] {
+        let text = match dispatch_with_args(&[flag.to_string()])? {
+            DispatchOutput::Text(text) => text,
+            DispatchOutput::Json(_) => return Err("expected text output".to_string()),
+        };
+        assert_eq!(text, help);
+    }
+    Ok(())
+}
+
+#[test]
+fn subcommand_help_flags_are_not_top_level_intercepted() {
+    let result = dispatch_with_args(&["run".to_string(), "--help".to_string()]);
+    let err = match result {
+        Ok(_) => panic!("run --help is still owned by run parsing"),
+        Err(err) => err,
+    };
+    assert!(
+        err.contains("run requires either --fixture <events.jsonl> or --driver-cmd <program>"),
+        "unexpected err: {err}"
+    );
+}
+
+#[test]
 fn fixture_run_subcommand_returns_redirect_error() {
     let result = dispatch_with_args(&[
         "fixture".to_string(),
