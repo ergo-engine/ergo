@@ -246,7 +246,7 @@ philosophy and the Q-USER consumer, but the inventory is pre-loaded.
 | PUB-4 | SDK rustdoc pass | M | Type and method docs for every kept public item from PUB-1. Doctests for `Ergo::builder`, `from_project`, `run_profile`, `replay`, `runner_for_profile`, `ProfileRunner` lifecycle. |
 | PUB-5 | Per-crate user-facing READMEs | S/M | One README per published crate aimed at crates.io readers, not internal contributors. **Minimal stubs only until Q-SURFACE lands**; full READMEs after PUB-1 so they reflect the chosen philosophy. Kernel crate READMEs may stay terse and link out; SDK and CLI READMEs are the landing pages users see. |
 | PUB-6 | Dry-run publishes in dependency order | S | `cargo publish --dry-run` from kernel up; fix anything that surfaces. Valid terminal state if PUB-7's go/no-go lands as no-go. |
-| PUB-7 | First publish | S | **Gated on final go/no-go after PUB-1, PUB-2, PUB-4, PUB-5, and PUB-6 land.** If go: `cargo publish` in dep order: runtime → prod-duration → adapter → supervisor → loader → host → sdk-types → fixtures → ergo-sdk → cli. If no-go: hold at PUB-6; the audit still produced the spine. |
+| PUB-7 | First publish | S | **Gated on final go/no-go after PUB-1, PUB-2, PUB-4, PUB-5, and PUB-6 land.** If go: `cargo publish` in dep order: runtime → prod-duration → adapter → loader → fixtures → supervisor → host → ergo-sdk → cli. If no-go: hold at PUB-6; the audit still produced the spine. |
 
 Sizing key: S ≈ one focused session; M ≈ multi-session.
 
