@@ -395,6 +395,7 @@ cargo run
 cargo run -- profiles
 cargo run -- doctor
 cargo run -- validate
+cargo run -- run live
 cargo run -- replay historical captures/historical.capture.json
 ```
 
