@@ -142,7 +142,7 @@ pub fn render_replay_summary(
 ) -> String {
     [
         format!(
-            "replay graph_id={graph_id} events={events} invoked={invoked} deferred={deferred} skipped={skipped}"
+            "replay graph_id={graph_id} events={events} invoked={invoked} deferred={deferred} skipped={skipped} verified; hashes and decisions matched the capture"
         ),
         "replay identity: match".to_string(),
     ]

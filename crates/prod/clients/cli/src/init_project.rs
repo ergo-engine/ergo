@@ -536,8 +536,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                 .unwrap_or_else(|| PathBuf::from(format!("captures/{profile}.capture.json")));
             let replay = build_ergo()?.replay_profile(profile, &capture_path)?;
             println!(
-                "replay graph_id={:?} events={} invoked={} deferred={} skipped={}",
-                replay.graph_id, replay.events, replay.invoked, replay.deferred, replay.skipped
+                "replay graph_id={} events={} invoked={} deferred={} skipped={} verified; hashes and decisions matched the capture",
+                replay.graph_id.as_str(),
+                replay.events,
+                replay.invoked,
+                replay.deferred,
+                replay.skipped
             );
             Ok(())
         }
