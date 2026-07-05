@@ -5,6 +5,11 @@
 //! - Expose the canonical client-facing host seams plus the lower-level
 //!   building blocks used by advanced embedded callers and tests.
 //!
+//! Most users should start with `ergo-sdk` for embedded Rust usage or
+//! `ergo-cli` for command-line usage. Depend on this crate directly only for
+//! advanced host integration or tooling that needs lower-level orchestration
+//! surfaces.
+//!
 //! Owns:
 //! - The top-level public re-export surface for canonical run, replay,
 //!   validation, manual-runner preparation/finalization, and selected lower-level

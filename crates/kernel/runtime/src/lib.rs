@@ -5,6 +5,11 @@
 //!   turns a `ClusterDefinition` into an `ExecutionReport` (expand → validate
 //!   → execute).
 //!
+//! Most users should start with `ergo-sdk` for embedded Rust usage or
+//! `ergo-cli` for command-line usage. Depend on this crate directly only when you
+//! are building lower-level kernel integrations, custom primitive registration
+//! surfaces, or runtime-focused tooling.
+//!
 //! Owns:
 //! - The four primitive trait families (source/compute/trigger/action) and
 //!   their manifest types.

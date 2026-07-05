@@ -4,6 +4,11 @@
 //! - Define the kernel-owned adapter surface for manifests, event binding,
 //!   composition checks, capture helpers, and runtime-facing event types.
 //!
+//! Most users should start with `ergo-sdk` for embedded Rust usage or
+//! `ergo-cli` for command-line usage. Depend on this crate directly only when you
+//! are building lower-level Ergo adapter tooling or integrating with kernel-facing
+//! adapter surfaces.
+//!
 //! Owns:
 //! - Adapter validation/composition authorities and the typed errors they emit.
 //! - The canonical event payload/context realization boundary used by replay and

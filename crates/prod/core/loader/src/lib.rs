@@ -4,6 +4,10 @@
 //! - Expose the loader crate's public transport/config surface for project discovery, graph decode, source loading, and cluster discovery.
 //! - Collect the stable top-level re-exports that higher prod layers use without reaching into loader internals.
 //!
+//! Most users should start with `ergo-sdk` for embedded Rust usage or
+//! `ergo-cli` for command-line usage. Depend on this crate directly only when you
+//! need lower-level project discovery, graph decode, or asset-loading surfaces.
+//!
 //! Owns:
 //! - The public crate façade and re-export policy for decode, discovery, io, and project surfaces.
 //! - The boundary between the smaller top-level convenience API and the module-public advanced

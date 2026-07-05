@@ -4,6 +4,9 @@
 //! - Own the prod-internal authority for Ergo's simple authored duration
 //!   literals.
 //!
+//! Most users should not depend on this crate directly. It is published because
+//! publishable prod crates use the same parser for current config surfaces.
+//!
 //! Owns:
 //! - Parsing the shared `ms|s|m|h` integer-literal grammar used by current
 //!   prod authored config surfaces.

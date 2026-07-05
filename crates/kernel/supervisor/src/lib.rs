@@ -4,6 +4,10 @@
 //! - Define the kernel supervisor surface for deterministic execution, capture,
 //!   and replay.
 //!
+//! Most users should start with `ergo-sdk` for embedded Rust usage or
+//! `ergo-cli` for command-line usage. Depend on this crate directly only when you
+//! need the lower-level kernel capture/replay or supervisor APIs.
+//!
 //! Owns:
 //! - The public kernel replay/capture APIs and the typed errors they expose.
 //! - Canonical capture bundle/session types used by higher layers.

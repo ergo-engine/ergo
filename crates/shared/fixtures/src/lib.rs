@@ -4,6 +4,9 @@
 //! - Provide shared fixture conversion, inspection, and validation helpers used
 //!   by CLI and support tooling.
 //!
+//! Most application users should start with `ergo-sdk` or `ergo-cli` rather
+//! than depending on this crate directly.
+//!
 //! Owns:
 //! - Thin product-facing fixture utilities and DTOs built on adapter-owned
 //!   fixture parsing.
