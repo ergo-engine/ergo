@@ -4,6 +4,7 @@ version = "0.1.0-alpha.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Command-line interface for the Ergo deterministic graph execution engine"
+documentation = "https://github.com/ergo-engine/ergo/blob/main/docs/authoring/getting-started-sdk.md"
 homepage.workspace = true
 repository.workspace = true
 readme = "README.md"
