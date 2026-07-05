@@ -485,7 +485,7 @@ fn main_rs_contents() -> String {
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use ergo_sdk::{Ergo, ProjectSummary, StopHandle};
+use ergo_sdk::{Ergo, ProjectSummary, RunOutcome, StopHandle};
 
 mod implementations;
 
@@ -514,7 +514,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             let stop_clone = stop.clone();
             ctrlc::set_handler(move || stop_clone.stop())?;
             let outcome = build_ergo()?.run_profile_with_stop(profile, stop)?;
-            println!("run profile '{profile}': {outcome:?}");
+            print_run_summary(profile, &outcome);
             Ok(())
         }
         "profiles" => {
@@ -558,6 +558,23 @@ fn build_ergo() -> Result<Ergo, Box<dyn Error>> {
         .add_source(SampleMessageSource::new())
         .add_action(PublishSampleAction::new())
         .build()?)
+}
+
+fn print_run_summary(profile: &str, outcome: &RunOutcome) {
+    let (outcome_label, summary) = match outcome {
+        RunOutcome::Completed(summary) => ("completed", summary),
+        RunOutcome::Interrupted(interrupted) => ("interrupted", &interrupted.summary),
+    };
+    let capture_path = summary
+        .capture_path
+        .as_deref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<not written>".to_string());
+
+    println!("profile: {profile}");
+    println!("outcome: {outcome_label}");
+    println!("events: {}", summary.events);
+    println!("capture file: {capture_path}");
 }
 
 fn doctor() -> Result<(), Box<dyn Error>> {
