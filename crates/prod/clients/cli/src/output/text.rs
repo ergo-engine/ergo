@@ -7,8 +7,9 @@ pub fn write_line(message: &str) {
 }
 
 pub fn usage() -> String {
+    let header = format!("Ergo CLI ({})", env!("CARGO_PKG_VERSION"));
     [
-        "Ergo CLI (v1)",
+        header.as_str(),
         "",
         "Core runtime",
         "  ergo run <graph.yaml> (-f|--fixture <events.jsonl> | --driver-cmd <program> [--driver-arg <arg> ...]) [-a|--adapter <adapter.yaml>] [--egress-config <egress.toml>] [-o|--capture|--capture-output <path>] [-p|--pretty-capture] [--cluster-path <path> ...]",
