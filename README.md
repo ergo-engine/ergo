@@ -1,5 +1,7 @@
 # Ergo
 
+[![CI](https://github.com/ergo-engine/ergo/actions/workflows/runtime-surface.yml/badge.svg?branch=main)](https://github.com/ergo-engine/ergo/actions/workflows/runtime-surface.yml)
+
 Ergo is a deterministic graph execution engine built in Rust.
 
 It implements a four-primitive ontological model — **Source, Compute, Trigger, Action** — representing universal causal roles. Graphs are authored declaratively in YAML or JSON. Execution is deterministic: same inputs, same decisions, same outputs. Ergo can produce replayable capture artifacts or bundles for audit, debugging, and verification.
