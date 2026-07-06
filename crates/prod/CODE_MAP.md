@@ -27,7 +27,7 @@ Sibling: `crates/kernel/CODE_MAP.md` for the kernel half.
 
 ---
 
-## 1. The six prod crates
+## 1. The five prod crates
 
 The prod tree has two layers (`core/`, `clients/`) plus a small `shared/`
 helper crate. Every prod crate ultimately re-exports or composes the
@@ -40,7 +40,6 @@ meaning.
 | **`ergo-host`**         | `crates/prod/core/host`           | The full host orchestration loop: usecases facade, `HostedRunner`, `BufferingRuntimeInvoker`, effect handlers, handler coverage, egress, capture enrichment.    | Kernel runtime/adapter/supervisor semantics; loader transport; CLI/SDK shape. | `ergo-adapter`, `ergo-runtime`, `ergo-supervisor`, `ergo-loader`, `ergo-prod-duration`.                   |
 | **`ergo-sdk`**     | `crates/prod/clients/sdk-rust`    | The SDK `Ergo` engine, `ErgoBuilder`, `ProfileRunner`, `StopHandle`, SDK-branded `Ergo*Error` taxonomy, in-memory project plumbing.                             | Host orchestration internals; loader internals; kernel semantics.             | `ergo-adapter`, `ergo-host`, `ergo-loader`, `ergo-runtime`.                                               |
 | **`ergo-cli`**          | `crates/prod/clients/cli`         | The `ergo` binary entry, argument parsing, CLI subcommand dispatch, exit codes, text/JSON output rendering.                                                     | Host orchestration; SDK engine; kernel semantics.                             | `ergo-host`, plus `ergo-adapter`/`ergo-runtime`/`ergo-supervisor` for replay/test paths; `ergo-fixtures`. |
-| **`ergo-sdk-types`**    | `crates/prod/clients/sdk-types`   | Lightweight cross-binding serde types (currently `SdkVersion` only).                                                                                            | Anything else.                                                                | `serde` only.                                                                                             |
 | **`ergo-prod-duration`** | `crates/prod/shared/duration`     | The shared `ms\|s\|m\|h` duration-literal parser used by host egress config and loader profile literals.                                                        | Serde wrappers; runtime timing policy.                                        | `std` only.                                                                                               |
 
 Every prod-side crate carries a `//! crate_name` header in
@@ -72,8 +71,8 @@ matches: see `crates/kernel/runtime/src/lib.rs`,
        ergo-adapter ─ ergo-runtime ─ ergo-supervisor
 ```
 
-`ergo-sdk-types` and `ergo-prod-duration` sit outside this main chain;
-they are leaf helpers consumed by `sdk-rust` / `host` / `loader`.
+`ergo-prod-duration` sits outside this main chain; it is a leaf helper
+consumed by `host` / `loader`.
 
 ---
 
@@ -953,9 +952,9 @@ grep -A6 "pub trait RuntimeInvoker" crates/kernel/adapter/src/lib.rs | grep -qE 
 ### C. Crate inventory check
 
 ```sh
-# §1 — prod tree must still have exactly six crates
+# §1 — prod tree must still have exactly five crates
 count=$(find crates/prod -name Cargo.toml -not -path "*/target/*" | wc -l | tr -d ' ')
-[ "$count" = "6" ] || echo "PROD CRATE COUNT DRIFT: expected 6, got $count (update §1)"
+[ "$count" = "5" ] || echo "PROD CRATE COUNT DRIFT: expected 5, got $count (update §1)"
 ```
 
 If any check above fails, update the relevant section of this doc in

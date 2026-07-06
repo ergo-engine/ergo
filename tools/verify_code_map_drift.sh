@@ -180,13 +180,12 @@ fi
 # Prod CODE_MAP citations
 # =====================================================================
 
-# §1 — six prod crates
+# §1 — five prod crates
 prod_crates=( \
   "crates/prod/core/loader" \
   "crates/prod/core/host" \
   "crates/prod/clients/sdk-rust" \
   "crates/prod/clients/cli" \
-  "crates/prod/clients/sdk-types" \
   "crates/prod/shared/duration" \
 )
 for c in "${prod_crates[@]}"; do
@@ -296,10 +295,10 @@ if grep -A6 "pub trait RuntimeInvoker" crates/kernel/adapter/src/lib.rs | grep -
   fail=1
 fi
 
-# §1 — prod tree must still have exactly six crates
+# §1 — prod tree must still have exactly five crates
 prod_crate_count=$(find crates/prod -name Cargo.toml -not -path "*/target/*" | wc -l | tr -d ' ')
-if [[ "$prod_crate_count" != "6" ]]; then
-  echo "PROD CRATE COUNT DRIFT: expected 6, got $prod_crate_count (update prod CODE_MAP §1)"
+if [[ "$prod_crate_count" != "5" ]]; then
+  echo "PROD CRATE COUNT DRIFT: expected 5, got $prod_crate_count (update prod CODE_MAP §1)"
   fail=1
 fi
 
