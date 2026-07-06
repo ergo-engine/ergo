@@ -37,7 +37,8 @@ fn dispatch_help(args: impl Iterator<Item = String>) -> Result<DispatchOutput, S
         return Ok(DispatchOutput::Text(output::text::usage()));
     }
     let topic = topic_parts.join(" ").to_ascii_lowercase();
-    if let Some(help_text) = output::text::help_topic(&topic, &crate::fixture_ops::fixture_usage()) {
+    if let Some(help_text) = output::text::help_topic(&topic, &crate::fixture_ops::fixture_usage())
+    {
         Ok(DispatchOutput::Text(help_text))
     } else {
         Err(output::errors::unknown_help_topic(&topic_parts.join(" ")))
